@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# runtime artifacts
+examples/results/
+examples/queue.db
+*.zip
+.worker_token

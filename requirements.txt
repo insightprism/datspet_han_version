@@ -1,0 +1,15 @@
+# Core pipeline
+pillow>=10
+numpy>=1.24
+requests>=2.28
+rembg>=2.0.56
+
+# GPU background removal (recommended, ~12x faster). Needs CUDA 12 + cuDNN 9
+# libraries reachable at runtime — see README "GPU cutout". Falls back to CPU
+# automatically if unavailable; for CPU-only, use `onnxruntime` instead.
+onnxruntime-gpu>=1.19 ; platform_system == "Linux"
+
+# Only needed to run examples/queue_server.py
+flask>=3
+
+# System dependency (not pip): ffmpeg   (sudo apt install ffmpeg)
