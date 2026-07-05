@@ -1,146 +1,152 @@
 # Integrating pet_factory into DatsMe — cleanly and safely
 
-This is a concrete plan for adding a **"Make your own pet"** feature to DatsMe,
-written against DatsMe's actual architecture (FastAPI + central Postgres +
-per-user SQLite; Next.js frontend).
+A concrete plan for a **"Make your own pet"** feature, written against DatsMe's
+*actual* conventions (verified by reading `docs/datsme_coding_rules.md`,
+`docs/ARCHITECTURE_LIMITATIONS.md`, `docs/CONFIGURABLE_FEATURES.md`,
+`docs/GUIDE_SQLITE_AT_SCALE.md`, the `SPEC_PET_PHASE_*` specs,
+`REVIEW_PET_FEATURE_DESIGN_RISKS.md`, and the `lessons_learned/` sqlite notes).
 
-**Two non-negotiable design goals** (read this first):
+**Design goals**
 
-1. **Fully ignorable.** If this feature breaks, is disabled, or its GPU worker
-   is offline, DatsMe must run *exactly* as it does today. Nothing in the core
-   paths changes.
-2. **Neat and removable.** All new backend code lives in one folder
-   (`apps/pets/pet_gen/`); the frontend gets one component. Removing the feature
-   is: delete those files, delete one wrapped `include_router` line, drop one
-   table. Done.
+1. **Fully ignorable at runtime.** If the feature is off, buggy, or its GPU
+   worker is down, DatsMe runs exactly as today.
+2. **Neat & removable.** New backend code is a couple of prefixed files inside
+   `apps/pets/`; removing the feature is a short, well-defined checklist.
 
-`pet_factory` is **never imported by DatsMe.** It only runs on the GPU box.
+`pet_factory` is **never imported by DatsMe** — only by the GPU worker.
+
+> How "fully ignorable" is achieved *the DatsMe way*: a **runtime feature flag**
+> (disable instantly, no deploy) + a **self-contained module** nothing else
+> imports + FastAPI's per-request isolation (a bug in a pet endpoint is a 500 on
+> *that* request, never the app). DatsMe deliberately **fails loud at boot** and
+> does *not* wrap `include_router` in try/except — swallowing import errors is an
+> anti-pattern here (see `lessons_learned/learned_sqlalchemy_renamed_column_swallowed_by_cors_20260521.md`).
+> So: register the router plainly, and rely on the flag + module boundaries.
 
 ---
 
-## The shape of it
+## The shape
 
 ```
   BROWSER (Next.js)         DATSME API (FastAPI, no GPU)              GPU BOX
   ────────────────         ────────────────────────────             ───────
   "Make my pet: fox"  POST  /api/pets/gen/create                     worker.py
-   poll status              • new table pet_gen_jobs (Postgres)      • polls DatsMe (HTTPS+token)
-   pet appears in house     • worker endpoints (token)        ⇄      • import pet_factory
-                            • on complete → reuse DatsMe's            • make_pet_zip("fox")
-                              validate + create_pet + write_assets    • uploads .zip back
+   poll status              • table pet_gen_jobs (Postgres)          • polls DatsMe (HTTPS + signed)
+   pet appears in house     • flag pet_gen_enabled (system_config)  ⇄ • import pet_factory
+                            • on complete → REUSE DatsMe's own         • make_pet_zip(animal, breed_id="ai_<uuid>")
+                              validate + create_pet + write_assets     • uploads .zip back
                             NEVER imports pet_factory
 ```
 
-The queue is [`examples/queue_server.py`](examples/queue_server.py) rewritten as
-a DatsMe router; the worker is [`examples/worker.py`](examples/worker.py) run as-is.
-
 ---
 
-## Backend — all new, all in `apps/pets/pet_gen/`
+## Backend — new files inside `apps/pets/`, matching the existing flat layout
+
+DatsMe's pets module is **flat, prefix-named files** (`pet_routes.py`,
+`pet_service.py`, `pet_assets_service.py`), and `ARCHITECTURE_LIMITATIONS.md`
+("colocation forces context") cites exactly this directory as the model. So:
 
 ```
-apps/pets/pet_gen/
-  __init__.py         # exports pet_gen_router
-  models.py           # PetGenJob (its own table)
-  routes.py           # the router (user endpoints + worker endpoints)
-  config.py           # PET_GEN_ENABLED flag lookup
+apps/pets/pet_gen_routes.py     # the router (user + worker endpoints)
+apps/pets/pet_gen_config.py     # feature-flag defaults + reader (system_config)
+# PetGenJob model goes in social_models.py (see below) — NOT a new models file
 ```
 
-Nothing in existing files (`pet_routes.py`, `pet_service.py`,
-`pet_assets_service.py`, `pet_models.py`) is edited. The feature **reuses** them.
-
-### The one — and only — edit to a core file
-
-`api/main.py`, wrapped so a broken module can never stop the app from booting:
+Nothing in existing files is edited except **one plain line** in `main.py`:
 
 ```python
-# Pet generation (optional feature — isolated). If it fails to import for any
-# reason, DatsMe boots and runs normally without it.
-try:
-    from apps.pets.pet_gen import pet_gen_router
-    app.include_router(pet_gen_router)
-except Exception as e:
-    logging.getLogger(__name__).warning("pet_gen disabled: %s", e)
+from apps.pets.pet_gen_routes import pet_gen_router   # near the other pets import
+app.include_router(pet_gen_router)                     # plain, like every other router
 ```
 
-That try/except is the heart of goal #1: **the feature can fail completely and
-DatsMe is unaffected.**
+### The job table — define it in `social_models.py` (that's how Postgres tables register)
 
-### The table (`models.py`)
-
-A single new table in the central Postgres — no foreign keys into existing
-tables, so dropping it touches nothing else:
+DatsMe has **no Alembic**. Central tables are `SocialBase` ORM classes in
+`social_models.py`; `init_social_db()` runs `SocialBase.metadata.create_all(...)`
+at startup (additive — never drops). A model file that isn't imported into that
+metadata graph would simply never create its table. So add:
 
 ```python
-class PetGenJob(Base):
+# in social_models.py, alongside the other central models
+class PetGenJob(SocialBase):
     __tablename__ = "pet_gen_jobs"
     id         = Column(String, primary_key=True)
-    user_id    = Column(String, index=True)     # who asked (set at create time)
+    # FK + CASCADE so jobs vanish with the account (every central table does this)
+    user_id    = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     animal     = Column(String)
     status     = Column(String, default="queued")   # queued|processing|done|error
     breed_id   = Column(String, nullable=True)
     pct        = Column(Float, default=0.0)
     msg        = Column(String, default="")
     error      = Column(String, nullable=True)
-    created_at = Column(Float)
+    dedupe_key = Column(String, index=True)          # guard against duplicate pets on retry
+    created_at = Column(DateTime, default=utc_now)    # utc_now from helpers.py — never datetime.utcnow()
 ```
 
-### The routes (`routes.py`)
+### The feature flag — reuse `system_config` (don't invent one)
 
-**User-facing** (normal DatsMe auth):
+Copy the shape of `apps/personal_agent/agent_config.py` (the sanctioned pattern):
+a `_CONFIG_DEFAULTS` list of `(key, value, description)`, an `ensure_*` that
+inserts missing keys at startup, and a reader. Precedent key:
+`("agent_platform_enabled", "yes", ...)`. So use:
+
+```python
+# pet_gen_config.py
+PET_GEN_CONFIG_DEFAULTS = [("pet_gen_enabled", "yes", "Enable the 'make your own pet' generator")]
+def pet_gen_enabled(social_db) -> bool:
+    return get_config_value(social_db, "pet_gen_enabled") == "yes"   # helpers.py:get_config_value
+```
+
+### The routes (`pet_gen_routes.py`)
+
+**User-facing** (normal auth):
 
 ```python
 @pet_gen_router.post("/api/pets/gen/create")
-def create_job(body: CreateReq,
-               user: User = Depends(get_current_user),
-               social_db: Session = Depends(get_social_db)):
+def create_job(body: CreateReq, user=Depends(get_current_user), social_db=Depends(get_social_db)):
     if not pet_gen_enabled(social_db):
         raise HTTPException(503, "Pet generator is off")
-    # optional: cap queued jobs per user
+    dedupe = f"{user.id}:{body.animal.strip().lower()}"          # optional: 1 in-flight per animal
     jid = uuid4().hex[:12]
     social_db.add(PetGenJob(id=jid, user_id=user.id, animal=body.animal.strip()[:60],
-                            status="queued", created_at=time.time()))
+                            status="queued", dedupe_key=dedupe, created_at=utc_now()))
     social_db.commit()
     return {"job_id": jid}
 
 @pet_gen_router.get("/api/pets/gen/{jid}")
-def job_status(jid: str, user: User = Depends(get_current_user),
-               social_db: Session = Depends(get_social_db)):
+def job_status(jid, user=Depends(get_current_user), social_db=Depends(get_social_db)):
     j = social_db.query(PetGenJob).filter_by(id=jid, user_id=user.id).first()
     if not j: raise HTTPException(404)
-    return {"status": j.status, "pct": j.pct, "msg": j.msg, "error": j.error,
-            "breed_id": j.breed_id}
+    return {"status": j.status, "pct": j.pct, "msg": j.msg, "error": j.error, "breed_id": j.breed_id}
 
 @pet_gen_router.get("/api/pets/gen-health")
-def gen_health(social_db: Session = Depends(get_social_db)):
-    return {"enabled": pet_gen_enabled(social_db),
-            "worker_online": (time.time() - _last_seen[0]) < 90}
+def gen_health(social_db=Depends(get_social_db)):
+    return {"enabled": pet_gen_enabled(social_db), "worker_online": _worker_online()}
 ```
 
-**Worker-facing** (shared-secret header, NOT user auth). This is where the pet
-gets written into the user's house by **reusing DatsMe's own services** — the
-same calls `upload_my_pet` makes, minus the credit charge:
+**Worker-facing** — authenticate like DatsMe's other machine callers: a
+**hashed** service-account key (`service_accounts` table + `X-Admin-API-Key`
+pattern, revocable/audited) or the DPP HMAC-shared-secret pattern. Store a hash,
+never plaintext; never commit the secret.
+
+The `complete` handler creates the pet by **reusing DatsMe's own pet write path**
+— identical to `upload_my_pet`, minus the credit charge (creation is free, which
+the docs confirm is fine). Note the **per-user SQLite is opened via the context
+manager** (`GUIDE_SQLITE_AT_SCALE` + the sqlite-lifecycle lesson mandate this for
+worker/arbitrary-user writes — never `open + close`, never roll your own engine),
+and the **content-leads ordering** (user SQLite committed *before* the Postgres
+ownership row):
 
 ```python
-@pet_gen_router.post("/api/pets/gen/claim")
-def claim(social_db=Depends(get_social_db), _=Depends(require_worker)):
-    j = social_db.query(PetGenJob).filter_by(status="queued")\
-                 .order_by(PetGenJob.created_at).first()
-    if not j: return {}
-    j.status = "processing"; social_db.commit()
-    return {"job_id": j.id, "animal": j.animal}
-
 @pet_gen_router.post("/api/pets/gen/complete")
-async def complete(job_id: str = Form(...), breed_id: str = Form(...),
-                   file: UploadFile = File(...),
-                   social_db=Depends(get_social_db), _=Depends(require_worker)):
+async def complete(job_id=Form(...), file: UploadFile = File(...),
+                   social_db=Depends(get_social_db), _=Depends(require_worker_auth)):
     j = social_db.query(PetGenJob).filter_by(id=job_id).first()
     if not j: raise HTTPException(404)
     try:
         body = await file.read(pet_assets_service._admin_helpers()[0] + 1)
-        parsed = pet_assets_service.validate_uploaded_bundle(body)   # SAME validator as upload
-        user_db = open_user_database(j.user_id)                      # write into ASKER's SQLite
-        try:
+        parsed = pet_assets_service.validate_uploaded_bundle(body)          # SAME validator as upload
+        with open_user_database_context(j.user_id) as user_db:              # context manager (prescribed)
             pet = pet_service.create_pet(user_db, breed_id=parsed["breed_id"],
                     name=pet_service.validate_name(f"My {parsed['display_name']}"),
                     personality_profile={}, source="ai_generated",
@@ -150,51 +156,42 @@ async def complete(job_id: str = Form(...), breed_id: str = Form(...),
                     sheet_png=parsed["sheet_png"], manifest_json=parsed["manifest_json"],
                     package_json=parsed["package_json"], source="ai_generated",
                     source_breed_id=parsed["breed_id"])
-            user_db.commit()
-        finally:
-            user_db.close()
+            user_db.commit()                                                 # commit assets yourself (docstring)
         _write_ownership(social_db, pet_id=pet.id, user_id=j.user_id, source="ai_generated")
         j.status = "done"; j.breed_id = parsed["breed_id"]; social_db.commit()
     except Exception as e:
-        j.status = "error"; j.error = str(e)[:300]; social_db.commit()   # never a partial pet
+        j.status = "error"; j.error = str(e)[:300]; social_db.commit()      # never a partial pet
     return {"ok": True}
 ```
 
-(`progress` and `fail` endpoints are trivial — just update the row. Copy the
-shapes from `examples/queue_server.py`.)
+(`claim` / `progress` / `fail` are trivial row updates — copy the shapes from
+[`examples/queue_server.py`](examples/queue_server.py).)
 
-Note it **does not charge credits** — "make your own pet" is free. If you want a
-charge, call `require_credits(...)` in `create_job` like the adoption path does.
+### Two correctness notes the DatsMe pet specs require
+
+- **Namespace the breed_id.** `REVIEW_PET_FEATURE_DESIGN_RISKS.md` Risk #6:
+  a synthesized `breed_id` that collides with a platform catalog breed makes the
+  frontend show the wrong label/metadata. Have the worker pass a namespaced id —
+  `make_pet_zip(animal, breed_id=f"ai_{uuid4().hex}")` — so it can never collide.
+  (`make_pet_zip` already accepts a `breed_id` argument, and the manifest now
+  carries `schema_version: "pet_manifest.v1"`.)
+- **`source` is a free-form string** (no enum/validation), so `"ai_generated"`
+  works. If you want to match the two documented vocabularies exactly, the real
+  upload route uses `source="user_uploaded"` on `create_pet` and `source="upload"`
+  on `write_assets`/`_write_ownership`; pick per-table consistently. Nothing
+  branches on `source`, so this is cosmetic.
 
 ---
 
-## Frontend — one addition, mirrors the existing upload
+## Frontend — one addition, mirroring the existing upload button
 
-In `web/src/app/[slug]/settings/pet/page.tsx`, next to the existing
-"⬆ Upload a pet bundle (.zip)" button, add a "🪄 Make your own pet" input +
-button. It's the same pattern as `handleUploadBundle`, but posts `{animal}` and
-polls:
-
-```ts
-async function handleGenerate(animal: string) {
-  const r = await fetch(`${apiBase}/api/pets/gen/create`, {
-    method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() },
-    credentials: "include", body: JSON.stringify({ animal }),
-  });
-  const { job_id } = await r.json();
-  const t = setInterval(async () => {
-    const j = await (await fetch(`${apiBase}/api/pets/gen/${job_id}`,
-                                 { credentials: "include", headers: authHeaders() })).json();
-    setProgress(j.pct, j.msg);
-    if (j.status === "done")  { clearInterval(t); reloadPets(); }   // pet already in the house
-    if (j.status === "error") { clearInterval(t); flashError(j.error); }
-  }, 1500);
-}
-```
-
-Gate the whole UI on `GET /api/pets/gen-health`: hide/disable the button when
-`enabled` is false or `worker_online` is false. So when the GPU box is off, users
-just don't see a broken feature — and the rest of Settings → Pet works normally.
+In `web/src/app/[slug]/settings/pet/page.tsx`, next to "⬆ Upload a pet bundle
+(.zip)", add a "🪄 Make your own pet" input + button. Same pattern as
+`handleUploadBundle`, but it POSTs `{animal}` to `/api/pets/gen/create`, polls
+`/api/pets/gen/{id}`, and on `done` calls `reloadPets()` (the pet is already in
+the house). Gate the whole control on `GET /api/pets/gen-health` — hide/disable
+it when `enabled` is false or `worker_online` is false, so an offline GPU box
+just means the button isn't there and the rest of Settings → Pet works.
 
 ---
 
@@ -202,33 +199,34 @@ just don't see a broken feature — and the rest of Settings → Pet works norma
 
 ```bash
 pip install "git+https://github.com/jeffhancook/datsme-pet-factory"
-QUEUE_URL=https://<datsme-api>  WORKER_TOKEN=<secret>  python -m examples.worker
+QUEUE_URL=https://<datsme-api>  WORKER_TOKEN=<signed-secret>  python -m examples.worker
 ```
-(with ComfyUI + models running — see README). This is the only place
-`pet_factory` is imported.
+(with ComfyUI + models running — see README). Only place `pet_factory` is imported.
 
 ---
 
-## Failure modes — every one degrades to "feature just isn't there"
+## Failure modes — everything degrades to "the feature just isn't there"
 
-| What breaks | What happens | Is DatsMe core affected? |
-|-------------|--------------|--------------------------|
-| `pet_gen` module import error | `main.py` try/except logs a warning, skips the router | **No** — app boots normally |
-| Feature flag `PET_GEN_ENABLED` off | `create` returns 503; frontend hides the button | **No** |
-| GPU worker offline | health shows `worker_online:false`; button disabled; queued jobs wait | **No** |
-| Generation fails / bad bundle | `complete` catches it, marks job `error`, writes **nothing** | **No** — no partial pet, existing pets untouched |
-| Whole feature is buggy | Turn the flag off, or remove the files (below) | **No** |
+| What breaks | What happens | DatsMe core affected? |
+|-------------|--------------|-----------------------|
+| Flag `pet_gen_enabled=no` | `create` → 503; frontend hides the button | **No** (instant, no deploy) |
+| GPU worker offline | health `worker_online:false`; button hidden; jobs wait | **No** |
+| A generation fails / bad bundle | `complete` catches it, marks job `error`, writes **nothing** | **No** — no partial pet, existing pets untouched |
+| A pet-gen endpoint throws at runtime | FastAPI returns 500 for *that* request only | **No** |
+| Job retried | `dedupe_key` prevents a duplicate pet | **No** |
+| `pet_gen` code has an import error | Fails **loud** at boot (by DatsMe convention — caught in CI/dev, not shipped) | boot fails until fixed — *intended*; don't ship a broken module |
 
-Because the `complete` handler runs the **same `validate_uploaded_bundle`** and
-**same `write_assets`** as the existing upload button, a generated pet can never
-be "more dangerous" than a hand-uploaded one.
+Because `complete` runs the **same `validate_uploaded_bundle` + `write_assets`**
+as the existing upload button, a generated pet can never be riskier than a
+hand-uploaded one.
 
 ---
 
 ## Removing the feature entirely
 
-1. Delete `apps/pets/pet_gen/` and the frontend component.
-2. Delete the wrapped `include_router` block in `main.py`.
-3. `DROP TABLE pet_gen_jobs;`
+1. Delete `apps/pets/pet_gen_routes.py` and `apps/pets/pet_gen_config.py`, the
+   frontend control, and the `PetGenJob` class in `social_models.py`.
+2. Delete the two `pet_gen_router` lines in `main.py`.
+3. `DROP TABLE pet_gen_jobs;` and remove the `pet_gen_enabled` `system_config` row.
 
-DatsMe is byte-for-byte back to today. No core file was ever modified.
+DatsMe is back to today — no existing pet code was ever modified.

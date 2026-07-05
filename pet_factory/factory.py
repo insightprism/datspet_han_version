@@ -293,6 +293,7 @@ def pack_datsme_bundle(walk_frames, idle_frames, breed_id, display_name,
         sheet.paste(fr, ((i % columns) * frame_size, (i // columns) * frame_size), fr)
 
     manifest = {
+        "schema_version": "pet_manifest.v1",
         "columns": columns, "rows": rows, "frame_width": frame_size, "frame_height": frame_size,
         "animations": {
             "walk": {"frames": idx_a, "fps": fps, "loop": True, "runtime_role": "active"},
