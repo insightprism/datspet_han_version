@@ -1,0 +1,220 @@
+================================================================================
+ pet_factory — HOW IT WORKS
+================================================================================
+
+Plain-English explanation of what this thing does and how, top to bottom.
+If you're integrating it into DatsMe, also read README.md ("how to use it in
+DatsMe"). This file is the "why and how" behind the code.
+
+
+--------------------------------------------------------------------------------
+ 1. THE ONE-SENTENCE VERSION
+--------------------------------------------------------------------------------
+
+You give it an animal name ("red panda"). It draws that animal, animates it
+walking and sitting, cuts out the background, and hands you a .zip that is a
+finished DatsMe pet — all generated locally on a graphics card, no paid AI APIs.
+
+
+--------------------------------------------------------------------------------
+ 2. THE PIPELINE (what happens when you call make_pet_zip("red panda"))
+--------------------------------------------------------------------------------
+
+    "red panda"
+        |
+        v
+   [ STEP 1: DRAW THE BASE SPRITE ]  ~10s
+   A text-to-image model (Z-Image) draws one still picture of the animal,
+   standing in side profile, facing right, on a white background, in a soft
+   cartoon "storybook" style. This single picture is the character that both
+   animations will be built from — so the walk and the idle look like the same
+   pet (not two different-looking red pandas).
+        |
+        v
+   [ STEP 2: ANIMATE THE WALK ]  ~70s
+   An image-to-video model (Wan 2.2) takes that still and animates it into a
+   short looping clip of the animal doing a walk cycle IN PLACE (legs moving,
+   body bobbing, but not sliding across the screen — the game moves the pet
+   around; the sprite just needs to look like it's walking). It's made to loop
+   seamlessly (first frame = last frame). ~16 frames.
+        |
+        v
+   [ STEP 3: ANIMATE THE IDLE ]  ~70s
+   The SAME still is animated again, this time into a gentle "idle" loop
+   (breathing, a small sway) for when the pet is standing still. ~16 frames.
+        |
+        v
+   [ STEP 4: CUT OUT THE BACKGROUND ]  ~13s on GPU
+   Each of the ~32 frames still has a white background. An AI cutout model
+   (birefnet) finds the animal in each frame and makes everything else
+   transparent, so the pet can sit on any web page without a white box around it.
+        |
+        v
+   [ STEP 5: PACK IT INTO A DATSME BUNDLE ]  <1s
+   All the frames are shrunk to a uniform size and laid out in a grid on one big
+   transparent PNG ("sprite sheet"). A manifest.json is written that says which
+   grid cells belong to "walk" vs "idle", how fast to play them, etc. It's all
+   zipped up.
+        |
+        v
+   ("red_panda", <zip bytes>)         Total: ~3 minutes on an RTX 3090.
+
+
+--------------------------------------------------------------------------------
+ 3. WHY THE DESIGN CHOICES
+--------------------------------------------------------------------------------
+
+* One base sprite for BOTH animations.
+  Generating the walk and idle from the same still keeps the character
+  identical. Generating two separate stills would give you two subtly different
+  animals.
+
+* "facing right" is forced in the prompt.
+  DatsMe stores pets facing right and automatically mirrors them when the pet
+  walks left. If the source faced left, the mirroring logic would be backwards
+  and the pet would moonwalk. So we make the model draw it facing right.
+
+* birefnet for the cutout (not simpler methods).
+  Earlier attempts used a "white background remover" (delete near-white pixels)
+  and lighter AI models. Those FAILED on white/light animals: a polar bear or
+  swan on a white background would come out translucent, hollow (just an
+  outline), or with the background left behind on some frames. birefnet is a
+  stronger model that finds the actual animal shape and keeps it solid every
+  time, white fur or not. It's slower, but reliability matters more than speed
+  for a hands-off tool people use unattended.
+
+* Every frame goes through birefnet.
+  A clever "fast shortcut for easy frames, birefnet only for hard ones" hybrid
+  was built and then removed — the shortcut had too many failure modes that were
+  hard to detect automatically, and it shipped a few broken pets. Simple and
+  reliable beat fast and occasionally-wrong.
+
+* GPU for the cutout.
+  Running birefnet on the graphics card instead of the CPU is ~12x faster
+  (~0.4s/frame vs ~4.6s/frame), cutting total time from ~5 min to ~3 min, with
+  no loss of quality. It falls back to CPU automatically if the GPU libraries
+  aren't set up.
+
+
+--------------------------------------------------------------------------------
+ 4. THE ARCHITECTURE (why there's a "queue" and a "worker")
+--------------------------------------------------------------------------------
+
+The catch: this pipeline needs a big graphics card (~24 GB VRAM). A normal web
+server (like the one hosting DatsMe) doesn't have one. So you CAN'T just run
+make_pet_zip() on the web server.
+
+The solution is to split it into two pieces:
+
+    USER'S BROWSER            WEB SERVER (no GPU)            GPU BOX (your PC)
+    -------------             ------------------            -----------------
+    types "red panda"  --->   queue_server.py               worker.py
+    waits, sees progress      - stores the job in a queue    - polls the queue
+    downloads the .zip  <---   - hands it to the worker  <--> - runs make_pet_zip()
+                               - serves the finished .zip     - uploads .zip back
+
+  * queue_server.py  runs next to your backend. It just holds a list of jobs and
+    stores finished .zips. No GPU needed.
+  * worker.py        runs on the machine WITH the graphics card (and ComfyUI).
+    It repeatedly asks the queue "any jobs?", does the slow GPU work, and sends
+    the result back.
+
+The worker constantly polling also acts as a heartbeat, so the website can show
+"generator online / offline" and disable the button when your GPU box is off.
+
+(If your backend DOES have a GPU, you can skip all this and call make_pet_zip()
+directly from a background task.)
+
+
+--------------------------------------------------------------------------------
+ 5. WHAT COMFYUI IS (the engine underneath)
+--------------------------------------------------------------------------------
+
+The actual image/video models run inside ComfyUI, a local AI generation server.
+pet_factory doesn't contain the models — it sends ComfyUI a "recipe" (a workflow
+graph: load this model, encode this prompt, run this many steps, save the
+result) over HTTP, waits, and reads back the file ComfyUI produced. Think of
+ComfyUI as the kitchen and pet_factory as the person handing it order tickets.
+
+That's why the GPU box needs ComfyUI running with the specific model files
+installed (listed in README.md). pet_factory just orchestrates them.
+
+
+--------------------------------------------------------------------------------
+ 6. THE OUTPUT: A "DATSME BREED BUNDLE"
+--------------------------------------------------------------------------------
+
+The .zip contains three files:
+
+  <breed_id>_sprite.png   One transparent image holding every animation frame in
+                          a grid. Cell size and grid width are fixed numbers.
+                          Frame #N lives at column (N mod columns), row (N div
+                          columns), reading left-to-right, top-to-bottom.
+
+  manifest.json           The "how to play it" file. Lists the grid size and,
+                          for each animation ("walk", "idle"), which frame
+                          numbers it uses, its speed (fps), whether it loops, and
+                          its role ("active" = plays while moving, "rest" =
+                          idle). Also records that the art faces right and can be
+                          mirrored.
+
+  package.json            The pet's identity: a breed_id, a display name, and a
+                          movement class (how it should move — "mammalian_quad-
+                          ruped" by default).
+
+This is EXACTLY the format DatsMe already accepts when a user uploads a pet, so
+it drops in with no conversion.
+
+
+--------------------------------------------------------------------------------
+ 7. HOW IT PLUGS INTO DATSME
+--------------------------------------------------------------------------------
+
+DatsMe already lets users upload a pet bundle (Settings -> Pet -> "Upload a pet
+bundle (.zip)"). That upload goes to POST /api/pets/me/upload and is checked by
+validate_uploaded_bundle(). Our .zip passes that check unchanged.
+
+So "let users make their own pet" is basically:
+
+    user types an animal
+        -> DatsMe backend puts a job on the queue
+        -> the GPU worker generates the .zip (~3 min)
+        -> DatsMe either:
+             (a) feeds the .zip to its own /api/pets/me/upload path, or
+             (b) writes it straight into the user's pet storage with
+                 pet_assets_service.write_assets(...)  (free, no credit charge)
+        -> the new pet shows up in the user's "house"
+
+The queue_server.py + worker.py in examples/ are a working reference for the
+job-queue half; the DatsMe backend would host its own version of that queue.
+
+
+--------------------------------------------------------------------------------
+ 8. THE FILES IN THIS REPO
+--------------------------------------------------------------------------------
+
+  pet_factory/factory.py      The whole pipeline. make_pet_zip() is the main
+                              entry point; pack_datsme_bundle() packs frames into
+                              a bundle. The ComfyUI "recipes" and the cutout live
+                              here too.
+  pet_factory/__init__.py     Makes `from pet_factory import make_pet_zip` work.
+  examples/cli.py             Command-line: generate one pet to a .zip.
+  examples/queue_server.py    The no-GPU-side job queue + status API (reference).
+  examples/worker.py          The GPU-side worker that runs the pipeline.
+  README.md                   Install, requirements, config, DatsMe integration.
+  requirements.txt / pyproject.toml   Dependencies.
+
+
+--------------------------------------------------------------------------------
+ 9. WHAT YOU NEED TO RUN IT
+--------------------------------------------------------------------------------
+
+  - A machine with an NVIDIA GPU (~24 GB VRAM, e.g. RTX 3090/4090).
+  - ComfyUI installed and running on that machine, with the model files and the
+    VideoHelperSuite custom node (see README.md "Requirements").
+  - ffmpeg and Python 3.10+.
+  - `pip install -e ".[gpu]"` (or ".[cpu]" for slower CPU cutout).
+
+Then: `python examples/cli.py "penguin" -o penguin.zip`
+
+================================================================================
