@@ -31,6 +31,11 @@ ways to integrate:
   [`examples/`](examples/). Your backend enqueues `{animal}`; a small worker on
   a GPU box polls the queue, runs `make_pet_zip()`, and uploads the `.zip` back.
 
+> **Full isolation-first integration plan:** see
+> **[DATSME_INTEGRATION.md](DATSME_INTEGRATION.md)** — concrete file layout,
+> route stubs, the feature flag, and a failure-mode table showing DatsMe keeps
+> running normally if this feature breaks, is off, or the GPU box is down.
+
 ### Wiring the result into DatsMe
 
 The generated `.zip` passes DatsMe's `validate_uploaded_bundle()` unchanged. To
