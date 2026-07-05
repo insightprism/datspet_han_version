@@ -52,11 +52,17 @@ apps/pets/pet_gen_config.py     # feature-flag defaults + reader (system_config)
 # PetGenJob model goes in social_models.py (see below) — NOT a new models file
 ```
 
-Nothing in existing files is edited except **one plain line** in `main.py`:
+Register it the same way `pets_router` is — re-exported from the package
+`__init__.py` (its docstring says "the main application imports only from this
+file"):
 
 ```python
-from apps.pets.pet_gen_routes import pet_gen_router   # near the other pets import
-app.include_router(pet_gen_router)                     # plain, like every other router
+# apps/pets/__init__.py — add:
+from apps.pets.pet_gen_routes import pet_gen_router
+
+# main.py — next to `from apps.pets import pets_router`:
+from apps.pets import pet_gen_router
+app.include_router(pet_gen_router)          # plain include, like every other router
 ```
 
 ### The job table — define it in `social_models.py` (that's how Postgres tables register)
@@ -67,12 +73,14 @@ at startup (additive — never drops). A model file that isn't imported into tha
 metadata graph would simply never create its table. So add:
 
 ```python
-# in social_models.py, alongside the other central models
+# in social_models.py, alongside the other central models.
+# NOTE: import utc_now from time_utils here (social_models.py imports
+# `from time_utils import utc_now` to avoid a circular import via helpers).
 class PetGenJob(SocialBase):
     __tablename__ = "pet_gen_jobs"
     id         = Column(String, primary_key=True)
     # FK + CASCADE so jobs vanish with the account (every central table does this)
-    user_id    = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    user_id    = Column(String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     animal     = Column(String)
     status     = Column(String, default="queued")   # queued|processing|done|error
     breed_id   = Column(String, nullable=True)
@@ -80,7 +88,9 @@ class PetGenJob(SocialBase):
     msg        = Column(String, default="")
     error      = Column(String, nullable=True)
     dedupe_key = Column(String, index=True)          # guard against duplicate pets on retry
-    created_at = Column(DateTime, default=utc_now)    # utc_now from helpers.py — never datetime.utcnow()
+    # DatsMe convention: NO `default=` on timestamps — the caller passes
+    # created_at=utc_now() (see every model in social_models.py).
+    created_at = Column(DateTime, nullable=False)
 ```
 
 ### The feature flag — reuse `system_config` (don't invent one)
@@ -129,13 +139,24 @@ def gen_health(social_db=Depends(get_social_db)):
 pattern, revocable/audited) or the DPP HMAC-shared-secret pattern. Store a hash,
 never plaintext; never commit the secret.
 
-The `complete` handler creates the pet by **reusing DatsMe's own pet write path**
-— identical to `upload_my_pet`, minus the credit charge (creation is free, which
-the docs confirm is fine). Note the **per-user SQLite is opened via the context
-manager** (`GUIDE_SQLITE_AT_SCALE` + the sqlite-lifecycle lesson mandate this for
-worker/arbitrary-user writes — never `open + close`, never roll your own engine),
-and the **content-leads ordering** (user SQLite committed *before* the Postgres
-ownership row):
+The `complete` handler creates the pet with the **same write calls
+`upload_my_pet` uses** — `create_pet` → `write_assets` → `_write_ownership` —
+minus the credit charge (creation is free; the docs confirm that's fine). Two
+differences from `upload_my_pet`, both deliberate:
+
+- It opens the per-user SQLite via **`open_user_database_context(user_id)`**
+  (a worker has no request-scoped user; `GUIDE_SQLITE_AT_SCALE` + the
+  sqlite-lifecycle lesson mandate the context manager for worker/arbitrary-user
+  writes — never `open + close`, never roll your own engine).
+- **`_write_ownership` is currently a private (`_`) function in
+  `pet_routes.py`.** Importing another module's private symbol is brittle;
+  promote it to a small public helper (e.g. `pet_ownership_service.write_ownership`)
+  that both `pet_routes` and `pet_gen_routes` call. (Both files sit in
+  `apps/pets/`, so this is a one-line refactor, not new surface.)
+
+Keep the **content-leads ordering** — the user SQLite is committed *before* the
+Postgres ownership row (`create_pet` self-commits the pets row; `write_assets`
+requires the caller to commit; then ownership):
 
 ```python
 @pet_gen_router.post("/api/pets/gen/complete")
@@ -186,12 +207,20 @@ async def complete(job_id=Form(...), file: UploadFile = File(...),
 ## Frontend — one addition, mirroring the existing upload button
 
 In `web/src/app/[slug]/settings/pet/page.tsx`, next to "⬆ Upload a pet bundle
-(.zip)", add a "🪄 Make your own pet" input + button. Same pattern as
-`handleUploadBundle`, but it POSTs `{animal}` to `/api/pets/gen/create`, polls
-`/api/pets/gen/{id}`, and on `done` calls `reloadPets()` (the pet is already in
-the house). Gate the whole control on `GET /api/pets/gen-health` — hide/disable
-it when `enabled` is false or `worker_online` is false, so an offline GPU box
-just means the button isn't there and the rest of Settings → Pet works.
+(.zip)", add a "🪄 Make your own pet" input + button. The create/status/health
+calls are plain JSON, so use the page's **`apiFetch`** wrapper (it attaches the
+`Bearer` token automatically) — *not* `handleUploadBundle`'s raw `fetch`, which
+exists only because it sends a binary blob. For feedback reuse the page's real
+helpers **`flashStatus` / `flashError` / `setBusy`** (there's no progress-bar
+state today — add one or just show `flashStatus(j.msg)`). Flow: POST `{animal}`
+to `/api/pets/gen/create`, poll `/api/pets/gen/{id}`, and on `done` call
+`reloadPets()` (the pet is already in the house).
+
+Gate the control on `GET /api/pets/gen-health` — hide/disable it when `enabled`
+is false or `worker_online` is false, so an offline GPU box just means the button
+isn't there and the rest of Settings → Pet works. **`gen-health` must always
+return HTTP 200** (with `{enabled, worker_online}`): `apiFetch` throws on any
+non-2xx, so a 503 would make the poll error every tick.
 
 ---
 
@@ -211,7 +240,8 @@ QUEUE_URL=https://<datsme-api>  WORKER_TOKEN=<signed-secret>  python -m examples
 |-------------|--------------|-----------------------|
 | Flag `pet_gen_enabled=no` | `create` → 503; frontend hides the button | **No** (instant, no deploy) |
 | GPU worker offline | health `worker_online:false`; button hidden; jobs wait | **No** |
-| A generation fails / bad bundle | `complete` catches it, marks job `error`, writes **nothing** | **No** — no partial pet, existing pets untouched |
+| Worker generation fails | worker calls `/fail`; job → `error`; nothing is written | **No** |
+| Invalid bundle at `complete` | rejected by `validate_uploaded_bundle` **before any pet is written**; job → `error` | **No** — same safety as the upload button |
 | A pet-gen endpoint throws at runtime | FastAPI returns 500 for *that* request only | **No** |
 | Job retried | `dedupe_key` prevents a duplicate pet | **No** |
 | `pet_gen` code has an import error | Fails **loud** at boot (by DatsMe convention — caught in CI/dev, not shipped) | boot fails until fixed — *intended*; don't ship a broken module |
