@@ -115,6 +115,28 @@ def _static_image_wf(prompt, seed):
     }
 
 
+def _img2img_wf(prompt, image_path, seed, denoise=0.6):
+    """Z-Image-Turbo image-to-image (pet remix): redraw an existing sprite
+    toward a new description while keeping its overall shape and identity.
+    `denoise` is how far to drift from the source (0.45 subtle recolor …
+    0.8 near-redesign); at 1.0 the source image would be ignored entirely."""
+    return {
+        "1": {"class_type": "UNETLoader", "inputs": {"unet_name": ZIMAGE_UNET, "weight_dtype": "default"}},
+        "2": {"class_type": "VAELoader", "inputs": {"vae_name": ZIMAGE_VAE}},
+        "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": ZIMAGE_TE, "type": "lumina2"}},
+        "4": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
+        "5": {"class_type": "VHS_LoadImagePath", "inputs": {"image": image_path, "custom_width": 1024, "custom_height": 1024}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": prompt}},
+        "7": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": NEG}},
+        "8": {"class_type": "VAEEncode", "inputs": {"pixels": ["5", 0], "vae": ["2", 0]}},
+        "9": {"class_type": "KSampler", "inputs": {
+            "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["8", 0],
+            "seed": seed, "steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": denoise}},
+        "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["2", 0]}},
+        "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": "petfactory_remix"}},
+    }
+
+
 def _loop_wf(prompt, start_image_path, seed, length=17, fps=16, width=704, height=704):
     """Wan 2.2-I2V-14B looping sprite (two-expert MoE + LightX2V 4-step LoRA).
     Same image as first AND last frame -> seamless loop. Saved as animated WebP."""
@@ -248,12 +270,39 @@ def _slug(animal: str) -> str:
     return ("".join(c for c in s if c.isalnum() or c in "_-")[:40]) or "pet"
 
 
+def _prep_reference_image(src) -> Path:
+    """Normalize a caller-supplied reference image for the Wan I2V stage:
+    flatten any transparency onto white and pad to a square canvas (the video
+    canvas is square; padding preserves the animal's proportions where
+    stretching would distort them). Returns the path of a PNG that ComfyUI can
+    load. `src` is a path or anything PIL.Image.open accepts."""
+    img = Image.open(src).convert("RGBA")
+    side = max(img.size)
+    canvas = Image.new("RGBA", (side, side), (255, 255, 255, 255))
+    canvas.paste(img, ((side - img.width) // 2, (side - img.height) // 2), img)
+    fd, out = tempfile.mkstemp(prefix="pf_ref_", suffix=".png")
+    os.close(fd)
+    canvas.convert("RGB").save(out, "PNG")
+    return Path(out)
+
+
 def _base_prompt(animal: str) -> str:
     # "facing right" matters: DatsMe authors pets facing right and mirrors them
     # for leftward movement, so the source must face right.
     return (f"a cute cartoon {animal}, side profile view, facing right, standing, "
             "soft pastel colors, muted palette, simple flat shading, white background, "
             "storybook style")
+
+
+def _remix_prompt(animal: str) -> str:
+    # The remix prompt deliberately DROPS the "soft pastel colors, muted
+    # palette" clause of _base_prompt: a remix description is usually about
+    # changing the color ("purple monkey"), and the pastel clause fights the
+    # requested color harder than the img2img source image does. Emphasizing
+    # the description twice helps it win over the source's original colors.
+    return (f"a cute cartoon {animal}, exactly {animal}, side profile view, "
+            "facing right, standing, rich saturated colors, simple flat shading, "
+            "white background, storybook style")
 
 
 def pack_datsme_bundle(walk_frames, idle_frames, breed_id, display_name,
@@ -313,13 +362,41 @@ def pack_datsme_bundle(walk_frames, idle_frames, breed_id, display_name,
     return buf.getvalue()
 
 
-def make_pet_zip(animal: str, on_progress=None, breed_id=None):
+def render_design_still(description: str, reference_image, strength) -> bytes:
+    """One img2img redraw of `reference_image` toward `description` — the
+    design page's ~10 s preview (the same redraw the full remix pipeline
+    would run first). Returns the redrawn still as PNG bytes. Save it and
+    hand it back to make_pet_zip(reference_image=...) WITHOUT remix_strength
+    to animate exactly what was previewed."""
+    seed = random.randint(1, 2**31)
+    prepped = _prep_reference_image(reference_image)
+    denoise = min(0.9, max(0.3, float(strength)))
+    out = COMFY_OUTPUT_DIR / _run(_img2img_wf(_remix_prompt(description), str(prepped), seed, denoise))
+    _wait_stable(out)
+    return out.read_bytes()
+
+
+def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=None,
+                 remix_strength=None, display_name=None):
     """Generate a complete DatsMe pet from an animal name.
 
     Args:
-        animal:       e.g. "red panda", "penguin", "baby dragon".
-        on_progress:  optional callback(message: str, fraction: float in 0..1).
-        breed_id:     optional slug override (else derived from `animal`).
+        animal:          e.g. "red panda", "penguin", "baby dragon".
+        on_progress:     optional callback(message: str, fraction: float in 0..1).
+        breed_id:        optional slug override (else derived from `animal`).
+        reference_image: optional path to an image to use INSTEAD of generating
+                         a base sprite from `animal`. Without remix_strength the
+                         animations are built from this exact image, so it should
+                         show one animal, side profile, facing right (DatsMe
+                         mirrors pets for leftward movement). `animal` still
+                         names the pet and steers the motion prompts.
+        remix_strength:  with reference_image, redraw the image toward `animal`'s
+                         description first (img2img) instead of animating it
+                         as-is — the pet-remix path ("same monkey, but purple").
+                         0.45 = subtle recolor … 0.8 = near-redesign.
+        display_name:    optional human-facing name for the bundle. Defaults to
+                         animal.title() — override when `animal` is a long
+                         composed design prompt that would make an ugly name.
 
     Returns (breed_id, zip_bytes). Takes ~3 min on an RTX 3090. The .zip is a
     DatsMe breed bundle — upload it via DatsMe's POST /api/pets/me/upload.
@@ -331,9 +408,19 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None):
     animal = (animal or "").strip()[:60] or "pet"
     seed = random.randint(1, 2**31)
 
-    prog("Drawing the base sprite…", 0.10)
-    base = COMFY_OUTPUT_DIR / _run(_static_image_wf(_base_prompt(animal), seed))
-    _wait_stable(base)
+    if reference_image and remix_strength:
+        prog("Redrawing your design…", 0.10)
+        prepped = _prep_reference_image(reference_image)
+        denoise = min(0.9, max(0.3, float(remix_strength)))
+        base = COMFY_OUTPUT_DIR / _run(_img2img_wf(_remix_prompt(animal), str(prepped), seed, denoise))
+        _wait_stable(base)
+    elif reference_image:
+        prog("Preparing the reference image…", 0.10)
+        base = _prep_reference_image(reference_image)
+    else:
+        prog("Drawing the base sprite…", 0.10)
+        base = COMFY_OUTPUT_DIR / _run(_static_image_wf(_base_prompt(animal), seed))
+        _wait_stable(base)
 
     prog("Animating the walk…", 0.35)
     walk_fn = _run(_loop_wf(f"cute cartoon {animal} walking, side profile, facing right" + WALK_SUFFIX,
@@ -360,6 +447,7 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None):
         idle_frames = idle_frames[:-1]
 
     breed_id = breed_id or _slug(animal)
-    zip_bytes = pack_datsme_bundle(walk_frames, idle_frames, breed_id, animal.title())
+    zip_bytes = pack_datsme_bundle(walk_frames, idle_frames, breed_id,
+                                   display_name or animal.title())
     prog("Done!", 1.0)
     return breed_id, zip_bytes

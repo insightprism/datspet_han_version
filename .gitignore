@@ -11,3 +11,6 @@ examples/results/
 examples/queue.db
 *.zip
 .worker_token
+logs/
+webui/datspet_output/
+created_pets/*/
