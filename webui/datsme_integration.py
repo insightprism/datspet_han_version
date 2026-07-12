@@ -605,6 +605,8 @@ async def revoke_user(request: Request):
         body = json.loads(raw or b"{}")
     except json.JSONDecodeError:
         raise HTTPException(status_code=400, detail="invalid JSON body")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="body must be a JSON object")
     user_id = body.get("user_id")
     action = body.get("action", "delete")
     if not user_id:

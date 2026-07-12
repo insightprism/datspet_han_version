@@ -100,3 +100,12 @@ def test_signature_bound_to_path_cannot_be_replayed_cross_endpoint(client, dpp_e
     r = _revoke(client, body, export_sig)
     assert r.status_code == 401, r.text
     assert db.get_pet("ownedpet0005") is not None
+
+
+def test_revoke_signed_non_object_body_400(client, dpp_env):
+    """A correctly-signed but non-object JSON body (list/string) must 400, not
+    500 — json.loads accepts it, but the handler needs a dict."""
+    body = b'[1,2,3]'
+    good = sign_host_request(TEST_SECRET, "POST", "/partner/revoke", body)
+    r = _revoke(client, body, good)
+    assert r.status_code == 400, r.text
