@@ -87,3 +87,46 @@ export function petManifestUrl(petId: string): string {
 export function petZipUrl(petId: string): string {
   return `${API_URL}/api/pets/${encodeURIComponent(petId)}/zip`;
 }
+
+// ---------------------------------------------------------------------------
+// DatsMe partner (DPP) — only meaningful when launched from DatsMe. In
+// standalone mode getDatsmeSession() returns {launched:false} and the UI keeps
+// its normal Save-to-house flow.
+// ---------------------------------------------------------------------------
+export interface DatsmeSession {
+  launched: boolean;
+  user_id?: string;
+  capabilities?: string[];
+  cost?: number | null;
+}
+
+export async function getDatsmeSession(): Promise<DatsmeSession> {
+  // credentials: the launch cookie is httponly, so it must ride cross-origin.
+  const r = await fetch(`${API_URL}/api/datsme/session`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!r.ok) return { launched: false };
+  return r.json();
+}
+
+export interface AcceptResult {
+  redirect_url?: string;
+  queued?: boolean;
+  message?: string;
+}
+
+export async function acceptPetToDatsme(petId: string): Promise<AcceptResult> {
+  const r = await fetch(`${API_URL}/api/datsme/accept`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pet_id: petId }),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    // 402 (credits), 409 (house full), 401 (relaunch) surface their detail.
+    throw new Error(data.detail || "Could not send this pet to DatsMe");
+  }
+  return data;
+}

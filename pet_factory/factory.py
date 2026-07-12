@@ -37,8 +37,13 @@ from PIL import Image, ImageSequence
 
 # ── Config ───────────────────────────────────────────────────────────────────
 COMFY_URL = os.environ.get("PET_FACTORY_COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
-COMFY_OUTPUT_DIR = Path(os.environ.get(
-    "PET_FACTORY_COMFY_OUTPUT", os.path.expanduser("~/ComfyUI/output")))
+# Resolve to an ABSOLUTE path: this dir is read from a worker thread whose CWD
+# may differ from where the value was set (e.g. a relative "./ComfyUI/output"
+# from a mis-sourced env would otherwise resolve against the backend's CWD and
+# fail to find ComfyUI's real output). expanduser handles "~"; resolve() makes
+# any relative value absolute against CWD at import time.
+COMFY_OUTPUT_DIR = Path(os.path.expanduser(os.environ.get(
+    "PET_FACTORY_COMFY_OUTPUT", "~/ComfyUI/output"))).resolve()
 CLIENT_ID = uuid.uuid4().hex
 VIDEO_EXTS = {".mp4", ".webm", ".mov", ".mkv", ".avi"}
 

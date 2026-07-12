@@ -11,9 +11,10 @@ The React frontend (web/, Next.js on :19955) talks to this API (:19954):
 
 Generation runs make_pet_zip() (pet_factory → local ComfyUI) in a worker
 thread, one job at a time (the pipeline owns the whole GPU). Each finished
-pet persists under datspet_output/<job_id>/ — pet.zip, sheet.png,
-manifest.json, pet.json — so the pet house survives restarts (location
-configurable via PETMAKER_OUTPUT_DIR). pet_id == job_id.
+pet persists as a row in one SQLite store (datspet.db) — sprite sheet,
+manifest, package.json and the .zip bundle live in-row as blobs (see
+webui/db.py), so the pet house survives restarts. pet_id == job_id. The DB
+location follows PETMAKER_OUTPUT_DIR (PETMAKER_DB_PATH to override).
 
 Run via ./start_petmaker_backend_only.sh (sets the pet_factory env).
 Needs ComfyUI up (./start_comfyui_only.sh).
@@ -21,7 +22,6 @@ Needs ComfyUI up (./start_comfyui_only.sh).
 import io
 import json
 import os
-import shutil
 import threading
 import time
 import uuid
@@ -32,8 +32,9 @@ from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
+import db
 from pet_factory import make_pet_zip, render_design_still
 
 app = FastAPI(title="Pet Maker API")
@@ -49,20 +50,31 @@ app.add_middleware(
     ],
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
+    # The DatsMe launch cookie (httponly) rides on /api/datsme/* calls from the
+    # frontend, so credentialed requests must be allowed.
+    allow_credentials=True,
 )
 
-# Where generated pets live (one folder per pet). Defaults inside the repo;
-# point PETMAKER_OUTPUT_DIR elsewhere (e.g. ~/datspet_output) to move the
-# whole collection out of the repository — set it in pet_env.sh, move the
-# existing folder, restart. The name stays meaningful outside the repo.
-OUTPUT_DIR = Path(os.environ.get(
-    "PETMAKER_OUTPUT_DIR", str(Path(__file__).parent / "datspet_output"))).expanduser()
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+# Pets are stored in the SQLite DB (webui/db.py), not one-folder-per-pet.
+# OUTPUT_DIR still exists as the DB's home and the transient-scratch root
+# (preview stills, generation reference images); point PETMAKER_OUTPUT_DIR
+# elsewhere to move the whole collection — the .db and this dir move together.
+OUTPUT_DIR = db.OUTPUT_DIR
 
-# Design-page preview stills. Underscore prefix keeps it out of the pets
-# listing (list_pets globs */pet.json; previews have none).
+# Design-page preview stills + per-job scratch (reference uploads, remix base
+# frames). These are transient working files, not pets — pets live in the DB.
 PREVIEW_DIR = OUTPUT_DIR / "_previews"
 PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
+SCRATCH_DIR = OUTPUT_DIR / "_scratch"
+SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+
+db.init_db()  # create tables + one-time-migrate any legacy pet.json folders
+
+# DatsMe partner surface (DPP). Standalone-first: this router is inert in local
+# mode — its manifest 503s without DATSME_HMAC_SECRET and nothing here runs
+# unless a launch cookie / host request arrives. See webui/datsme_integration.py.
+import datsme_integration
+app.include_router(datsme_integration.router)
 
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 ALLOWED_IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
@@ -76,7 +88,7 @@ GPU_LOCK = threading.Lock()
 class Job:
     id: str
     name: str
-    dir: Path
+    dir: Path                       # transient scratch dir (uploads/remix base)
     status: str = "queued"          # queued | running | done | error
     progress: float = 0.0           # 0..1
     message: str = "Waiting for the GPU…"
@@ -84,6 +96,7 @@ class Job:
     error: Optional[str] = None
     created_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
+    external_user_id: Optional[str] = None  # NULL = standalone; set when DatsMe-launched
 
     def to_dict(self) -> dict:
         return {
@@ -149,8 +162,11 @@ def extract_base_frame(pet_id: str, dest: Path) -> Path:
     starting image for the remix pipeline. Works for every pet in the house,
     however old, because the sheet + manifest are what we persist."""
     from PIL import Image
-    manifest = json.loads(_pet_file(pet_id, "manifest.json").read_text())
-    sheet = Image.open(_pet_file(pet_id, "sheet.png"))
+    row = db.get_pet(pet_id)
+    if row is None:
+        raise HTTPException(404, "base pet not found")
+    manifest = json.loads(row["manifest_json"])
+    sheet = Image.open(io.BytesIO(row["sheet_png"]))
     anims = manifest.get("animations", {})
     frames = (anims.get("idle") or anims.get("walk") or {}).get("frames") or [0]
     idx = frames[0]
@@ -166,7 +182,10 @@ def extract_base_frame(pet_id: str, dest: Path) -> Path:
 def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
                 remix_strength: Optional[float] = None,
                 display_name: Optional[str] = None) -> None:
-    """Runs in a daemon thread. Mutates `job` as it goes; never raises."""
+    """Runs in a daemon thread. Mutates `job` as it goes; never raises.
+    On success the finished pet is persisted as one DB row (sheet/manifest/
+    package/zip as blobs), born a DRAFT — it joins the house only when the
+    user saves (POST /api/pets/{id}/keep)."""
     try:
         with GPU_LOCK:
             with JOBS_LOCK:
@@ -182,27 +201,29 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
                 reference_image=str(reference_image) if reference_image else None,
                 remix_strength=remix_strength, display_name=display_name)
 
-        (job.dir / "pet.zip").write_bytes(zip_bytes)
-        # Unpack the sheet + manifest next to the zip so the engine can
-        # render the pet without unzipping in the browser, and persist a
-        # pet.json record so /api/pets survives restarts.
+        # Unpack sheet/manifest/package out of the bundle so the engine can
+        # render the pet without unzipping in the browser. Bytes go in the DB.
+        sheet_png = None
+        manifest_json = None
+        package_json = None
         display_name = description.title()
         with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
             for member in z.namelist():
                 if member.endswith("_sprite.png"):
-                    (job.dir / "sheet.png").write_bytes(z.read(member))
+                    sheet_png = z.read(member)
                 elif member == "manifest.json":
-                    (job.dir / "manifest.json").write_bytes(z.read(member))
+                    manifest_json = z.read(member).decode("utf-8")
                 elif member == "package.json":
-                    display_name = json.loads(z.read(member)).get("display_name", display_name)
-        # Born as a DRAFT: the pet only joins the house when the user clicks
-        # "Save" (POST /api/pets/{id}/keep). Unsaved drafts are purged when
-        # the next generation starts and at backend startup.
-        (job.dir / "pet.json").write_text(json.dumps({
-            "id": job.id, "breed_id": breed_id,
-            "display_name": display_name, "created_at": job.created_at,
-            "draft": True,
-        }))
+                    package_json = z.read(member).decode("utf-8")
+                    display_name = json.loads(package_json).get("display_name", display_name)
+
+        db.insert_pet(
+            pet_id=job.id, breed_id=breed_id, display_name=display_name,
+            created_at=job.created_at, draft=True,
+            sheet_png=sheet_png, manifest_json=manifest_json,
+            package_json=package_json, bundle_zip=zip_bytes,
+            external_user_id=job.external_user_id,
+        )
 
         with JOBS_LOCK:
             job.status = "done"
@@ -236,10 +257,10 @@ def preview_design(
     if not color and not accessory_list:
         raise HTTPException(400, "Pick a color or at least one accessory to preview.")
 
-    try:
-        species = json.loads(_pet_file(base_pet_id, "pet.json").read_text())["display_name"].lower()
-    except Exception:
+    base_row = db.get_pet(base_pet_id)
+    if base_row is None:
         raise HTTPException(404, "base pet not found")
+    species = base_row["display_name"].lower()
     species = name.strip().lower()[:60] or species
     description, _display, min_strength = compose_design(species, color, accessory_list)
     strength = min(0.9, max(0.3, strength))
@@ -304,10 +325,10 @@ async def start_job(
     if base_pet_id and has_design:
         # Design page: compose the prompt from structured picks. The species
         # is the base pet's own name unless the user overrode it.
-        try:
-            species = json.loads(_pet_file(base_pet_id, "pet.json").read_text())["display_name"].lower()
-        except Exception:
+        base_row = db.get_pet(base_pet_id)
+        if base_row is None:
             raise HTTPException(404, "base pet not found")
+        species = base_row["display_name"].lower()
         species = name.lower() or species
         description, display_name, min_strength = compose_design(species, color, accessory_list)
         if min_strength:
@@ -322,7 +343,7 @@ async def start_job(
     _purge_drafts()
 
     job_id = uuid.uuid4().hex[:12]
-    job_dir = OUTPUT_DIR / job_id
+    job_dir = SCRATCH_DIR / job_id   # transient: reference upload, remix base
     job_dir.mkdir(parents=True, exist_ok=True)
 
     reference_image = None
@@ -367,17 +388,13 @@ def job_status(job_id: str):
 
 
 def _purge_drafts() -> None:
-    """Remove every unsaved draft. Called at startup (leftovers from a
-    previous session) and when a new generation starts (the user iterated
-    without saving — the old draft is superseded)."""
-    for record in OUTPUT_DIR.glob("*/pet.json"):
-        try:
-            if json.loads(record.read_text()).get("draft"):
-                shutil.rmtree(record.parent)
-                with JOBS_LOCK:
-                    JOBS.pop(record.parent.name, None)
-        except (json.JSONDecodeError, OSError):
-            continue
+    """Remove every unsaved draft (all users). Called at startup (leftovers
+    from a previous session) and when a new generation starts (the user
+    iterated without saving — the old draft is superseded)."""
+    dropped = db.purge_drafts("__all__")
+    with JOBS_LOCK:
+        for pet_id in dropped:
+            JOBS.pop(pet_id, None)
 
 
 _purge_drafts()  # startup cleanup
@@ -386,63 +403,54 @@ _purge_drafts()  # startup cleanup
 @app.get("/api/pets")
 def list_pets():
     """Every SAVED pet, newest first. Drafts (generated but not yet saved by
-    the user) are excluded — they only join the house via /keep. Records
-    written before the draft flag existed have no key and count as saved."""
-    pets = []
-    for record in OUTPUT_DIR.glob("*/pet.json"):
-        try:
-            data = json.loads(record.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-        if not data.get("draft"):
-            pets.append(data)
-    pets.sort(key=lambda p: p.get("created_at", 0), reverse=True)
-    return pets
+    the user) are excluded — they only join the house via /keep. Standalone
+    mode lists the local (external_user_id IS NULL) pets."""
+    return db.list_saved_pets(external_user_id=None)
 
 
 @app.post("/api/pets/{pet_id}/keep")
 def keep_pet(pet_id: str):
     """The user's explicit 'save this pet' — clears the draft flag so the
     pet joins the house and survives draft purges."""
-    record_path = _pet_file(pet_id, "pet.json")
-    record = json.loads(record_path.read_text())
-    record["draft"] = False
-    record_path.write_text(json.dumps(record))
+    if not pet_id.isalnum():
+        raise HTTPException(404, "pet not found")
+    record = db.keep_pet(pet_id)
+    if record is None:
+        raise HTTPException(404, "pet not found")
     return record
 
 
-def _pet_file(pet_id: str, filename: str) -> Path:
+def _require_pet(pet_id: str):
     # pet_id is always one of our uuid4 hex job ids — reject anything that
-    # could traverse out of the output dir.
+    # could traverse / injection-shape, then load the row or 404.
     if not pet_id.isalnum():
         raise HTTPException(404, "pet not found")
-    path = OUTPUT_DIR / pet_id / filename
-    if not path.exists():
+    row = db.get_pet(pet_id)
+    if row is None:
         raise HTTPException(404, "pet not found")
-    return path
+    return row
 
 
 @app.get("/api/pets/{pet_id}/sheet.png")
 def pet_sheet(pet_id: str):
-    return FileResponse(_pet_file(pet_id, "sheet.png"), media_type="image/png")
+    row = _require_pet(pet_id)
+    return Response(content=row["sheet_png"], media_type="image/png")
 
 
 @app.get("/api/pets/{pet_id}/manifest.json")
 def pet_manifest(pet_id: str):
-    return FileResponse(_pet_file(pet_id, "manifest.json"), media_type="application/json")
+    row = _require_pet(pet_id)
+    return Response(content=row["manifest_json"], media_type="application/json")
 
 
 @app.delete("/api/pets/{pet_id}")
 def delete_pet(pet_id: str):
-    """Remove a pet from the house permanently — its whole output dir
-    (bundle, sheet, manifest, record) goes away. 404 if it isn't a
-    completed pet (half-finished jobs have no pet.json)."""
+    """Remove a pet from the house permanently — its DB row (bundle, sheet,
+    manifest, record) goes away. 404 if it isn't a stored pet."""
     if not pet_id.isalnum():
         raise HTTPException(404, "pet not found")
-    pet_dir = OUTPUT_DIR / pet_id
-    if not (pet_dir / "pet.json").exists():
+    if not db.delete_pet(pet_id):
         raise HTTPException(404, "pet not found")
-    shutil.rmtree(pet_dir)
     with JOBS_LOCK:
         JOBS.pop(pet_id, None)
     return {"deleted": pet_id}
@@ -450,13 +458,11 @@ def delete_pet(pet_id: str):
 
 @app.get("/api/pets/{pet_id}/zip")
 def pet_zip(pet_id: str):
-    path = _pet_file(pet_id, "pet.zip")
-    breed = pet_id
-    try:
-        breed = json.loads(_pet_file(pet_id, "pet.json").read_text())["breed_id"]
-    except Exception:
-        pass
-    return FileResponse(path, media_type="application/zip", filename=f"{breed}.zip")
+    row = _require_pet(pet_id)
+    return Response(
+        content=row["bundle_zip"], media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{row["breed_id"]}.zip"'},
+    )
 
 
 if __name__ == "__main__":

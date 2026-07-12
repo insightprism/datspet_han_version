@@ -1,0 +1,14 @@
+# webui (Pet Maker backend) Python dependencies.
+#
+# fastapi/starlette are PINNED: FastAPI 0.139 pulled Starlette 1.3.x, in which
+# app.include_router() silently adds no routes (the DPP partner router would
+# never mount). 0.115.6 / 0.41.3 is a known-good pair where include_router works.
+fastapi==0.115.6
+starlette==0.41.3
+uvicorn>=0.30
+python-multipart>=0.0.9
+httpx>=0.24
+
+# DatsMe partner SDK — path dependency, installed editable in dev:
+#   pip install -e ../../datsme_me/api/sdk/
+# (provides datsme_partner_sdk: launch/manifest/writeback/retry/testkit)

@@ -8,7 +8,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { keepPet, petZipUrl, type JobStatus } from "@/lib/api";
+import {
+  keepPet,
+  petZipUrl,
+  getDatsmeSession,
+  acceptPetToDatsme,
+  type JobStatus,
+  type DatsmeSession,
+} from "@/lib/api";
 import PetStage from "@/components/PetStage";
 import PetThumbnail from "@/components/PetThumbnail";
 
@@ -25,7 +32,17 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState("");
 
+  // DatsMe launch context (null in standalone mode). When launched, the
+  // primary action becomes "Accept — send to my DatsMe" (costs credits);
+  // Save-to-house stays as a free/local secondary action.
+  const [datsme, setDatsme] = useState<DatsmeSession | null>(null);
+  const [accepting, setAccepting] = useState(false);
+  const [acceptMsg, setAcceptMsg] = useState("");
+
   useEffect(() => setSaved(false), [job.id]);
+  useEffect(() => {
+    getDatsmeSession().then((s) => setDatsme(s.launched ? s : null)).catch(() => setDatsme(null));
+  }, []);
 
   async function save() {
     setSaveError("");
@@ -36,6 +53,31 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
       setSaveError(e instanceof Error ? e.message : "Could not save");
     }
   }
+
+  async function accept() {
+    setSaveError("");
+    setAcceptMsg("");
+    setAccepting(true);
+    try {
+      const res = await acceptPetToDatsme(job.id);
+      if (res.redirect_url) {
+        window.location.href = res.redirect_url;
+        return;
+      }
+      // Transient failure — pet is queued and will arrive automatically.
+      setAcceptMsg(res.message || "Your pet will arrive in DatsMe automatically.");
+    } catch (e) {
+      // 402 credits / 409 house full / 401 relaunch — the design is preserved.
+      setSaveError(e instanceof Error ? e.message : "Could not send to DatsMe");
+    } finally {
+      setAccepting(false);
+    }
+  }
+
+  const acceptLabel =
+    datsme?.cost != null
+      ? `✓ Accept — send to my DatsMe (${datsme.cost} credits)`
+      : "✓ Accept — send to my DatsMe";
   return (
     <div className="card p-6">
       <div className="mono mb-1.5 text-sm" style={{ color: job.status === "error" ? "var(--accent)" : "var(--gold)" }}>
@@ -72,7 +114,24 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
               </div>
             </div>
           </div>
+          {datsme && (
+            <div className="card mt-6 p-3" style={{ borderColor: "rgba(167,139,250,0.4)", background: "rgba(167,139,250,0.08)" }}>
+              <div className="mono text-xs" style={{ color: "var(--gold)" }}>
+                🐾 Designing for your DatsMe profile — Accept to add this pet to your DatsMe pet house.
+              </div>
+            </div>
+          )}
           <div className="mt-6 flex flex-wrap gap-3">
+            {datsme && (
+              <button
+                onClick={accept}
+                disabled={accepting}
+                className="mono flex-1 rounded-lg border px-4 py-3 text-sm font-bold disabled:opacity-70"
+                style={{ background: "linear-gradient(135deg, #a78bfa, #7c3aed)", color: "var(--heading)", borderColor: "transparent" }}
+              >
+                {accepting ? "Sending…" : acceptLabel}
+              </button>
+            )}
             <button
               onClick={save}
               disabled={saved}
@@ -80,7 +139,10 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
               style={
                 saved
                   ? { background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }
-                  : { background: "linear-gradient(135deg, #10b981, #059669)", color: "var(--heading)", borderColor: "transparent" }
+                  : datsme
+                    // Secondary when a DatsMe Accept is the primary action.
+                    ? { background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }
+                    : { background: "linear-gradient(135deg, #10b981, #059669)", color: "var(--heading)", borderColor: "transparent" }
               }
             >
               {saved ? "✓ Saved to the pet house" : "💾 Save to the pet house"}
@@ -111,6 +173,7 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
             </button>
           </div>
           {saveError && <div className="mono mt-2 text-sm" style={{ color: "var(--accent)" }}>{saveError}</div>}
+          {acceptMsg && <div className="mono mt-2 text-sm" style={{ color: "var(--green)" }}>{acceptMsg}</div>}
           {/* The freshly generated pet, alive on this page via the engine. */}
           <PetStage pets={[{ id: job.id, display_name: job.name }]} />
         </>

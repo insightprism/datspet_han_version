@@ -14,3 +14,4 @@ examples/queue.db
 logs/
 webui/datspet_output/
 created_pets/*/
+pet_env.local.sh
