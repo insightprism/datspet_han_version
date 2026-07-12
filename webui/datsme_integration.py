@@ -58,7 +58,11 @@ router = APIRouter(tags=["datsme"])
 ACTIVITY_DESIGN_A_PET = "design_a_pet"
 
 LAUNCH_COOKIE = "datsme_launch"
-LAUNCH_COOKIE_TTL_SEC = 60 * 30  # 30 min — matches the reference partner
+# Must be >= the host's LAUNCH_TOKEN_TTL (60 min) so the browser session
+# outlives the JWT the writeback carries — designing a pet (GPU build + review)
+# can take many minutes, and if the cookie lapsed first the user would lose the
+# Accept action while the token was still valid. 60 min matches the host window.
+LAUNCH_COOKIE_TTL_SEC = 60 * 60  # 60 min — matches host LAUNCH_TOKEN_TTL
 
 # Cookie cross-site policy. In dev + prod the DatsPet frontend and backend are
 # DIFFERENT origins (frontend :19955 ↔ backend :19954; in prod a partner domain
@@ -296,8 +300,16 @@ async def accept_pet(request: Request):
         raise HTTPException(status_code=401, detail="Not launched from DatsMe — return to DatsMe and relaunch.")
     try:
         ctx = verify_launch_token(cookie["token"], _hmac_secret())
-    except LaunchError as e:
-        raise HTTPException(status_code=401, detail=f"Launch expired — return to DatsMe and relaunch. ({e})")
+    except LaunchError:
+        # Token expired (or otherwise invalid) — the partner detects this
+        # locally before even calling the host, so the user gets an instant,
+        # clear relaunch prompt. Same message as the writeback-time 401 branch.
+        raise HTTPException(
+            status_code=401,
+            detail="Your DatsMe session expired while designing. Return to "
+                   "DatsMe and click “Design a pet” again — your design is "
+                   "saved here, just re-Accept it.",
+        )
 
     body = await request.json()
     pet_id = (body or {}).get("pet_id", "")
@@ -382,16 +394,33 @@ def _post_pet_writeback(row, ctx: LaunchContext) -> Optional[str]:
             redirect_path = None
         return f"{_datsme_public_url()}{redirect_path}" if redirect_path else f"{_datsme_public_url()}/settings/pet"
 
-    # Non-200. Split transient vs permanent exactly like the reference partner
-    # (spec §5.3): network/5xx/{401,408,429} → retry queue; other 4xx → surface.
-    transient = resp.status_code >= 500 or resp.status_code in (401, 408, 429)
+    # Non-200. Classify transient (retry) vs permanent (surface):
+    #   5xx / 408 / 429  → transient host hiccup; queue and it recovers.
+    #   401              → the launch TOKEN is dead (expired / wrong secret).
+    #                      The retry queue re-sends the SAME stored token, so a
+    #                      401 can NEVER self-heal — queuing it would retry
+    #                      forever and silently never deliver. Treat as
+    #                      permanent and tell the user to relaunch. (This is
+    #                      where we deliberately diverge from the personality
+    #                      reference, which queues 401 — its writebacks fire
+    #                      seconds after launch, so its tokens are never stale;
+    #                      a pet design can outlive even the 60-min window.)
+    #   other 4xx        → validation/credits/house — surface the host's error.
     detail = _error_detail(resp)
+    transient = resp.status_code >= 500 or resp.status_code in (408, 429)
     log.warning("DatsMe writeback status=%s transient=%s detail=%s",
                 resp.status_code, transient, detail)
     if transient:
         _enqueue_writeback_retry(writeback)
         _bind_pending(row, ctx)
         return None
+    if resp.status_code == 401:
+        raise HTTPException(
+            status_code=401,
+            detail="Your DatsMe session expired while designing. Return to "
+                   "DatsMe and click “Design a pet” again — your design is "
+                   "saved here, just re-Accept it.",
+        )
     # Permanent — surface the host's structured error to the UI (402/409/400).
     raise HTTPException(status_code=resp.status_code, detail=detail)
 

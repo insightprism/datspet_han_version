@@ -204,12 +204,20 @@ Posted with `post_writeback` (SDK signs; `X-DatsMe-Idempotency-Key` = body key).
 
 **Retry classification — two different splits exist in the codebase; DatsPet uses
 both, each in its own place, deliberately:**
-- **Initial Accept POST** (inline, our code): copy the personality partner's
-  classification (`datsme_integration.py:~517-527`) — network error / 5xx /
-  {401, 408, 429} → enqueue in the SDK retry queue and tell the user the pet will
-  arrive automatically; any other 4xx (e.g. 400 `validation_failed`, 409
-  `activity_mismatch`/house-full, 402 insufficient credits) → permanent, surface
-  the structured error on the result card, do NOT enqueue.
+- **Initial Accept POST** (inline, our code): network error / 5xx / {408, 429}
+  → enqueue in the SDK retry queue ("arrives automatically"). **401 → PERMANENT**
+  (relaunch prompt), NOT queued — this is a deliberate divergence from the
+  personality reference, which queues 401. The reference can, because its
+  writeback fires seconds after launch so its token is never stale; DatsPet's
+  writeback fires at the END of a multi-minute design session, so a 401 means
+  the launch TOKEN expired — and the retry queue re-sends the SAME stored token,
+  so queuing a 401 would retry-forever-and-never-deliver (a silent black hole).
+  We surface "session expired — relaunch, your design is saved". Other 4xx (400
+  `validation_failed`, 409 house-full, 402 insufficient credits) → permanent,
+  surface the structured error. *(As-built: the Accept handler also re-verifies
+  the cookie token locally BEFORE calling the host, so the common expiry case is
+  caught instantly without a round-trip; the writeback-time 401 branch is the
+  belt-and-suspenders for drift.)*
 - **Queued drains** (SDK code, unmodified): `drain_due` (`retry.py:~135`) applies
   its own stricter rule — retries until 200, burns ANY 4xx except 401 as permanent
   (`attempts += 99`, operator looks). We accept that: a request that was transient
@@ -383,9 +391,16 @@ presence, not value — so `activity_type="pet_design"` is accepted as-is. No
 - SSRF: host only fetches from the registered partner origin, no redirects.
 - DatsMe down at Accept → SDK retry queue (up to 24 h); UI tells the user the pet
   will arrive automatically; resync (`rsx`) and `/pending` cover longer gaps.
-- Launch cookie expired mid-design (>30 min) → Accept returns 401 with a
-  "return to DatsMe and relaunch" message; the draft is preserved (drafts scoped
-  to the user survive relaunch; the draft-purge rule becomes per-user).
+- **Launch token/cookie expiry mid-design.** The launch JWT authenticates the
+  writeback and is checked at Accept time; if it lapses, Accept 401s. **As-built
+  fix: `LAUNCH_TOKEN_TTL` raised 15 min → 60 min** (`service.py`) so a design +
+  ~3-min GPU build + review comfortably fits — 15 min was tuned for quick
+  activities and a pet workflow outgrew it (this is what caused the real 401s
+  markly.1 hit). The DatsPet cookie was raised to match (60 min). On genuine
+  expiry, Accept surfaces a "session expired — relaunch, your design is saved"
+  message (401, permanent, NOT queued — see retry classification §5.3); the pet
+  survives as a saved local pet, so relaunch + re-Accept works. Replay stays
+  bounded because the nonce is one-time.
 - User's house full (3 slots) → 409 surfaced verbatim on the DatsPet result card
   (checked before the credit charge — a full-house user is never charged).
 - **Insufficient credits → 402 at Accept.** The charge happens on the host in the
