@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
@@ -242,6 +242,7 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
 
 @app.post("/api/preview")
 def preview_design(
+    request: Request,
     base_pet_id: str = Form(...),
     strength: float = Form(0.85),
     color: str = Form(""),
@@ -251,6 +252,7 @@ def preview_design(
     """Run ONLY the redraw stage (~10 s) and return a preview id. The design
     page shows the image next to the original; /api/generate can then be
     given the preview_id to animate this exact still."""
+    owner = datsme_integration.resolve_launch_identity(request)
     base_pet_id = base_pet_id.strip()
     color = color.strip().lower()[:20]
     accessory_list = [a.strip().lower()[:30] for a in accessories.split(",") if a.strip()][:3]
@@ -258,7 +260,7 @@ def preview_design(
         raise HTTPException(400, "Pick a color or at least one accessory to preview.")
 
     base_row = db.get_pet(base_pet_id)
-    if base_row is None:
+    if base_row is None or not _can_access(base_row, owner):
         raise HTTPException(404, "base pet not found")
     species = base_row["display_name"].lower()
     species = name.strip().lower()[:60] or species
@@ -294,6 +296,7 @@ def preview_image(preview_id: str):
 
 @app.post("/api/generate")
 async def start_job(
+    request: Request,
     name: str = Form(""),
     text: str = Form(""),
     image: Optional[UploadFile] = File(None),
@@ -303,6 +306,10 @@ async def start_job(
     accessories: str = Form(""),
     preview_id: str = Form(""),
 ):
+    # Who is generating? DatsMe-launched user (verified) or None (standalone).
+    # This scopes the generated pet, the draft purge, and any base-pet lookup
+    # so one user's Generate never touches another user's (or the local) pets.
+    owner = datsme_integration.resolve_launch_identity(request)
     name = name.strip()[:60]
     text = text.strip()[:200]
     base_pet_id = base_pet_id.strip()
@@ -324,9 +331,10 @@ async def start_job(
     display_name = None
     if base_pet_id and has_design:
         # Design page: compose the prompt from structured picks. The species
-        # is the base pet's own name unless the user overrode it.
+        # is the base pet's own name unless the user overrode it. The base pet
+        # must be visible to this caller (their own or a local pet), else 404.
         base_row = db.get_pet(base_pet_id)
-        if base_row is None:
+        if base_row is None or not _can_access(base_row, owner):
             raise HTTPException(404, "base pet not found")
         species = base_row["display_name"].lower()
         species = name.lower() or species
@@ -339,8 +347,10 @@ async def start_job(
         # best.
         description = name or text or "pet"
 
-    # Starting a new generation supersedes any unsaved draft from the last one.
-    _purge_drafts()
+    # Starting a new generation supersedes THIS caller's unsaved draft. Scope
+    # the purge to the caller so a launched user's Generate never deletes
+    # another user's (or the local user's) draft.
+    _purge_drafts(owner)
 
     job_id = uuid.uuid4().hex[:12]
     job_dir = SCRATCH_DIR / job_id   # transient: reference upload, remix base
@@ -365,7 +375,8 @@ async def start_job(
         reference_image = job_dir / "reference_upload"
         reference_image.write_bytes(body)
 
-    job = Job(id=job_id, name=display_name or description, dir=job_dir)
+    job = Job(id=job_id, name=display_name or description, dir=job_dir,
+              external_user_id=owner)
     with JOBS_LOCK:
         JOBS[job_id] = job
 
@@ -387,69 +398,81 @@ def job_status(job_id: str):
         return job.to_dict()
 
 
-def _purge_drafts() -> None:
-    """Remove every unsaved draft (all users). Called at startup (leftovers
-    from a previous session) and when a new generation starts (the user
-    iterated without saving — the old draft is superseded)."""
-    dropped = db.purge_drafts("__all__")
+def _can_access(row, owner: Optional[str]) -> bool:
+    """A pet is visible to a caller iff it is local (unowned) or theirs.
+    `owner` is the caller's DatsMe user_id, or None for standalone."""
+    ext = row["external_user_id"]
+    return ext is None or ext == owner
+
+
+def _purge_drafts(external_user_id: Optional[str] = "__all__") -> None:
+    """Remove unsaved drafts. Default "__all__" (startup: clears leftovers from
+    every user). Pass a user_id (or None for standalone) to purge ONLY that
+    caller's drafts — so one user's new generation never deletes another
+    user's or the local user's in-progress draft."""
+    dropped = db.purge_drafts(external_user_id)
     with JOBS_LOCK:
         for pet_id in dropped:
             JOBS.pop(pet_id, None)
 
 
-_purge_drafts()  # startup cleanup
+_purge_drafts()  # startup cleanup — "__all__" scope
 
 
 @app.get("/api/pets")
-def list_pets():
-    """Every SAVED pet, newest first. Drafts (generated but not yet saved by
-    the user) are excluded — they only join the house via /keep. Standalone
-    mode lists the local (external_user_id IS NULL) pets."""
-    return db.list_saved_pets(external_user_id=None)
+def list_pets(request: Request):
+    """Every SAVED pet the caller may see, newest first. A DatsMe-launched
+    user sees only their own pets; a standalone caller sees the local
+    (external_user_id IS NULL) pets. Drafts are excluded (join via /keep)."""
+    owner = datsme_integration.resolve_launch_identity(request)
+    return db.list_saved_pets(external_user_id=owner)
 
 
 @app.post("/api/pets/{pet_id}/keep")
-def keep_pet(pet_id: str):
-    """The user's explicit 'save this pet' — clears the draft flag so the
-    pet joins the house and survives draft purges."""
+def keep_pet(pet_id: str, request: Request):
+    """The user's explicit 'save this pet' — clears the draft flag so the pet
+    joins the house. Scoped: you can only keep a pet you may access."""
     if not pet_id.isalnum():
         raise HTTPException(404, "pet not found")
-    record = db.keep_pet(pet_id)
+    owner = datsme_integration.resolve_launch_identity(request)
+    record = db.keep_pet(pet_id, external_user_id=owner)
     if record is None:
         raise HTTPException(404, "pet not found")
     return record
 
 
-def _require_pet(pet_id: str):
+def _require_pet(pet_id: str, owner: Optional[str]):
     # pet_id is always one of our uuid4 hex job ids — reject anything that
-    # could traverse / injection-shape, then load the row or 404.
+    # could traverse / injection-shape, load the row, then enforce access
+    # (404, not 403 — don't leak that a pet exists for another user).
     if not pet_id.isalnum():
         raise HTTPException(404, "pet not found")
     row = db.get_pet(pet_id)
-    if row is None:
+    if row is None or not _can_access(row, owner):
         raise HTTPException(404, "pet not found")
     return row
 
 
 @app.get("/api/pets/{pet_id}/sheet.png")
-def pet_sheet(pet_id: str):
-    row = _require_pet(pet_id)
+def pet_sheet(pet_id: str, request: Request):
+    row = _require_pet(pet_id, datsme_integration.resolve_launch_identity(request))
     return Response(content=row["sheet_png"], media_type="image/png")
 
 
 @app.get("/api/pets/{pet_id}/manifest.json")
-def pet_manifest(pet_id: str):
-    row = _require_pet(pet_id)
+def pet_manifest(pet_id: str, request: Request):
+    row = _require_pet(pet_id, datsme_integration.resolve_launch_identity(request))
     return Response(content=row["manifest_json"], media_type="application/json")
 
 
 @app.delete("/api/pets/{pet_id}")
-def delete_pet(pet_id: str):
-    """Remove a pet from the house permanently — its DB row (bundle, sheet,
-    manifest, record) goes away. 404 if it isn't a stored pet."""
+def delete_pet(pet_id: str, request: Request):
+    """Remove a pet from the house permanently. 404 if it isn't a stored pet
+    the caller may access."""
     if not pet_id.isalnum():
         raise HTTPException(404, "pet not found")
-    if not db.delete_pet(pet_id):
+    owner = datsme_integration.resolve_launch_identity(request)
+    if not db.delete_pet(pet_id, external_user_id=owner):
         raise HTTPException(404, "pet not found")
     with JOBS_LOCK:
         JOBS.pop(pet_id, None)
@@ -457,8 +480,8 @@ def delete_pet(pet_id: str):
 
 
 @app.get("/api/pets/{pet_id}/zip")
-def pet_zip(pet_id: str):
-    row = _require_pet(pet_id)
+def pet_zip(pet_id: str, request: Request):
+    row = _require_pet(pet_id, datsme_integration.resolve_launch_identity(request))
     return Response(
         content=row["bundle_zip"], media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{row["breed_id"]}.zip"'},

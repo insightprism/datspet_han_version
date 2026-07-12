@@ -156,6 +156,30 @@ call `datsme_integration.drain_retry_queue()` (wire to a scheduler in prod).
 
 ---
 
+## 5b. Running the automated tests
+
+No live services required (they use temp DBs / in-process pipelines), except the
+host round-trip needs real Postgres up (:19993) + the `datsme_me/api/.env`.
+
+```bash
+# Partner surface (auth fail-closed, per-user scoping, cookie/expiry):
+cd <datsme-pet-factory>
+.venv/bin/python -m pytest webui/tests/ -q          # 15 tests
+
+# Host writeback round-trip (mints via the REAL nonce path; stub bundle server):
+cd <datsme_me>/api && set -a && . .env && set +a
+PYTHONPATH="sdk:$(pwd)" python3 -m tests.test_user_pet_writeback     # 15 checks
+# Four-registry drift guard:
+PYTHONPATH="$(pwd)" python3 -m tests.test_dpp_registry_consistency   # 5 checks
+```
+
+> Note for anyone extending these: the host round-trip MUST mint launch tokens
+> via `service.mint_launch_token` (creates the IntegrationNonce row). A
+> testkit-minted token has no nonce and 401s at `burn_launch_nonce` regardless
+> of correctness.
+
+---
+
 ## 6. Rollback
 
 The integration is additive and standalone-safe:

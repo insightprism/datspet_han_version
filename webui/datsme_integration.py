@@ -36,6 +36,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.concurrency import run_in_threadpool
+from starlette.background import BackgroundTask
 
 import db
 
@@ -49,6 +50,10 @@ from datsme_partner_sdk import (
 )
 from datsme_partner_sdk.launch import LaunchError
 from datsme_partner_sdk.manifest import compute_manifest_etag
+from datsme_partner_sdk.host_signature import (
+    HostSignatureError,
+    verify_host_signature,
+)
 
 log = logging.getLogger(__name__)
 
@@ -254,6 +259,28 @@ def _read_launch_cookie(request: Request) -> Optional[dict]:
     return data
 
 
+def resolve_launch_identity(request: Request) -> Optional[str]:
+    """Trusted DatsMe user_id for scoping, or None for standalone/local mode.
+
+    Shared by the engine (app.py: generation, listing, draft purge) and the
+    Accept path so identity is resolved ONE way everywhere. We VERIFY the JWT
+    (not just parse the cookie): the user_id decides which user's pets a write
+    is scoped to, so a forged/expired cookie must not be able to write into
+    another user's scope — it falls back to None (standalone), never someone
+    else's id. When DATSME_HMAC_SECRET is unset (pure standalone) this always
+    returns None without error.
+    """
+    cookie = _read_launch_cookie(request)
+    if cookie is None:
+        return None
+    try:
+        ctx = verify_launch_token(cookie["token"], _hmac_secret())
+    except (LaunchError, RuntimeError):
+        # Expired/invalid token, or no secret configured → treat as standalone.
+        return None
+    return ctx.user_id
+
+
 # ---------------------------------------------------------------------------
 # Frontend helper — GET /api/datsme/session
 # ---------------------------------------------------------------------------
@@ -318,6 +345,16 @@ async def accept_pet(request: Request):
     row = db.get_pet(pet_id)
     if row is None:
         raise HTTPException(status_code=404, detail="pet not found")
+
+    # Ownership gate: a user may only Accept a pet that is unclaimed (local,
+    # external_user_id IS NULL) or already theirs. 404 (not 403) so we don't
+    # leak that another user's pet_id exists. And once a pet has been acked
+    # under one user, it can't be re-accepted under a different user.
+    owner = row["external_user_id"]
+    if owner is not None and owner != ctx.user_id:
+        raise HTTPException(status_code=404, detail="pet not found")
+    if row["writeback_acked_at"] is not None and owner is not None and owner != ctx.user_id:
+        raise HTTPException(status_code=409, detail="pet already adopted by another user")
 
     # Bind the pet to this DatsMe user (so export/resync/scoping can find it)
     # and record the activity it's being accepted under.
@@ -385,9 +422,9 @@ def _post_pet_writeback(row, ctx: LaunchContext) -> Optional[str]:
         return None
 
     if resp.status_code == 200:
-        _bind_pending(row, ctx)
+        _bind_pending(row, ctx)  # binds external_user_id = ctx.user_id
         db.stamp_writeback_acked(row["id"], ctx.activity_id, time.time())
-        db.keep_pet(row["id"])  # accepted pets are no longer drafts
+        db.keep_pet(row["id"], external_user_id=ctx.user_id)  # now owned; clear draft
         try:
             redirect_path = resp.json().get("redirect_to")
         except ValueError:
@@ -464,13 +501,40 @@ def _enqueue_writeback_retry(body: dict) -> None:
 
 
 def drain_retry_queue() -> list:
-    """Public entry point for a scheduled worker (Phase 4). Drains due retries."""
+    """Public entry point for a scheduled worker (Phase 4). Drains due retries
+    AND finalizes each success locally: a writeback that finally lands must
+    stamp the pet acked + clear its draft, exactly as the inline Accept does on
+    a 200. Without this the pet stays a purgeable draft and is lost — the SDK's
+    generic drain can't know about our per-pet local state, so we do it here."""
     try:
         from datsme_partner_sdk.retry import drain_due
-        return drain_due(_retry_queue_path(), _hmac_secret())
+    except Exception as e:
+        log.warning("Retry-queue drain import failed: %s", e)
+        return []
+    try:
+        results = drain_due(_retry_queue_path(), _hmac_secret())
     except Exception as e:
         log.warning("Retry-queue drain failed: %s", e)
         return []
+
+    for pending, status, _detail in results:
+        if status != 200:
+            continue
+        try:
+            body = json.loads(pending.body_json)
+            payload = body.get("payload") or {}
+            pet_id = payload.get("source_pet_id")
+            activity_id = payload.get("activity_id")
+            if pet_id and db.get_pet(pet_id) is not None:
+                db.stamp_writeback_acked(pet_id, activity_id, time.time())
+                # The pet is already bound to its user (Accept bound it before
+                # queuing); clear the draft under that owner.
+                row = db.get_pet(pet_id)
+                db.keep_pet(pet_id, external_user_id=row["external_user_id"])
+                log.info("retry-drain finalized pet=%s (acked + kept)", pet_id)
+        except Exception as e:
+            log.warning("Could not finalize drained writeback: %s", e)
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -490,11 +554,16 @@ def serve_bundle(token: str):
     pet = db.get_pet(row_tok["pet_id"])
     if pet is None:
         raise HTTPException(status_code=404, detail="pet not found")
-    db.burn_bundle_token(token)
+    # Burn AFTER the bytes are sent, via a BackgroundTask — single-SUCCESSFUL-
+    # download. If we burned before returning and the transfer then failed, the
+    # host's retry would 404 and the pet would never arrive. Burning post-send
+    # means a failed fetch leaves the token usable for the queued retry; only a
+    # completed transfer consumes it.
     return Response(
         content=pet["bundle_zip"],
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{pet["breed_id"]}.zip"'},
+        background=BackgroundTask(db.burn_bundle_token, token),
     )
 
 
@@ -504,8 +573,9 @@ def serve_bundle(token: str):
 @router.get("/partner/export/{user_id}")
 def export_user_data(user_id: str, request: Request):
     """Return all DatsPet-owned pets for a DatsMe user (schema datspet_pets.v1).
-    Empty exports array (not 404) when the user has none."""
-    _verify_host_signed_request(request)
+    Empty exports array (not 404) when the user has none. Host-signed (GET, no
+    body)."""
+    _require_host_signature(request)
     return {
         "user_id": user_id,
         "partner_slug": PARTNER_SLUG,
@@ -525,9 +595,16 @@ def export_user_data(user_id: str, request: Request):
 # ---------------------------------------------------------------------------
 @router.post("/partner/revoke")
 async def revoke_user(request: Request):
-    """Delete or anonymize all DatsPet-owned pets for a DatsMe user_id."""
-    _verify_host_signed_request(request)
-    body = await request.json()
+    """Delete or anonymize all DatsPet-owned pets for a DatsMe user_id.
+
+    Destructive — MUST be host-signed. We verify over the EXACT raw bytes the
+    host signed, then parse those same bytes (never re-read the stream)."""
+    raw = await request.body()
+    _require_host_signature(request, raw)
+    try:
+        body = json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="invalid JSON body")
     user_id = body.get("user_id")
     action = body.get("action", "delete")
     if not user_id:
@@ -543,8 +620,9 @@ async def revoke_user(request: Request):
 # ---------------------------------------------------------------------------
 @router.get("/partner/results/{user_id}/pending")
 def list_pending_writebacks(user_id: str, request: Request):
-    """Pets accepted for a user that never acked a successful writeback."""
-    _verify_host_signed_request(request)
+    """Pets accepted for a user that never acked a successful writeback.
+    Host-signed (GET, no body)."""
+    _require_host_signature(request)
     rows = db.list_pending_writebacks(user_id)
     return {
         "pending": [
@@ -561,39 +639,28 @@ def list_pending_writebacks(user_id: str, request: Request):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _verify_host_signed_request(request: Request) -> None:
-    """Host → partner signature verification (mirror of writeback signing).
+def _require_host_signature(request: Request, body: bytes = b"") -> None:
+    """Fail-closed verification that a request really came from the DatsMe host.
 
-    Permissive in the current phase, exactly like the reference partner: a
-    missing signature is allowed (the host's signed-GET scheme is still
-    stabilizing); a present-but-mismatched signature is logged, not rejected.
-    Tighten to a hard reject once the host ships signed GETs consistently.
+    The host signs its outbound calls to our destructive endpoints
+    (export/revoke/pending) over the full envelope (`<METHOD> <path> <ts>.` +
+    body). We reject anything not correctly signed — a missing, malformed,
+    stale, or mismatched signature all → 401. Delegates to the SDK's
+    verify_host_signature so the scheme stays in lockstep with the host and
+    isn't hand-rolled per partner. `path` uses the raw ASGI path (no query),
+    matching how the host builds `path` in _sign_host_request.
     """
-    sig_header = request.headers.get("X-DatsMe-Signature")
-    if not sig_header:
-        log.info("Host-initiated request had no X-DatsMe-Signature — allowing (permissive phase)")
-        return
-    import hmac as _hmac
-    import hashlib as _hashlib
     try:
-        ts_str = sig = None
-        for part in (p.strip() for p in sig_header.split(",")):
-            if part.startswith("t="):
-                ts_str = part[2:]
-            elif part.startswith("v1="):
-                sig = part[3:]
-        if not ts_str or not sig:
-            raise ValueError("malformed")
-        ts = int(ts_str)
-    except Exception:
-        raise HTTPException(status_code=401, detail="Invalid signature")
-    expected = _hmac.new(
-        _hmac_secret().encode(),
-        f"{ts}.".encode(),
-        _hashlib.sha256,
-    ).hexdigest()
-    if not _hmac.compare_digest(expected, sig):
-        log.warning("Host signature mismatch (non-blocking in permissive phase)")
+        verify_host_signature(
+            hmac_secret=_hmac_secret(),
+            signature_header=request.headers.get("X-DatsMe-Signature"),
+            method=request.method,
+            path=request.url.path,
+            body=body,
+        )
+    except HostSignatureError:
+        # Do NOT reveal which check failed (missing vs stale vs mismatch).
+        raise HTTPException(status_code=401, detail="unauthorized")
 
 
 def _utc_now_iso() -> str:

@@ -178,28 +178,39 @@ def get_pet(pet_id: str) -> Optional[sqlite3.Row]:
 
 def list_saved_pets(external_user_id: Optional[str] = None) -> list[dict]:
     """Saved (non-draft) pets, newest first, scoped to the caller's identity.
-    Returns the same summary shape the frontend has always received:
-    {id, breed_id, display_name, created_at}."""
+    Uses the SAME visibility rule as keep/delete/access (_scope_clause): a
+    standalone caller sees the local (unowned) pets; a launched user sees their
+    own pets AND any still-unclaimed local pets — so what you can see you can
+    act on, uniformly. Returns {id, breed_id, display_name, created_at}."""
+    clause, params = _scope_clause(external_user_id)
     with _lock:
-        conn = _connect()
-        if external_user_id is None:
-            rows = conn.execute(
-                """SELECT id, breed_id, display_name, created_at FROM pets
-                   WHERE draft=0 AND external_user_id IS NULL
-                   ORDER BY created_at DESC""").fetchall()
-        else:
-            rows = conn.execute(
-                """SELECT id, breed_id, display_name, created_at FROM pets
-                   WHERE draft=0 AND external_user_id=?
-                   ORDER BY created_at DESC""", (external_user_id,)).fetchall()
+        rows = _connect().execute(
+            f"""SELECT id, breed_id, display_name, created_at FROM pets
+                WHERE draft=0 AND {clause}
+                ORDER BY created_at DESC""", params).fetchall()
     return [dict(r) for r in rows]
 
 
-def keep_pet(pet_id: str) -> Optional[dict]:
-    """Clear the draft flag. Returns the summary record, or None if absent."""
+# A pet is accessible to a caller iff it is local (external_user_id IS NULL) or
+# owned by that caller. Enforced in the WHERE clause of every scoped mutation so
+# ownership is checked atomically with the write (no TOCTOU). The SQL fragment +
+# params are built by _scope_clause so keep/delete stay identical.
+def _scope_clause(external_user_id: Optional[str]) -> tuple[str, tuple]:
+    if external_user_id is None:
+        # Standalone caller: only the local (unowned) pets.
+        return "external_user_id IS NULL", ()
+    # Launched caller: their own pets OR still-unclaimed local pets.
+    return "(external_user_id IS NULL OR external_user_id=?)", (external_user_id,)
+
+
+def keep_pet(pet_id: str, external_user_id: Optional[str] = None) -> Optional[dict]:
+    """Clear the draft flag for a pet the caller may access. Returns the
+    summary record, or None if the pet is absent OR not the caller's."""
+    clause, params = _scope_clause(external_user_id)
     with _lock:
         conn = _connect()
-        cur = conn.execute("UPDATE pets SET draft=0 WHERE id=?", (pet_id,))
+        cur = conn.execute(
+            f"UPDATE pets SET draft=0 WHERE id=? AND {clause}", (pet_id, *params))
         conn.commit()
         if cur.rowcount == 0:
             return None
@@ -209,10 +220,13 @@ def keep_pet(pet_id: str) -> Optional[dict]:
     return dict(row) if row else None
 
 
-def delete_pet(pet_id: str) -> bool:
+def delete_pet(pet_id: str, external_user_id: Optional[str] = None) -> bool:
+    """Delete a pet the caller may access. False if absent OR not the caller's."""
+    clause, params = _scope_clause(external_user_id)
     with _lock:
         conn = _connect()
-        cur = conn.execute("DELETE FROM pets WHERE id=?", (pet_id,))
+        cur = conn.execute(
+            f"DELETE FROM pets WHERE id=? AND {clause}", (pet_id, *params))
         conn.commit()
         return cur.rowcount > 0
 
@@ -221,24 +235,27 @@ def purge_drafts(external_user_id: Optional[str] = "__all__") -> list[str]:
     """Delete unsaved drafts and return their ids (so the caller can drop the
     matching in-memory Job). external_user_id="__all__" purges every user's
     drafts (startup); None purges only standalone drafts; a value purges that
-    user's drafts (a DatsMe user iterating without accepting)."""
+    user's drafts (a DatsMe user iterating without accepting).
+
+    NEVER purges a pet with a PENDING writeback (routed to DatsMe —
+    datsme_activity_id set — but not yet acked): a queued Accept whose retry
+    hasn't drained yet must survive, or the retry would 404 the bundle and the
+    pet would be lost. Such pets are always drafts until the ack clears them.
+    """
+    # A pet is "pending writeback" iff it was routed to DatsMe but not acked.
+    # Excluding it from every purge scope protects the retry-queue window.
+    not_pending = "(datsme_activity_id IS NULL OR writeback_acked_at IS NOT NULL)"
+    if external_user_id == "__all__":
+        scope, params = "1=1", ()
+    elif external_user_id is None:
+        scope, params = "external_user_id IS NULL", ()
+    else:
+        scope, params = "external_user_id=?", (external_user_id,)
+    where = f"draft=1 AND {scope} AND {not_pending}"
     with _lock:
         conn = _connect()
-        if external_user_id == "__all__":
-            rows = conn.execute("SELECT id FROM pets WHERE draft=1").fetchall()
-            conn.execute("DELETE FROM pets WHERE draft=1")
-        elif external_user_id is None:
-            rows = conn.execute(
-                "SELECT id FROM pets WHERE draft=1 AND external_user_id IS NULL").fetchall()
-            conn.execute(
-                "DELETE FROM pets WHERE draft=1 AND external_user_id IS NULL")
-        else:
-            rows = conn.execute(
-                "SELECT id FROM pets WHERE draft=1 AND external_user_id=?",
-                (external_user_id,)).fetchall()
-            conn.execute(
-                "DELETE FROM pets WHERE draft=1 AND external_user_id=?",
-                (external_user_id,))
+        rows = conn.execute(f"SELECT id FROM pets WHERE {where}", params).fetchall()
+        conn.execute(f"DELETE FROM pets WHERE {where}", params)
         conn.commit()
     return [r["id"] for r in rows]
 

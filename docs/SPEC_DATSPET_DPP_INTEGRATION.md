@@ -26,12 +26,38 @@ their DatsMe My Pets (source="partner"), credits charged.
   the host verifies the manifest signature against the secret it *generates*
   (chicken-and-egg on a cold partner). See §8 / runbook.
 
-**Bugs found + fixed during live E2E** (all now covered by tests; see §6/§7):
-DetachedInstanceError (capture `pet.id` in-session), event-loop self-deadlock on
-the blocking writeback POST (`run_in_threadpool` + 60 s timeout), long name
-rejection (truncate to `MAX_NAME_LEN`), and the cross-origin launch cookie
-(`SameSite=None; Secure`, §5.5). One non-DPP infra bug also surfaced: a relative
-`PET_FACTORY_COMFY_OUTPUT` broke generation — fixed in `pet_env.sh`/`factory.py`.
+**Bugs found + fixed during live E2E:** DetachedInstanceError (capture `pet.id`
+in-session), event-loop self-deadlock on the blocking writeback POST
+(`run_in_threadpool` + 60 s timeout), long name rejection (truncate to
+`MAX_NAME_LEN`), and the cross-origin launch cookie (`SameSite=None; Secure`,
+§5.5). One non-DPP infra bug also surfaced: a relative `PET_FACTORY_COMFY_OUTPUT`
+broke generation — fixed in `pet_env.sh`/`factory.py`.
+
+**Security + scoping hardening (2026-07-12, post-review):**
+- **Host-signed `/partner/*`:** export/revoke/pending were permissive (200 on a
+  missing/wrong signature — a live data-loss vector on revoke). Now fail-closed
+  (401 unless correctly host-signed over `<METHOD> <path> <ts>.`+body, ±5 min
+  drift). Root-caused into the SDK: new `verify_host_signature()` /
+  `sign_host_request()` (`datsme_partner_sdk.host_signature`) so it isn't
+  hand-rolled per partner. *(The reference personality partner has the same hole
+  — it should adopt the SDK helper too.)*
+- **Per-user scoping:** generation now reads the launch cookie
+  (`resolve_launch_identity`, which VERIFIES the JWT) and stamps
+  `job.external_user_id`; list/keep/delete/preview/purge are scoped to the
+  caller (own + unclaimed-local pets; never another user's). Accept enforces
+  ownership (404 on another user's pet; 409 if already adopted elsewhere).
+
+**Test coverage (actual, not aspirational):**
+- Partner (`webui/tests/`, pytest): `test_partner_auth.py` (8 — host-sig
+  fail-closed + no-mutation-on-401 + envelope binding), `test_scoping.py` (4 —
+  two-user isolation, cross-user 404, purge-scope), `test_accept_fixes.py`
+  (3 — SameSite=None cookie, expired-token permanent-401-not-queued).
+- Host (`datsme_me/api/tests/`): `test_user_pet_writeback.py` (15 — full
+  round-trip via the REAL `mint_launch_token`/nonce path + stub bundle server:
+  happy adopt+charge, echo→409, both cap layers, bad-sha→400, house-full→409,
+  no-credits→402-no-side-effects — asserted in the user's SQLite + ledger),
+  `test_dpp_registry_consistency.py` (5 — the four-registry drift guard).
+- Every fix above has a reversion-failing test (verified by reverting each).
 
 ---
 
