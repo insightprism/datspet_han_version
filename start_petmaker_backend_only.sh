@@ -76,6 +76,14 @@ echo ""
 cd "$REPO/webui" || exit 1
 
 # Run backend (foreground; Ctrl+C stops it)
+#
+# Bind IPv4 loopback 127.0.0.1. On this box /etc/hosts maps "localhost" to
+# 127.0.0.1 only (no ::1 entry for the bare name "localhost"), so the frontend's
+# http://localhost:PORT fetch() resolves here cleanly. The whole stack — this
+# bind, NEXT_PUBLIC_API_URL, DATSPET_PUBLIC_URL, DATSPET_FRONTEND_URL — must use
+# the SAME hostname ("localhost" in dev) so the DPP launch cookie (set on the
+# frontend host) is sent on API calls; a 127.0.0.1/localhost split would be a
+# cross-origin cookie mismatch and the Accept-to-DatsMe button would never show.
 PETMAKER_BACKEND_PORT=$PETMAKER_BACKEND_PORT \
     "$REPO/.venv/bin/python" -m uvicorn app:app --host 127.0.0.1 --port $PETMAKER_BACKEND_PORT
 

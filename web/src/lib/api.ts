@@ -5,6 +5,16 @@
  * web/src/lib/api.ts convention (NEXT_PUBLIC_API_URL from .env.local).
  */
 
+// Use "localhost" (NOT the 127.0.0.1 literal) so the API host matches the
+// host the DatsMe launch redirects the page to. The DPP launch cookie
+// (datsme_launch, HttpOnly, credentials:"include") is set by the /launch response,
+// so it is bound to the DATSPET_PUBLIC_URL host — "localhost" in dev, the same
+// host as DATSPET_FRONTEND_URL — and the browser only sends it to fetch()es on
+// that same host (cookies are host-scoped; ports don't matter, spelling does).
+// Calling 127.0.0.1 here would be a different cookie host, the cookie would be
+// dropped, and getDatsmeSession() would return launched:false (no Accept
+// button). Keep this in sync with .env.local, DATSPET_FRONTEND_URL, and
+// DATSPET_PUBLIC_URL — all must use the same hostname.
 export const API_URL =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:19954";
 

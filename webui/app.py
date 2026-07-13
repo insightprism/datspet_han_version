@@ -47,6 +47,10 @@ app.add_middleware(
     allow_origins=[
         f"http://localhost:{FRONTEND_PORT}",
         f"http://127.0.0.1:{FRONTEND_PORT}",
+        # Covers a tab explicitly opened at http://[::1]:PORT. The Origin header
+        # reflects the page URL's hostname AS TYPED (never the resolved IP), so
+        # only a [::1]-typed page sends a [::1] Origin — localhost pages don't.
+        f"http://[::1]:{FRONTEND_PORT}",
     ],
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["*"],
@@ -490,4 +494,9 @@ def pet_zip(pet_id: str, request: Request):
 
 if __name__ == "__main__":
     import uvicorn
+    # Bind IPv4 loopback 127.0.0.1. "localhost" resolves here on this box, and the
+    # whole stack (this bind, NEXT_PUBLIC_API_URL, DATSPET_PUBLIC_URL,
+    # DATSPET_FRONTEND_URL) must share ONE hostname so the DPP launch cookie is
+    # sent on API calls — a 127.0.0.1/localhost split drops the cookie and hides
+    # the Accept-to-DatsMe button. Mirrors start_petmaker_backend_only.sh.
     uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("PETMAKER_BACKEND_PORT", 19954)))

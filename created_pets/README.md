@@ -5,7 +5,7 @@ Every pet generated during testing lands here, one folder per animal.
 ## Make a new pet
 
 ```bash
-cd /home/markly2/claude_code/datsme-pet-factory/created_pets
+cd /home/markly2/claude_code/datsme-pet-factory_wu/created_pets
 python3 make_pet.py "cardinal bird"
 python3 make_pet.py "red panda"
 python3 make_pet.py "penguin"
