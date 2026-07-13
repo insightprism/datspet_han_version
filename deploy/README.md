@@ -53,6 +53,20 @@ create-from-preview works end to end.
   (burst 4), other backend surfaces 10/s (burst 20) → 429.
 - **Monitoring:** `GET /api/health` → `{status, backend, active_jobs, workshop}`.
 
+## The staging twin (pet-staging.datsme.me)
+
+One DatsPet instance serves ONE DatsMe host — the DPP token carries no host
+identity (`iss: "datsme"` only) and the partner holds a single
+`DATSME_HMAC_SECRET` + `DATSME_BASE_URL`, so launches/writebacks cannot be
+routed per-environment. Staging therefore runs a full twin (live since
+2026-07-13): `/var/www/datspet-staging`, `datspet-staging-backend.service` on
+port **29964**, `datspet-staging-nginx` vhost, own data dir, own secret,
+`DATSME_BASE_URL=https://staging.datsme.me`. Update it the same way as prod
+(same bundle → `git pull` in `/var/www/datspet-staging`, rebuild the static
+export with `NEXT_PUBLIC_API_URL=https://pet-staging.datsme.me`). Never point
+both hosts' partner rows at one instance — the launch may verify (shared
+secret) but the writeback lands on the wrong environment.
+
 ## Registration (Part D)
 
 Per host (staging, then prod):
