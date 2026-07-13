@@ -69,13 +69,98 @@ export interface MotionMenu {
   poses: MotionPose[];    // only enabled + offerable poses (triggered ones hidden at launch)
 }
 
-// The pose menu for a species. `animal` is the keyword path (the design page's base
-// pet species); a resolved profile drives which poses the pet can do.
-export async function fetchMotions(animal: string): Promise<MotionMenu> {
-  const r = await fetch(`${API_URL}/api/motions?animal=${encodeURIComponent(animal)}`, {
+// The pose menu for a species. Two modes (SPEC_MOTION_PROFILES §4, §4.2):
+//  - keyword path (General): pass `animal` (the base pet's species) → most-specific
+//    keyword match decides the poses.
+//  - pinned path (themed/catalog): pass a `profile` key → that profile's poses
+//    exactly, so a curated breed animates at ≥ free-text fidelity.
+// Pass one or the other; `profile` wins when both are given.
+export async function fetchMotions(animal: string, profile?: string): Promise<MotionMenu> {
+  const qs = profile
+    ? `profile=${encodeURIComponent(profile)}`
+    : `animal=${encodeURIComponent(animal)}`;
+  const r = await fetch(`${API_URL}/api/motions?${qs}`, { cache: "no-store" });
+  if (!r.ok) throw new Error("Could not load the pose menu");
+  return r.json();
+}
+
+// The base-animal catalog (SPEC_PET_DESIGNER_PLATFORM §4). Drives the landing-page
+// tiles and each themed page's breed picker + instant base image. Read-only.
+export interface CatalogBreed {
+  key: string;
+  label: string;
+  motion_profile: string | null;  // the breed's pinned profile key (§4.2)
+  base_image_url: string;         // path under API_URL; use catalogBaseImageUrl()
+}
+// An adoptable pre-made pet (§4.4). Adopting one skips generation (zero GPU).
+export interface CatalogSample {
+  key: string;
+  preview_url: string | null;     // path under API_URL; null = no portrait
+}
+export interface CatalogAnimal {
+  key: string;
+  label: string;
+  tagline: string;
+  motion_profile: string | null;
+  themed_page: string | null;     // /design/<themed_page>, or null = catalog-only
+  breeds: CatalogBreed[];
+  samples: CatalogSample[];
+}
+
+export async function fetchCatalog(): Promise<CatalogAnimal[]> {
+  const r = await fetch(`${API_URL}/api/catalog`, { cache: "no-store" });
+  if (!r.ok) throw new Error("Could not load the animal catalog");
+  const data = await r.json();
+  return data.animals ?? [];
+}
+
+// The curated base sprite for a breed. The catalog returns a relative path
+// (`/api/catalog/...`); this prefixes it with the API host for <img src>.
+export function catalogBaseImageUrl(animal: string, breed: string): string {
+  return `${API_URL}/api/catalog/${encodeURIComponent(animal)}/${encodeURIComponent(breed)}/base.png`;
+}
+
+// The portrait for an adoptable sample (§4.4). The catalog returns a relative
+// preview_url; this prefixes it with the API host.
+export function catalogSamplePreviewUrl(previewUrl: string): string {
+  return `${API_URL}${previewUrl}`;
+}
+
+// Adopt a pre-made sample into the caller's house (§4.4) — zero-GPU. Returns the
+// new draft pet id so the caller runs the normal Save/Accept flow. Credentialed:
+// a DatsMe-launched user's adopt is scoped to them (the launch cookie rides).
+export async function adoptSample(animal: string, sample: string): Promise<{ pet_id: string; display_name: string; breed_id: string }> {
+  const r = await fetch(
+    `${API_URL}/api/catalog/${encodeURIComponent(animal)}/samples/${encodeURIComponent(sample)}/adopt`,
+    { method: "POST", credentials: "include" },
+  );
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || "Could not adopt this pet");
+  return data;
+}
+
+// The caller's OWN resolved tier entitlement (SPEC_PET_DESIGNER_PLATFORM §5.3).
+// The browser never sees the whole tier table — only this slice. The pose
+// selector caps + pricing hint come from here, not a client constant.
+export interface Entitlement {
+  tier: string;
+  label: string;
+  max_poses: number;
+  extra_pose_slots: number;
+  price_per_extra_pose: number;
+  can_generate: boolean;
+  can_adopt_samples: boolean;
+  upsell: string;
+  base_design_cost: number | null;   // host base charge; null if unknown
+}
+
+export async function fetchEntitlement(): Promise<Entitlement> {
+  // Credentialed: a launched user's tier rides their launch cookie.
+  const r = await fetch(`${API_URL}/api/entitlement`, {
+    credentials: "include",
     cache: "no-store",
   });
-  if (!r.ok) throw new Error("Could not load the pose menu");
+  if (!r.ok) throw new Error("Could not load your plan");
   return r.json();
 }
 

@@ -281,6 +281,24 @@ def resolve_launch_identity(request: Request) -> Optional[str]:
     return ctx.user_id
 
 
+def resolve_launch_capabilities(request: Request) -> list[str]:
+    """The caller's VERIFIED DPP launch capabilities, or [] for standalone.
+    Drives tier resolution (SPEC_PET_DESIGNER_PLATFORM §5.3). Like
+    resolve_launch_identity, we re-verify the JWT rather than trust the cookie:
+    a tier grants a higher pose cap + adopt permission, so a forged cookie must
+    not be able to claim capabilities the token doesn't carry — an invalid token
+    falls back to [] (base tier), never elevated. The verified token's
+    capabilities are authoritative; the cookie's cached copy is not trusted."""
+    cookie = _read_launch_cookie(request)
+    if cookie is None:
+        return []
+    try:
+        ctx = verify_launch_token(cookie["token"], _hmac_secret())
+    except (LaunchError, RuntimeError):
+        return []
+    return list(ctx.capabilities)
+
+
 # ---------------------------------------------------------------------------
 # Frontend helper — GET /api/datsme/session
 # ---------------------------------------------------------------------------
@@ -295,19 +313,25 @@ def datsme_session(request: Request):
         "launched": True,
         "user_id": ctx.get("user_id"),
         "capabilities": ctx.get("capabilities", []),
-        "cost": _pet_design_cost(),
+        "cost": pet_design_cost(),
     }
 
 
-def _pet_design_cost() -> Optional[int]:
-    """Best-effort fetch of the credit cost the host will charge, so the
-    Accept button can show it before committing. None if unavailable (the UI
-    then omits the number). The host exposes this via its cost/config; until
-    that endpoint is wired we read an env override."""
+def pet_design_cost() -> Optional[int]:
+    """Best-effort fetch of the base credit cost the host will charge, so the
+    Accept button + the designer's price hint can show it before committing.
+    None if unavailable (the UI then omits the number). Public because the
+    entitlement endpoint in app.py reads it too — a cross-module surface, not a
+    private helper. The host exposes this via its cost/config; until that
+    endpoint is wired we read an env override."""
     override = os.environ.get("DATSPET_DESIGN_COST")
     if override and override.isdigit():
         return int(override)
     return None
+
+
+# Back-compat alias — some call sites (and tests) reference the old private name.
+_pet_design_cost = pet_design_cost
 
 
 # ---------------------------------------------------------------------------

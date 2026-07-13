@@ -79,6 +79,29 @@ imports cleanly while `import numpy` fails. Then `curl https://pet.datsme.me/api
   (burst 4), other backend surfaces 10/s (burst 20) → 429.
 - **Monitoring:** `GET /api/health` → `{status, backend, active_jobs, workshop}`.
 
+## Tier posture & pose pricing (SPEC_PET_DESIGNER_PLATFORM §5)
+
+The pose selector cap + extra-pose price come from `pet_factory/tiers/tiers.json`
+(a data-only file on the GPU-less web tier, `--no-deps -e` like the motion
+profiles). The **one-line launch lever is `default_tier`**:
+
+- **Current posture — `default_tier: "plus"`.** EVERY user (standalone + any
+  DatsMe-launched user) resolves to `plus`: up to **5 poses**, and each pose
+  beyond walk+idle is charged **50 credits** on Accept. This works with no
+  DatsMe capability grant — the host counts poses server-side from the fetched
+  bundle manifest (`credit_pet_extra_pose_cost`, default 50; see the host repo's
+  `social_ledger_config.py` + `pet_writeback.py`). A 3-pose Accept charges
+  `credit_pet_design_cost + 2×50` (100 + 100 = **200** at defaults); observe it
+  in the credit ledger as the first live proof of the charging change.
+- **To differentiate tiers later** (free = 2 poses, a premium capability unlocks
+  5): (1) DatsMe registers a real premium capability (known-capabilities list +
+  partner manifest request + user grant), (2) map its string in
+  `capability_tiers`, (3) flip `default_tier` back to `"base"`. All three are
+  config/data — **no code change, no redeploy of logic** — and the resolution is
+  forge-resistant (the tier comes from the launch token's verified capabilities,
+  never a client claim). A guard test (`test_tiers.py::test_launch_posture_
+  default_is_plus`) pins the current default so a flip is deliberate.
+
 ## The staging twin (pet-staging.datsme.me)
 
 One DatsPet instance serves ONE DatsMe host — the DPP token carries no host

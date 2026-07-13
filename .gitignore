@@ -10,8 +10,18 @@ venv/
 examples/results/
 examples/queue.db
 *.zip
+# ...but catalog sample bundles ARE content (SPEC_PET_DESIGNER_PLATFORM §4.4) —
+# an adoptable sample is a stored .zip that must ship with the catalog. Un-ignore
+# them (both live and staged-for-review) so the '*.zip' build-artifact rule above
+# doesn't silently drop curated samples.
+!pet_factory/animal_catalog/**/*.zip
 .worker_token
 logs/
 webui/datspet_output/
 created_pets/*/
 pet_env.local.sh
+
+# Saved-webpage research artifacts (browser "Save As": <name>.html + <name>_files/).
+# Reference material, not source — keep on disk, out of git.
+docs/*.html
+docs/*_files/

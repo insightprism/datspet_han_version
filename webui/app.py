@@ -40,6 +40,14 @@ import pool_client
 # motion_profiles is pure data (no ML deps) — safe to import on the GPU-less web
 # tier; it powers /api/motions and the pose menu (SPEC_MOTION_PROFILES §5.1).
 from pet_factory import motion_profiles as motion_profiles_mod
+# animal_catalog is likewise pure data (base-animal tree + curated base PNGs) — it
+# powers the landing-page tiles, the themed pages' breed picker + instant base
+# image, and the catalog img2img source (SPEC_PET_DESIGNER_PLATFORM §4).
+from pet_factory import animal_catalog as animal_catalog_mod
+# tiers is the entitlement table (pose caps + extra-pose price), also pure data —
+# the pose selector caps + the resolved pricing hint come from it, and the server
+# enforces the resolved cap on generate (SPEC_PET_DESIGNER_PLATFORM §5).
+from pet_factory import tiers as tiers_mod
 
 # Generation backend (spec §A.6): "local" runs the on-box GPU directly (dev / break-
 # glass); "pool" routes generation to the shared_gpu_cpu pool (prod, GPU-less box).
@@ -313,18 +321,17 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
         db.delete_pool_job(job.id)   # web-terminal → drop the reattach row
 
 
-def _finalize_pet_from_zip(job: Job, *, description: str, breed_id: str,
-                           zip_bytes: bytes) -> None:
-    """Unpack sheet/manifest/package out of the bundle so the engine can render
-    the pet without unzipping in the browser, persist the pet row (born a
-    DRAFT), and mark the job done. Shared by a fresh generation and a
-    reattached pool job (Opt-1). breed_id and display_name are authoritative
-    from package.json — the pool path passes breed_id="" (the worker minted
-    it); the local backend's return value agrees with package.json anyway."""
+def _unpack_bundle(zip_bytes: bytes, *, default_display_name: str,
+                   breed_id: str = "") -> tuple[Optional[bytes], Optional[str], Optional[str], str, str]:
+    """Read sheet/manifest/package out of a pet bundle .zip so the engine can
+    render the pet without unzipping in the browser. Returns
+    (sheet_png, manifest_json, package_json, display_name, breed_id) — display
+    name + breed id are authoritative from package.json when present. Shared by
+    fresh-generation finalize, pool-job reattach, and sample adopt (§4.4)."""
     sheet_png = None
     manifest_json = None
     package_json = None
-    display_name = description.title()
+    display_name = default_display_name
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
         for member in z.namelist():
             if member.endswith("_sprite.png"):
@@ -336,6 +343,18 @@ def _finalize_pet_from_zip(job: Job, *, description: str, breed_id: str,
                 pkg = json.loads(package_json)
                 display_name = pkg.get("display_name", display_name)
                 breed_id = breed_id or pkg.get("breed_id", breed_id)
+    return sheet_png, manifest_json, package_json, display_name, breed_id
+
+
+def _finalize_pet_from_zip(job: Job, *, description: str, breed_id: str,
+                           zip_bytes: bytes) -> None:
+    """Unpack the bundle, persist the pet row (born a DRAFT), and mark the job
+    done. Shared by a fresh generation and a reattached pool job (Opt-1).
+    breed_id and display_name are authoritative from package.json — the pool
+    path passes breed_id="" (the worker minted it); the local backend's return
+    value agrees with package.json anyway."""
+    sheet_png, manifest_json, package_json, display_name, breed_id = _unpack_bundle(
+        zip_bytes, default_display_name=description.title(), breed_id=breed_id)
 
     db.insert_pet(
         pet_id=job.id, breed_id=breed_id, display_name=display_name,
@@ -406,7 +425,9 @@ def _reattach_pool_jobs() -> None:
 @app.post("/api/preview")
 def preview_design(
     request: Request,
-    base_pet_id: str = Form(...),
+    base_pet_id: str = Form(""),
+    catalog_animal: str = Form(""),
+    catalog_breed: str = Form(""),
     strength: float = Form(0.85),
     color: str = Form(""),
     accessories: str = Form(""),
@@ -414,26 +435,39 @@ def preview_design(
 ):
     """Run ONLY the redraw stage (~10 s) and return a preview id. The design
     page shows the image next to the original; /api/generate can then be
-    given the preview_id to animate this exact still."""
+    given the preview_id to animate this exact still. Two base sources
+    (§4.3): a house pet (`base_pet_id`) or a curated catalog breed
+    (`catalog_animal`+`catalog_breed`)."""
     owner = datsme_integration.resolve_launch_identity(request)
     base_pet_id = base_pet_id.strip()
+    catalog_animal = catalog_animal.strip().lower()[:40]
+    catalog_breed = catalog_breed.strip().lower()[:40]
     color = color.strip().lower()[:20]
     accessory_list = [a.strip().lower()[:30] for a in accessories.split(",") if a.strip()][:3]
     if not color and not accessory_list:
         raise HTTPException(400, "Pick a color or at least one accessory to preview.")
 
-    base_row = db.get_pet(base_pet_id)
-    if base_row is None or not _can_access(base_row, owner):
-        raise HTTPException(404, "base pet not found")
-    species = base_row["display_name"].lower()
+    preview_id = uuid.uuid4().hex[:12]
+    if base_pet_id:
+        base_row = db.get_pet(base_pet_id)
+        if base_row is None or not _can_access(base_row, owner):
+            raise HTTPException(404, "base pet not found")
+        species = base_row["display_name"].lower()
+        base_frame = extract_base_frame(base_pet_id, PREVIEW_DIR / f"{preview_id}_base.png")
+    elif catalog_animal and catalog_breed:
+        catalog_base = animal_catalog_mod.base_image_path(catalog_animal, catalog_breed)
+        if catalog_base is None:
+            raise HTTPException(404, "catalog base image not found")
+        species = catalog_breed
+        base_frame = PREVIEW_DIR / f"{preview_id}_base.png"
+        shutil.copyfile(catalog_base, base_frame)
+    else:
+        raise HTTPException(400, "Pick a base pet or a catalog breed to preview.")
     species = name.strip().lower()[:60] or species
     description, _display, min_strength = compose_design(species, color, accessory_list)
     strength = min(0.9, max(0.3, strength))
     if min_strength:
         strength = max(strength, min_strength)
-
-    preview_id = uuid.uuid4().hex[:12]
-    base_frame = extract_base_frame(base_pet_id, PREVIEW_DIR / f"{preview_id}_base.png")
 
     if PET_GEN_BACKEND == "pool":
         # Best-effort fast-fail (§A.3, R5-5): the pool has no per-task admission
@@ -487,6 +521,36 @@ def preview_image(preview_id: str):
 _HIDDEN_POSE_ROLES = frozenset({"triggered"})
 
 
+def _clip_poses_to_cap(poses_pkg: dict, max_poses: int) -> dict:
+    """Clip a requested pose package to the caller's tier cap (§8.6), server-side
+    and authoritative. Required poses (walk+idle) are always kept; the remaining
+    slots up to max_poses are filled from the requested optional poses in
+    CANONICAL order (deterministic — the same over-cap request always yields the
+    same clipped set). Poses set False stay untouched (they carry no cost). This
+    is the enforcement the UI cap mirrors but does not replace."""
+    mp = motion_profiles_mod
+    enabled = {name for name, on in poses_pkg.items() if on}
+    # Required poses (walk+idle) are ALWAYS built and always count against the
+    # cap — seed them unconditionally so the total can never exceed max_poses even
+    # if the request omitted them. (Seeding only the *requested* required poses and
+    # force-adding the rest later would let an omit-walk/idle request reach cap+2.)
+    kept = set(mp.REQUIRED_POSES)
+    # Fill the remaining slots from the requested OPTIONAL poses, canonical order.
+    slots_left = max(0, max_poses - len(kept))
+    for name in mp.CANONICAL_POSES:
+        if slots_left <= 0:
+            break
+        if name in enabled and name not in kept:
+            kept.add(name)
+            slots_left -= 1
+    # Rebuild: kept poses True, every other key present in the request False. The
+    # required poses are guaranteed present+True (they were seeded into `kept`).
+    clipped = {name: (name in kept) for name in poses_pkg}
+    for req in mp.REQUIRED_POSES:
+        clipped[req] = True
+    return clipped
+
+
 @app.get("/api/motions")
 def motions(animal: str = "", profile: str = ""):
     """The pose menu for the design page (SPEC_MOTION_PROFILES §4.1). Two modes:
@@ -521,6 +585,119 @@ def motions(animal: str = "", profile: str = ""):
     }
 
 
+@app.get("/api/catalog")
+def catalog():
+    """The base-animal tree (SPEC_PET_DESIGNER_PLATFORM §4.3): animals, each with
+    its breeds, the pinned motion_profile key, and whether it has a themed page.
+    Drives the landing-page tiles (§2) and each themed page's breed picker (§3.1).
+    Read-only + cacheable. The browser sees only what it needs to render + route —
+    the base_image_url per breed is a stable path it can <img src> directly."""
+    animals = []
+    for a in animal_catalog_mod.list_animals():
+        breeds = []
+        for b in a.get("breeds", []):
+            breeds.append({
+                "key": b["key"],
+                "label": b.get("label", b["key"]),
+                # Most-specific pinned profile for THIS breed (§4.2).
+                "motion_profile": animal_catalog_mod.resolved_motion_profile(a["key"], b["key"]),
+                "base_image_url": f"/api/catalog/{a['key']}/{b['key']}/base.png",
+            })
+        samples = [
+            {
+                "key": s["key"],
+                "preview_url": (f"/api/catalog/{a['key']}/samples/{s['key']}/preview.png"
+                                if s["has_preview"] else None),
+            }
+            for s in animal_catalog_mod.list_samples(a["key"])
+        ]
+        animals.append({
+            "key": a["key"],
+            "label": a.get("label", a["key"]),
+            "tagline": a.get("tagline", ""),
+            "motion_profile": a.get("motion_profile"),
+            "themed_page": a.get("themed_page"),
+            "breeds": breeds,
+            "samples": samples,
+        })
+    return {"animals": animals}
+
+
+@app.get("/api/catalog/{animal}/{breed}/base.png")
+def catalog_base_image(animal: str, breed: str):
+    """Serve a breed's curated base sprite (§4.3) — a static file load, so the
+    themed page can show the base the moment animal→breed is chosen, no
+    generation. 404 for an un-curated breed (the long tail falls back to the
+    General path, §4.5). Keys are catalog-validated so no path traversal reaches
+    the filesystem, but re-guard defensively."""
+    if not (animal.isalnum() and breed.isalnum()):
+        raise HTTPException(404, "base image not found")
+    path = animal_catalog_mod.base_image_path(animal, breed)
+    if path is None:
+        raise HTTPException(404, "base image not found")
+    # Curated bases ship read-only with the package; cache aggressively.
+    return FileResponse(path, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/api/entitlement")
+def entitlement(request: Request):
+    """The caller's OWN resolved entitlement (SPEC_PET_DESIGNER_PLATFORM §5.3):
+    max poses, extra-pose price, adopt permission, upsell copy. Resolved from the
+    DPP launch capabilities (standalone → the default 'base' tier). The browser
+    never sees the whole tier table — only this, its own slice — so the pose
+    selector caps + pricing hint come from the server, not a client constant."""
+    caps = datsme_integration.resolve_launch_capabilities(request)
+    ent = tiers_mod.resolve_entitlement(caps)
+    # The base credit cost the host charges (the extra-pose price is per-pose on
+    # top); surface both so the UI can show the full resolved price up front.
+    ent["base_design_cost"] = datsme_integration.pet_design_cost()
+    return ent
+
+
+@app.get("/api/catalog/{animal}/samples/{sample}/preview.png")
+def catalog_sample_preview(animal: str, sample: str):
+    """The gallery portrait for an adoptable sample (§4.4). 404 if absent."""
+    if not (animal.isalnum() and sample.isalnum()):
+        raise HTTPException(404, "sample preview not found")
+    path = animal_catalog_mod.sample_preview_path(animal, sample)
+    if path is None:
+        raise HTTPException(404, "sample preview not found")
+    return FileResponse(path, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.post("/api/catalog/{animal}/samples/{sample}/adopt")
+def adopt_sample(animal: str, sample: str, request: Request):
+    """Adopt a pre-made sample pet directly (§4.4) — generation-free (zero GPU).
+    Copies the stored sample bundle into the caller's house as a DRAFT via the
+    SAME insert path a generated pet takes (minus the build), then returns the
+    new pet id so the frontend runs its normal Save/Accept flow. Scoped to the
+    caller's identity exactly like a generated pet."""
+    if not (animal.isalnum() and sample.isalnum()):
+        raise HTTPException(404, "sample not found")
+    bundle_path = animal_catalog_mod.sample_bundle_path(animal, sample)
+    if bundle_path is None:
+        raise HTTPException(404, "sample not found")
+    owner = datsme_integration.resolve_launch_identity(request)
+
+    zip_bytes = bundle_path.read_bytes()
+    sheet_png, manifest_json, package_json, display_name, breed_id = _unpack_bundle(
+        zip_bytes, default_display_name=sample.title())
+    if sheet_png is None or manifest_json is None:
+        raise HTTPException(500, "sample bundle is malformed")
+
+    pet_id = uuid.uuid4().hex[:12]
+    db.insert_pet(
+        pet_id=pet_id, breed_id=breed_id or sample, display_name=display_name,
+        created_at=time.time(), draft=True,
+        sheet_png=sheet_png, manifest_json=manifest_json,
+        package_json=package_json, bundle_zip=zip_bytes,
+        external_user_id=owner,
+    )
+    return {"pet_id": pet_id, "display_name": display_name, "breed_id": breed_id or sample}
+
+
 @app.get("/api/workshop-status")
 def workshop_status():
     """Pet-worker liveness for the 'workshop offline/busy' UI (§C.1a). The SERVER
@@ -552,6 +729,8 @@ async def start_job(
     text: str = Form(""),
     image: Optional[UploadFile] = File(None),
     base_pet_id: str = Form(""),
+    catalog_animal: str = Form(""),
+    catalog_breed: str = Form(""),
     strength: float = Form(0.85),
     color: str = Form(""),
     accessories: str = Form(""),
@@ -566,9 +745,25 @@ async def start_job(
     name = name.strip()[:60]
     text = text.strip()[:200]
     base_pet_id = base_pet_id.strip()
+    catalog_animal = catalog_animal.strip().lower()[:40]
+    catalog_breed = catalog_breed.strip().lower()[:40]
     preview_id = preview_id.strip()
     color = color.strip().lower()[:20]
     accessory_list = [a.strip().lower()[:30] for a in accessories.split(",") if a.strip()][:3]
+
+    # Catalog base source (SPEC_PET_DESIGNER_PLATFORM §4.3): a themed page sends
+    # the chosen animal/breed instead of a house base_pet_id. The curated base.png
+    # is the img2img source (no cold-start Z-Image), and the catalog's pinned
+    # motion_profile governs the build unless the caller overrode it. Resolve it
+    # up front so the same design/prompt path handles catalog and house bases.
+    catalog_base_path = None
+    catalog_species = None
+    if catalog_animal and catalog_breed and not base_pet_id:
+        catalog_base_path = animal_catalog_mod.base_image_path(catalog_animal, catalog_breed)
+        if catalog_base_path is None:
+            raise HTTPException(404, "catalog base image not found")
+        # Species for the prompt = the breed label ("Corgi"), animal as fallback.
+        catalog_species = catalog_breed or catalog_animal
 
     # Motion-profile package (SPEC_MOTION_PROFILES §4.3/§5.1). `poses` is a JSON
     # {name: bool} string in the form body; malformed → None (walk+idle default).
@@ -584,16 +779,35 @@ async def start_job(
         except (json.JSONDecodeError, TypeError, ValueError):
             poses_pkg = None   # malformed → safe default (walk+idle)
     motion_profile = motion_profile.strip()[:60] or None
+    # A catalog build pins its motion_profile from the catalog entry (§4.2) unless
+    # the caller supplied one — so the curated path always animates at ≥ the
+    # fidelity free-text keyword matching would find (the Rev.3 guarantee).
+    if motion_profile is None and catalog_base_path is not None:
+        motion_profile = animal_catalog_mod.resolved_motion_profile(catalog_animal, catalog_breed)
+
+    # SERVER-SIDE tier enforcement (§8.6): the UI caps the pose selector, but the
+    # server is authoritative — a request over the caller's cap is CLIPPED here,
+    # not trusted. Resolve the caller's entitlement (standalone → base = 2 poses)
+    # and clip the requested set to max_poses, always keeping walk+idle. Without
+    # this, the only server cap is the global MAX_POSES=10 and every user gets the
+    # plus cap unpriced. Clip (don't 400) so a legitimate over-cap UI never hard-errors.
+    if poses_pkg is not None:
+        caps = datsme_integration.resolve_launch_capabilities(request)
+        max_poses = tiers_mod.resolve_entitlement(caps)["max_poses"]
+        poses_pkg = _clip_poses_to_cap(poses_pkg, max_poses)
 
     has_image = image is not None and bool(image.filename)
     has_design = bool(color or accessory_list)
+    on_catalog = catalog_base_path is not None
     if has_image and image.content_type not in ALLOWED_IMAGE_MIMES:
         raise HTTPException(400, f"unsupported image type: {image.content_type}")
     if base_pet_id and has_image:
         raise HTTPException(400, "Redesign a house pet OR upload an image — not both.")
     if base_pet_id and not (name or text or has_design):
         raise HTTPException(400, "Pick a color/accessories or describe the new look.")
-    if not base_pet_id and not text and not name and not has_image:
+    if on_catalog and not (name or has_design):
+        raise HTTPException(400, "Pick a color/accessories or a name for your design.")
+    if not base_pet_id and not on_catalog and not text and not name and not has_image:
         raise HTTPException(400, "Describe the pet OR drop in a reference image.")
 
     display_name = None
@@ -606,6 +820,14 @@ async def start_job(
             raise HTTPException(404, "base pet not found")
         species = base_row["display_name"].lower()
         species = name.lower() or species
+        description, display_name, min_strength = compose_design(species, color, accessory_list)
+        if min_strength:
+            strength = max(strength, min_strength)
+    elif on_catalog:
+        # Themed/catalog path: same structured-prompt composition as the house
+        # design path, but the species is the curated breed (overridable by name)
+        # and the starting image is the curated base.png (set below).
+        species = name.lower() or catalog_species
         description, display_name, min_strength = compose_design(species, color, accessory_list)
         if min_strength:
             strength = max(strength, min_strength)
@@ -626,15 +848,23 @@ async def start_job(
 
     reference_image = None
     remix_strength = None
-    if base_pet_id and preview_id and preview_id.isalnum() \
+    if (base_pet_id or on_catalog) and preview_id and preview_id.isalnum() \
             and (PREVIEW_DIR / f"{preview_id}.png").exists():
         # The user previewed this design — animate the EXACT still they saw
-        # (no second redraw, no re-roll of the look).
+        # (no second redraw, no re-roll of the look). Same for house and catalog.
         reference_image = PREVIEW_DIR / f"{preview_id}.png"
     elif base_pet_id:
         # Redesign path: the base pet's own resting frame is the starting
         # image, redrawn toward the new description at the requested strength.
         reference_image = extract_base_frame(base_pet_id, job_dir / "remix_base.png")
+        remix_strength = min(0.9, max(0.3, strength))
+    elif on_catalog:
+        # Catalog path (§4.3): the curated base.png is the img2img source —
+        # copied into the job scratch dir so it's a plain local path the local
+        # and pool backends both consume identically (the pool encoder base64s
+        # it as reference_image_b64, the existing v2 transport — no new field).
+        reference_image = job_dir / "catalog_base.png"
+        shutil.copyfile(catalog_base_path, reference_image)
         remix_strength = min(0.9, max(0.3, strength))
     elif has_image:
         body = await image.read()
