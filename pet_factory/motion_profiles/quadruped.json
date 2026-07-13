@@ -1,0 +1,18 @@
+{
+  "key": "quadruped",
+  "level": 3,
+  "movement_class": "mammalian_quadruped",
+  "keywords": ["dog", "cat", "puppy", "kitten", "wolf", "fox", "bear", "lion", "tiger", "horse", "pony", "cow", "pig", "sheep", "goat", "deer", "rabbit", "bunny", "mouse", "rat", "hamster", "squirrel", "raccoon", "panda", "koala", "hedgehog", "otter", "ferret", "elephant", "rhino", "hippo", "giraffe", "zebra", "kangaroo", "quadruped", "mammal"],
+  "poses": {
+    "walk":  { "enabled": true,  "runtime_role": "active", "action": "walking",       "suffix": ", mouth closed, no facial animation, no chewing, no talking, eyes still, performing a full walk cycle in place: legs and feet cycling through one complete stride, body bobbing naturally up and down with each step, classic looping sprite walk animation, no horizontal movement of the body, no camera movement, no panning" },
+    "idle":  { "enabled": true,  "runtime_role": "rest",   "action": "sitting calmly", "suffix": ", mouth closed, no facial animation, no chewing, no talking, eyes still, gentle idle motion: soft breathing, slight sway, a small bob in place, no walking, no camera movement, no panning" },
+    "run":   { "enabled": true,  "runtime_role": "active", "action": "running at a brisk gallop in place", "suffix": ", legs cycling quickly through a full running stride, body low and driving forward, energetic looping run animation, no horizontal movement of the body, no camera movement, no panning" },
+    "sleep": { "enabled": true,  "runtime_role": "timed",  "action": "curled up asleep", "suffix": ", lying still with slow steady breathing, eyes closed, motionless resting loop, no camera movement, no panning" },
+    "sit":   { "enabled": true,  "runtime_role": "timed",  "action": "sitting upright, alert", "suffix": ", seated still with small head movements and gentle breathing, no walking, no camera movement, no panning" },
+    "eat":   { "enabled": true,  "runtime_role": "timed",  "action": "eating, head lowered nibbling", "suffix": ", head dipping down to nibble then up, small repeating chewing motion, no walking, no camera movement, no panning" },
+    "jump":  { "enabled": true,  "runtime_role": "triggered", "action": "jumping upward excitedly", "suffix": ", springing up off all four legs then landing, one bouncy reaction hop, no horizontal movement, no camera movement, no panning" },
+    "play":  { "enabled": true,  "runtime_role": "triggered", "action": "playfully bouncing and wagging", "suffix": ", a lively playful bounce with tail wagging, energetic reaction loop, no horizontal movement, no camera movement, no panning" },
+    "swim":  { "enabled": false },
+    "fly":   { "enabled": false }
+  }
+}

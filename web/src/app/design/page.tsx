@@ -9,7 +9,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { listPets, previewDesign, previewImageUrl, type PetSummary } from "@/lib/api";
+import {
+  listPets, previewDesign, previewImageUrl, fetchMotions,
+  type PetSummary, type MotionMenu,
+} from "@/lib/api";
 import { usePetJob } from "@/hooks/usePetJob";
 import PetJobResult from "@/components/PetJobResult";
 import PetThumbnail from "@/components/PetThumbnail";
@@ -53,6 +56,20 @@ const STRENGTHS = [
   { label: "strong", value: 0.9, hint: "redesign" },
 ] as const;
 
+// How many poses a user may build in one pet. Base walk+idle plus up to 3 more
+// here (SPEC_PET_DESIGNER_PLATFORM §5 caps at 5 total). walk+idle are always in.
+const MAX_SELECTABLE_POSES = 5;
+// Each pose is one ~75 s Wan I2V generation (SPEC_MOTION_PROFILES §8). A rough
+// "N poses ≈ M min" hint so the GPU cost is visible before the user commits.
+const SECONDS_PER_POSE = 75;
+
+function costHint(n: number): string {
+  const mins = (n * SECONDS_PER_POSE) / 60;
+  const rounded = Math.round(mins * 2) / 2; // nearest half-minute
+  const label = Number.isInteger(rounded) ? `${rounded}` : `${Math.floor(rounded)}½`;
+  return `${n} pose${n === 1 ? "" : "s"} ≈ ${label} min`;
+}
+
 export default function DesignPage() {
   const [housePets, setHousePets] = useState<PetSummary[]>([]);
   const [basePetId, setBasePetId] = useState<string>("");
@@ -61,6 +78,11 @@ export default function DesignPage() {
   const [strength, setStrength] = useState<number>(0.85);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  // Motion menu for the current base pet's species, and the user's pose picks.
+  // Required poses (walk+idle) are always built; `selectedPoses` holds only the
+  // OPTIONAL poses the user checked. Keyed off the resolved profile (§4).
+  const [motions, setMotions] = useState<MotionMenu | null>(null);
+  const [selectedPoses, setSelectedPoses] = useState<Set<string>>(new Set());
   const { job, error, setError, submit, reset, busy, done } = usePetJob();
 
   // A preview only matches the controls it was rendered from — any change
@@ -69,6 +91,50 @@ export default function DesignPage() {
     setPreviewId(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [basePetId, color, accessories.join(","), strength]);
+
+  // Fetch the pose menu for the base pet's species. The menu is a projection of
+  // the resolved motion profile — a snake and a bird offer different poses, all
+  // decided server-side (§4). Refetch when the base pet changes; clear the user's
+  // optional picks so a stale selection can't carry across species.
+  const basePetName = housePets.find((p) => p.id === basePetId)?.display_name;
+  useEffect(() => {
+    if (!basePetName) {
+      setMotions(null);
+      return;
+    }
+    let cancelled = false;
+    fetchMotions(basePetName)
+      .then((m) => {
+        if (cancelled) return;
+        setMotions(m);
+        setSelectedPoses(new Set()); // reset optional picks on species change
+      })
+      .catch(() => {
+        if (!cancelled) setMotions(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [basePetName]);
+
+  // The optional poses (everything the menu offers that isn't required).
+  const optionalPoses = (motions?.poses ?? []).filter((p) => !p.required);
+  // Total poses this build would generate = required (walk+idle) + user's picks.
+  const requiredCount = (motions?.poses ?? []).filter((p) => p.required).length || 2;
+  const totalPoses = requiredCount + selectedPoses.size;
+  const atCap = totalPoses >= MAX_SELECTABLE_POSES;
+
+  function togglePose(name: string) {
+    setSelectedPoses((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) {
+        next.delete(name);
+      } else if (requiredCount + next.size < MAX_SELECTABLE_POSES) {
+        next.add(name);
+      }
+      return next;
+    });
+  }
 
   async function makePreview() {
     if (!basePetId || (!color && accessories.length === 0)) {
@@ -128,6 +194,18 @@ export default function DesignPage() {
     // If the current design was previewed, the pipeline animates that exact
     // still — what you saw is what you get.
     if (previewId) fd.append("preview_id", previewId);
+    // Which poses to generate (§4.3): required poses (walk+idle) are always true;
+    // add the optional ones the user checked. Absent → backend default (walk+idle).
+    if (selectedPoses.size > 0) {
+      const pkg: Record<string, boolean> = {};
+      for (const p of motions?.poses ?? []) {
+        if (p.required) pkg[p.name] = true;
+      }
+      Array.from(selectedPoses).forEach((name) => {
+        pkg[name] = true;
+      });
+      fd.append("poses", JSON.stringify(pkg));
+    }
     submit(fd);
   }
 
@@ -136,6 +214,7 @@ export default function DesignPage() {
     setColor("");
     setAccessories([]);
     setPreviewId(null);
+    setSelectedPoses(new Set());
   }
 
   const basePet = housePets.find((p) => p.id === basePetId);
@@ -289,7 +368,60 @@ export default function DesignPage() {
               </div>
 
               <label className="mono mb-1 mt-5 block text-xs tracking-wide" style={{ color: "var(--muted)" }}>
-                5. Preview (optional — ~10 seconds; the final pet is built from the exact image you approve)
+                5. Poses to generate{motions ? ` (${totalPoses}/${MAX_SELECTABLE_POSES})` : ""}
+              </label>
+              {optionalPoses.length === 0 ? (
+                <div className="mono text-xs" style={{ color: "var(--faint)" }}>
+                  Walk and idle are always included. This pet has no extra poses to add.
+                </div>
+              ) : (
+                <>
+                  <div className="mb-1.5 flex flex-wrap gap-2">
+                    {/* Required poses: always on, locked. */}
+                    {(motions?.poses ?? [])
+                      .filter((p) => p.required)
+                      .map((p) => (
+                        <span
+                          key={p.name}
+                          className="rounded-lg border px-3 py-1.5 text-xs font-medium capitalize"
+                          style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}
+                          title="always included"
+                        >
+                          {p.name} ✓
+                        </span>
+                      ))}
+                    {/* Optional poses: the user's choice, up to the cap. */}
+                    {optionalPoses.map((p) => {
+                      const on = selectedPoses.has(p.name);
+                      const lockedByCap = !on && atCap;
+                      return (
+                        <button
+                          key={p.name}
+                          type="button"
+                          onClick={() => togglePose(p.name)}
+                          disabled={busy || lockedByCap}
+                          className="rounded-lg border px-3 py-1.5 text-xs font-medium capitalize transition disabled:opacity-45"
+                          style={
+                            on
+                              ? { background: "rgba(99,102,241,0.15)", color: "var(--heading)", borderColor: "var(--accent)" }
+                              : { background: "#151515", color: "var(--muted)", borderColor: "var(--line)" }
+                          }
+                          title={lockedByCap ? "pose limit reached" : undefined}
+                        >
+                          {on ? "✓ " : ""}{p.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="mono text-xs" style={{ color: atCap ? "var(--orange)" : "var(--faint)" }}>
+                    {costHint(totalPoses)}
+                    {atCap ? " · pose limit reached — upgrade for more poses" : ""}
+                  </div>
+                </>
+              )}
+
+              <label className="mono mb-1 mt-5 block text-xs tracking-wide" style={{ color: "var(--muted)" }}>
+                6. Preview (optional — ~10 seconds; the final pet is built from the exact image you approve)
               </label>
               <div className="flex flex-wrap items-stretch gap-4">
                 <div className="card p-3 text-center">

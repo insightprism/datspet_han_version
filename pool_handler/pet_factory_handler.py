@@ -24,8 +24,16 @@ v2 (spec §A.2): the design flow is not "text → pet" — it previews an img2im
 pet or an uploaded photo, then animates that exact still. A pool worker on another machine
 cannot see the web tier's local reference-image path, so v2 carries the image bytes in the
 params as `reference_image_b64` (plus `remix_strength` and `display_name`). Without this, a
-preview/redesign/upload silently generates a text-only pet (Finding 1). The three new fields
-are OPTIONAL, so a v1-shaped `{animal}` submit still works — which keeps the fleet cutover safe.
+preview/redesign/upload silently generates a text-only pet (Finding 1).
+
+v3 (SPEC_MOTION_PROFILES §5.2): species-aware motion. Two more optional params — `poses`
+(which poses to generate) and `motion_profile` (the catalog's pinned profile key) — forwarded
+to make_pet_zip, which resolves the motion profile and loops the selected poses. An unknown
+`motion_profile` key falls back to keyword resolution on the worker (profile-set skew), never
+an error.
+
+Every added field across v2/v3 is OPTIONAL, so a v1-shaped `{animal}` submit still validates —
+which keeps the §B.1 fleet cutover safe (a v2 or v1 node ignores the newer fields).
 """
 import base64
 import binascii
@@ -33,11 +41,14 @@ from pathlib import Path
 
 METADATA = {
     "task": "pet_factory",
-    "version": "2",
+    "version": "3",
     # A CUDA card with enough VRAM for the Z-Image + Wan 2.2 pipeline. The dispatcher will
     # route pet jobs only to nodes that satisfy this — never the CPU-only worker.
     "needs": {"gpu": 1, "vram_gb": 20, "gpu_backend": "cuda", "cpu": 2, "ram_gb": 8},
-    "timeout_s": 900,            # ~3 min typical on a 3090; 15 min is the watchdog kill bound
+    "timeout_s": 900,            # ~3 min typical on a 3090; 15 min is the watchdog kill bound.
+                                 # Realized builds are tier-bounded to ≤5 poses (≈7 min), well
+                                 # under this — SPEC_MOTION_PROFILES §8. Raise to 1500 only if
+                                 # the effective cap is ever lifted toward the 10-pose ceiling.
     "preemptible": "abort",     # not checkpointable — a preempted pet restarts from scratch
     "params_schema": {
         "type": "object",
@@ -53,6 +64,14 @@ METADATA = {
             "reference_image_b64": {"type": "string"},   # base64 PNG/JPEG; the redraw/upload still
             "remix_strength": {"type": "number", "minimum": 0.3, "maximum": 0.9},
             "display_name": {"type": "string", "maxLength": 60},
+            # v3 (SPEC_MOTION_PROFILES §5.2) — both optional, so a v2 submit still validates.
+            # `poses`: which poses to generate, e.g. {"walk":true,"idle":true,"run":true}.
+            #          Absent → walk+idle only (today's behavior). walk+idle always included.
+            # `motion_profile`: the catalog's pinned profile key; absent → keyword resolution
+            #          from `animal`. An unknown key falls back to keyword resolution on the
+            #          worker (profile-set skew, §5.2) — never an error.
+            "poses": {"type": "object", "additionalProperties": {"type": "boolean"}},
+            "motion_profile": {"type": "string", "maxLength": 60},
         },
         "required": ["animal"],
         "additionalProperties": False,
@@ -92,6 +111,8 @@ def run(params, ctx):
         reference_image=str(reference_image) if reference_image else None,
         remix_strength=params.get("remix_strength"),
         display_name=params.get("display_name"),
+        poses=params.get("poses"),                    # v3 (§5.2) — None → walk+idle only
+        motion_profile=params.get("motion_profile"),  # v3 — None → keyword resolution
     )
 
     out = Path(ctx.result_dir) / f"{breed_id}.zip"

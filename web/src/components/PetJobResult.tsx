@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 import PetStage from "@/components/PetStage";
 import PetThumbnail from "@/components/PetThumbnail";
+import PoseGallery from "@/components/PoseGallery";
 
 interface Props {
   job: JobStatus;
@@ -102,7 +103,7 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
             <div>
               <div className="text-xl" style={{ color: "var(--heading)" }}>{job.name}</div>
               <div className="mono mt-1 text-xs" style={{ color: "var(--muted)" }}>
-                breed_id: {job.breed_id} · walk + idle · DatsMe bundle
+                breed_id: {job.breed_id} · DatsMe bundle
               </div>
               <div className="mono mt-1 text-xs" style={{ color: "var(--green)" }}>
                 It&apos;s alive — look at the bottom of the page. Click anywhere to call it over.
@@ -114,6 +115,8 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
               </div>
             </div>
           </div>
+          {/* One animated box per generated pose — a direct check that each pose built. */}
+          <PoseGallery petId={job.id} />
           {datsme && (
             <div className="card mt-6 p-3" style={{ borderColor: "rgba(167,139,250,0.4)", background: "rgba(167,139,250,0.08)" }}>
               <div className="mono text-xs" style={{ color: "var(--gold)" }}>

@@ -55,6 +55,30 @@ export async function listPets(): Promise<PetSummary[]> {
   return r.json();
 }
 
+// A pose offered by the motion menu (SPEC_MOTION_PROFILES §4.1). `required` poses
+// (walk+idle) are always built and render locked-on in the selector.
+export interface MotionPose {
+  name: string;
+  required: boolean;
+  enabled: boolean;
+}
+export interface MotionMenu {
+  profile: string;        // the resolved profile key (e.g. "quadruped", "serpentine")
+  level: number;          // 1 breed .. 4 generic
+  movement_class: string;
+  poses: MotionPose[];    // only enabled + offerable poses (triggered ones hidden at launch)
+}
+
+// The pose menu for a species. `animal` is the keyword path (the design page's base
+// pet species); a resolved profile drives which poses the pet can do.
+export async function fetchMotions(animal: string): Promise<MotionMenu> {
+  const r = await fetch(`${API_URL}/api/motions?animal=${encodeURIComponent(animal)}`, {
+    cache: "no-store",
+  });
+  if (!r.ok) throw new Error("Could not load the pose menu");
+  return r.json();
+}
+
 export async function previewDesign(form: FormData): Promise<{ preview_id: string }> {
   const r = await fetch(`${API_URL}/api/preview`, { method: "POST", body: form });
   const data = await r.json();

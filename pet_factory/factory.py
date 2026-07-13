@@ -31,9 +31,15 @@ import zipfile
 from collections import deque
 from pathlib import Path
 
+import logging
+
 import numpy as np
 import requests
 from PIL import Image, ImageSequence
+
+from . import motion_profiles as mp
+
+log = logging.getLogger(__name__)
 
 # ── Config ───────────────────────────────────────────────────────────────────
 COMFY_URL = os.environ.get("PET_FACTORY_COMFY_URL", "http://127.0.0.1:8188").rstrip("/")
@@ -310,15 +316,19 @@ def _remix_prompt(animal: str) -> str:
             "white background, storybook style")
 
 
-def pack_datsme_bundle(walk_frames, idle_frames, breed_id, display_name,
+def pack_datsme_bundle(pose_frames, breed_id, display_name,
                        frame_size=256, columns=8, fps=12,
-                       movement_class="mammalian_quadruped") -> bytes:
-    """Pack two frame lists (RGB or RGBA PIL images) into a DatsMe breed bundle
+                       pose_roles=None, movement_class="mammalian_quadruped") -> bytes:
+    """Pack an ordered {pose_name: frame_list} dict into a DatsMe breed bundle
     (.zip bytes): a transparent sprite sheet + manifest.json + package.json.
 
-    Each frame is background-removed (birefnet) and fit into a square cell. The
-    walk animation gets frame indices 0..N-1, idle starts on a fresh grid row.
+    Each frame is background-removed (birefnet) and fit into a square cell. Each
+    pose occupies its own row-band on the sheet (the next pose always starts on a
+    fresh grid row), so frame indices never straddle two animations. The manifest's
+    `animations` map carries each pose's declared `runtime_role` (pose_roles).
     Returns the .zip as bytes — post it to DatsMe's /api/pets/me/upload."""
+    pose_roles = pose_roles or {}
+
     def prep(frames):
         out = []
         for fr in frames:
@@ -334,25 +344,32 @@ def pack_datsme_bundle(walk_frames, idle_frames, breed_id, display_name,
             out.append(cell)
         return out
 
-    A, B = prep(walk_frames), prep(idle_frames)
-    idx_a = list(range(len(A)))
-    start_b = ((len(A) + columns - 1) // columns) * columns        # idle starts on a new row
-    idx_b = list(range(start_b, start_b + len(B)))
-    rows = (start_b + len(B) + columns - 1) // columns
+    # Lay each pose on its own row band; compute its frame indices. Preserves the
+    # original walk-row-0 / idle-fresh-row layout when the dict is {walk, idle}.
+    placed = []          # (pose_name, [cells], [indices])
+    cursor = 0
+    animations = {}
+    for name, frames in pose_frames.items():
+        cells = prep(frames)
+        start = ((cursor + columns - 1) // columns) * columns      # next pose starts on a new row
+        idx = list(range(start, start + len(cells)))
+        placed.append((name, cells, idx))
+        role = pose_roles.get(name)
+        animations[name] = {"frames": idx, "fps": fps, "loop": True}
+        if role:
+            animations[name]["runtime_role"] = role
+        cursor = start + len(cells)
 
-    sheet = Image.new("RGBA", (columns * frame_size, rows * frame_size), (0, 0, 0, 0))
-    for i, fr in zip(idx_a, A):
-        sheet.paste(fr, ((i % columns) * frame_size, (i // columns) * frame_size), fr)
-    for i, fr in zip(idx_b, B):
-        sheet.paste(fr, ((i % columns) * frame_size, (i // columns) * frame_size), fr)
+    rows = (cursor + columns - 1) // columns
+    sheet = Image.new("RGBA", (columns * frame_size, max(rows, 1) * frame_size), (0, 0, 0, 0))
+    for _name, cells, idx in placed:
+        for i, fr in zip(idx, cells):
+            sheet.paste(fr, ((i % columns) * frame_size, (i // columns) * frame_size), fr)
 
     manifest = {
         "schema_version": "pet_manifest.v1",
         "columns": columns, "rows": rows, "frame_width": frame_size, "frame_height": frame_size,
-        "animations": {
-            "walk": {"frames": idx_a, "fps": fps, "loop": True, "runtime_role": "active"},
-            "idle": {"frames": idx_b, "fps": fps, "loop": True, "runtime_role": "rest"},
-        },
+        "animations": animations,
         "view_kind": "side", "native_facing": "right",
         "mirroring_policy": "flip", "movement_class": movement_class,
     }
@@ -381,8 +398,34 @@ def render_design_still(description: str, reference_image, strength) -> bytes:
     return out.read_bytes()
 
 
+def _effective_poses(profile, poses):
+    """The ordered list of pose names to actually generate (SPEC_MOTION_PROFILES §5.1/§5.3):
+    the profile's enabled poses, intersected with the request (if any), always unioned
+    with the required poses (walk+idle), in canonical order, capped at MAX_POSES.
+
+    - poses is None → the profile's required set only (walk+idle) — today's 2-pose behavior.
+    - poses is a {name: bool} package → the enabled poses the caller selected, plus required.
+    """
+    enabled = profile.enabled_poses()                      # canonical order, enabled only
+    required = [p for p in mp.REQUIRED_POSES if p in enabled]
+    if poses is None:
+        selected = list(required)
+    else:
+        want = {name for name, on in poses.items() if on}
+        selected = [p for p in enabled if p in want]
+        for p in required:                                 # required always included
+            if p not in selected:
+                selected.append(p)
+    # canonical order + de-dupe, then clamp to the hard ceiling
+    ordered = [p for p in mp.CANONICAL_POSES if p in set(selected)]
+    if len(ordered) > mp.MAX_POSES:
+        log.warning("pose selection %d exceeds MAX_POSES=%d; clipping", len(ordered), mp.MAX_POSES)
+        ordered = ordered[:mp.MAX_POSES]
+    return ordered
+
+
 def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=None,
-                 remix_strength=None, display_name=None):
+                 remix_strength=None, display_name=None, poses=None, motion_profile=None):
     """Generate a complete DatsMe pet from an animal name.
 
     Args:
@@ -402,6 +445,14 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
         display_name:    optional human-facing name for the bundle. Defaults to
                          animal.title() — override when `animal` is a long
                          composed design prompt that would make an ugly name.
+        poses:           optional {pose_name: bool} package of which poses to
+                         generate (SPEC_MOTION_PROFILES §4.3). None → walk+idle
+                         only, byte-identical to the pre-motion-profiles behavior.
+                         walk+idle are always included regardless of the request.
+        motion_profile:  optional pinned profile key (§5.2). When set, the profile
+                         is loaded by key (skew-safe); else it is resolved from
+                         `animal` by keyword. Either way the engine loops the
+                         resolved profile's poses and never names a species.
 
     Returns (breed_id, zip_bytes). Takes ~3 min on an RTX 3090. The .zip is a
     DatsMe breed bundle — upload it via DatsMe's POST /api/pets/me/upload.
@@ -412,6 +463,13 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
 
     animal = (animal or "").strip()[:60] or "pet"
     seed = random.randint(1, 2**31)
+
+    # Resolve the motion profile: pinned key (skew-safe) or keyword from the animal.
+    if motion_profile:
+        profile = mp.load_motion_profile(motion_profile, fallback_animal=animal)
+    else:
+        profile = mp.resolve_motion_profile(animal)
+    pose_names = _effective_poses(profile, poses)
 
     if reference_image and remix_strength:
         prog("Redrawing your design…", 0.10)
@@ -427,13 +485,16 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
         base = COMFY_OUTPUT_DIR / _run(_static_image_wf(_base_prompt(animal), seed))
         _wait_stable(base)
 
-    prog("Animating the walk…", 0.35)
-    walk_fn = _run(_loop_wf(f"cute cartoon {animal} walking, side profile, facing right" + WALK_SUFFIX,
-                            str(base), seed))
-
-    prog("Animating the idle…", 0.60)
-    idle_fn = _run(_loop_wf(f"cute cartoon {animal} sitting calmly, side profile, facing right" + IDLE_SUFFIX,
-                            str(base), seed))
+    # Loop the selected poses — each a Wan I2V generation from the same base sprite.
+    # Progress is distributed across the N poses over the [0.10, 0.85] band (the
+    # 0.85→1.0 tail is the cutout + pack step, unchanged).
+    pose_files = {}
+    n = len(pose_names)
+    for i, name in enumerate(pose_names):
+        pose = profile.pose(name)
+        frac = 0.10 + (0.75 * i / max(1, n))
+        prog(f"Animating the {name}…", round(frac, 3))
+        pose_files[name] = _run(_loop_wf(mp.compose_pose_prompt(animal, pose), str(base), seed))
 
     prog("Cutting out backgrounds & packing…", 0.85)
     # Unload ComfyUI's Wan models so the GPU has room for birefnet (the next job
@@ -444,15 +505,19 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
     except Exception:
         pass
 
-    walk_frames = _frames_rgba(COMFY_OUTPUT_DIR / walk_fn)
-    idle_frames = _frames_rgba(COMFY_OUTPUT_DIR / idle_fn)
-    if len(walk_frames) > 1:                 # drop the duplicated final loop frame
-        walk_frames = walk_frames[:-1]
-    if len(idle_frames) > 1:
-        idle_frames = idle_frames[:-1]
+    pose_frames = {}
+    pose_roles = {}
+    for name in pose_names:
+        frames = _frames_rgba(COMFY_OUTPUT_DIR / pose_files[name])
+        if len(frames) > 1:                  # drop the duplicated final loop frame
+            frames = frames[:-1]
+        pose_frames[name] = frames
+        pose_roles[name] = profile.pose(name).runtime_role
 
     breed_id = breed_id or _slug(animal)
-    zip_bytes = pack_datsme_bundle(walk_frames, idle_frames, breed_id,
-                                   display_name or animal.title())
+    zip_bytes = pack_datsme_bundle(pose_frames, breed_id,
+                                   display_name or animal.title(),
+                                   pose_roles=pose_roles,
+                                   movement_class=profile.movement_class)
     prog("Done!", 1.0)
     return breed_id, zip_bytes

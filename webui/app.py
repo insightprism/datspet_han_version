@@ -37,6 +37,9 @@ from fastapi.responses import FileResponse, Response
 
 import db
 import pool_client
+# motion_profiles is pure data (no ML deps) — safe to import on the GPU-less web
+# tier; it powers /api/motions and the pose menu (SPEC_MOTION_PROFILES §5.1).
+from pet_factory import motion_profiles as motion_profiles_mod
 
 # Generation backend (spec §A.6): "local" runs the on-box GPU directly (dev / break-
 # glass); "pool" routes generation to the shared_gpu_cpu pool (prod, GPU-less box).
@@ -223,7 +226,9 @@ def _encode_reference_image(path: Path, max_px: int = 1024) -> str:
 
 def _generate_via_pool(job: Job, *, description: str, reference_image: Optional[Path],
                        remix_strength: Optional[float],
-                       display_name: Optional[str]) -> tuple[str, bytes]:
+                       display_name: Optional[str],
+                       poses: Optional[dict] = None,
+                       motion_profile: Optional[str] = None) -> tuple[str, bytes]:
     """Pool backend (§A.2): submit the SAME params the local call used — carrying
     the reference image as base64 so it travels to the worker — and drive the job
     to its .zip result. Concurrency is the pool's job (no GPU_LOCK here)."""
@@ -239,6 +244,10 @@ def _generate_via_pool(job: Job, *, description: str, reference_image: Optional[
         params["remix_strength"] = remix_strength
     if reference_image is not None:
         params["reference_image_b64"] = _encode_reference_image(reference_image)
+    if poses is not None:                          # v3 (§5.2) — which poses to build
+        params["poses"] = poses
+    if motion_profile:                             # v3 — the catalog's pinned profile key
+        params["motion_profile"] = motion_profile
 
     # Persist the linkage BEFORE driving (Opt-1, §A.6): if this process dies
     # mid-generation, startup reattaches to the still-running pool job instead
@@ -257,7 +266,9 @@ def _generate_via_pool(job: Job, *, description: str, reference_image: Optional[
 
 def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
                 remix_strength: Optional[float] = None,
-                display_name: Optional[str] = None) -> None:
+                display_name: Optional[str] = None,
+                poses: Optional[dict] = None,
+                motion_profile: Optional[str] = None) -> None:
     """Runs in a daemon thread. Mutates `job` as it goes; never raises.
     On success the finished pet is persisted as one DB row (sheet/manifest/
     package/zip as blobs), born a DRAFT — it joins the house only when the
@@ -268,7 +279,8 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
                 job.status = "running"
             breed_id, zip_bytes = _generate_via_pool(
                 job, description=description, reference_image=reference_image,
-                remix_strength=remix_strength, display_name=display_name)
+                remix_strength=remix_strength, display_name=display_name,
+                poses=poses, motion_profile=motion_profile)
         else:
             make_pet_zip, _ = _local_pet_factory()
             with GPU_LOCK:
@@ -287,7 +299,8 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
                 breed_id, zip_bytes = make_pet_zip(
                     description, on_progress=on_progress,
                     reference_image=str(reference_image) if reference_image else None,
-                    remix_strength=remix_strength, display_name=display_name)
+                    remix_strength=remix_strength, display_name=display_name,
+                    poses=poses, motion_profile=motion_profile)
 
         _finalize_pet_from_zip(job, description=description, breed_id=breed_id,
                                zip_bytes=zip_bytes)
@@ -468,6 +481,46 @@ def preview_image(preview_id: str):
     return FileResponse(path, media_type="image/png")
 
 
+# Poses NOT offered in the selector at launch: triggered roles that only play if a
+# DatsMe interaction behavior fires them (SPEC_MOTION_PROFILES §7/§9.1). They stay
+# authored in the profiles but hidden so no user pays GPU for a pose that won't move.
+_HIDDEN_POSE_ROLES = frozenset({"triggered"})
+
+
+@app.get("/api/motions")
+def motions(animal: str = "", profile: str = ""):
+    """The pose menu for the design page (SPEC_MOTION_PROFILES §4.1). Two modes:
+    - ?animal=<species>  keyword path (General free-text page) — most-specific-level match.
+    - ?profile=<key>     pinned path (catalog/themed pages) — load that profile directly;
+                         an unknown key is a 404 (the catalog guard test prevents shipping one).
+    Returns the resolved identity (key + level) and the enabled, offerable poses."""
+    mp = motion_profiles_mod
+    if profile.strip():
+        prof = mp.load_motion_profile(profile.strip())
+        if prof.key != profile.strip():
+            # load_motion_profile falls back on skew; on the MENU an unknown key is a 404.
+            raise HTTPException(404, f"unknown motion profile: {profile!r}")
+    else:
+        prof = mp.resolve_motion_profile(animal)
+
+    poses = []
+    for name in prof.enabled_poses():
+        pose = prof.pose(name)
+        if pose.runtime_role in _HIDDEN_POSE_ROLES:
+            continue   # authored but not offered at launch (§7)
+        poses.append({
+            "name": name,
+            "required": name in mp.REQUIRED_POSES,
+            "enabled": True,
+        })
+    return {
+        "profile": prof.key,
+        "level": prof.level,
+        "movement_class": prof.movement_class,
+        "poses": poses,
+    }
+
+
 @app.get("/api/workshop-status")
 def workshop_status():
     """Pet-worker liveness for the 'workshop offline/busy' UI (§C.1a). The SERVER
@@ -503,6 +556,8 @@ async def start_job(
     color: str = Form(""),
     accessories: str = Form(""),
     preview_id: str = Form(""),
+    poses: str = Form(""),
+    motion_profile: str = Form(""),
 ):
     # Who is generating? DatsMe-launched user (verified) or None (standalone).
     # This scopes the generated pet, the draft purge, and any base-pet lookup
@@ -514,6 +569,21 @@ async def start_job(
     preview_id = preview_id.strip()
     color = color.strip().lower()[:20]
     accessory_list = [a.strip().lower()[:30] for a in accessories.split(",") if a.strip()][:3]
+
+    # Motion-profile package (SPEC_MOTION_PROFILES §4.3/§5.1). `poses` is a JSON
+    # {name: bool} string in the form body; malformed → None (walk+idle default).
+    # `motion_profile` is the catalog's pinned profile key (empty → keyword
+    # resolution from the description). make_pet_zip does the enabled-∩-requested-∪-
+    # required intersection, so the web tier only parses safely and forwards.
+    poses_pkg = None
+    if poses.strip():
+        try:
+            parsed = json.loads(poses)
+            if isinstance(parsed, dict):
+                poses_pkg = {str(k): bool(v) for k, v in parsed.items()}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            poses_pkg = None   # malformed → safe default (walk+idle)
+    motion_profile = motion_profile.strip()[:60] or None
 
     has_image = image is not None and bool(image.filename)
     has_design = bool(color or accessory_list)
@@ -581,7 +651,8 @@ async def start_job(
     threading.Thread(
         target=run_pet_job, args=(job,),
         kwargs={"description": description, "reference_image": reference_image,
-                "remix_strength": remix_strength, "display_name": display_name},
+                "remix_strength": remix_strength, "display_name": display_name,
+                "poses": poses_pkg, "motion_profile": motion_profile},
         daemon=True,
     ).start()
     return {"job_id": job_id}

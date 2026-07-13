@@ -1,0 +1,10 @@
+{
+  "default": "quadruped",
+  "profiles": [
+    { "key": "quadruped",    "file": "quadruped.json",    "label": "Four-legged mammal",              "level": 3 },
+    { "key": "avian",        "file": "avian.json",        "label": "Bird",                            "level": 3 },
+    { "key": "serpentine",   "file": "serpentine.json",   "label": "Legless / snake",                 "level": 3 },
+    { "key": "aquatic",      "file": "aquatic.json",      "label": "Fish / aquatic",                  "level": 3 },
+    { "key": "winged_flyer", "file": "winged_flyer.json", "label": "Winged flyer (dragon, insect)",   "level": 3 }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "key": "serpentine",
+  "level": 3,
+  "movement_class": "limbless_serpentine",
+  "keywords": ["snake", "serpent", "python", "cobra", "viper", "boa", "anaconda", "rattlesnake", "mamba", "adder", "eel", "worm", "serpentine"],
+  "poses": {
+    "walk":  { "enabled": true,  "runtime_role": "active", "action": "slithering forward in a smooth S-curve", "suffix": ", body undulating side to side, no legs, in place, no camera movement, no panning" },
+    "idle":  { "enabled": true,  "runtime_role": "rest",   "action": "coiled at rest, slow tongue flicks", "suffix": ", gentle breathing, small head movements, no camera movement, no panning" },
+    "run":   { "enabled": true,  "runtime_role": "active", "action": "slithering rapidly, body in fast S-waves", "suffix": ", quick undulation, no legs, in place, no camera movement, no panning" },
+    "sleep": { "enabled": true,  "runtime_role": "timed",  "action": "coiled tightly, head resting, still", "suffix": ", motionless, slow breathing, resting loop, no camera movement, no panning" },
+    "sit":   { "enabled": true,  "runtime_role": "timed",  "action": "reared up with head raised, watchful", "suffix": ", upper body lifted and swaying slightly, tongue flicking, no camera movement, no panning" },
+    "eat":   { "enabled": true,  "runtime_role": "timed",  "action": "slowly swallowing a small meal", "suffix": ", deliberate jaw movement and gentle gulps, no camera movement, no panning" },
+    "jump":  { "enabled": false },
+    "play":  { "enabled": false },
+    "swim":  { "enabled": true,  "runtime_role": "active", "action": "undulating smoothly through water", "suffix": ", body waving side to side, smooth swimming motion, in place, no camera movement, no panning" },
+    "fly":   { "enabled": false }
+  }
+}

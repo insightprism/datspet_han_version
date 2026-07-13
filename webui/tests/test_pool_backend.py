@@ -141,9 +141,11 @@ def test_v2_handler_decodes_b64_and_forwards(monkeypatch, tmp_path):
     fake_pf = types.ModuleType("pet_factory")
 
     def fake_make_pet_zip(animal, on_progress=None, breed_id=None,
-                          reference_image=None, remix_strength=None, display_name=None):
+                          reference_image=None, remix_strength=None, display_name=None,
+                          poses=None, motion_profile=None):
         calls.update(animal=animal, reference_image=reference_image,
-                     remix_strength=remix_strength, display_name=display_name)
+                     remix_strength=remix_strength, display_name=display_name,
+                     poses=poses, motion_profile=motion_profile)
         if on_progress:
             on_progress("done", 1.0)
         return (breed_id or "a_red_panda", _fake_bundle())
@@ -158,12 +160,16 @@ def test_v2_handler_decodes_b64_and_forwards(monkeypatch, tmp_path):
 
     ctx = Ctx(tmp_path)
     img_b64 = base64.b64encode(b"\x89PNG\r\n\x1a\nIMG").decode()
+    # v3: also carry poses + motion_profile and assert they forward through.
     handler.run({"animal": "red panda", "reference_image_b64": img_b64,
-                 "remix_strength": 0.9, "display_name": "A Red Panda"}, ctx)
+                 "remix_strength": 0.9, "display_name": "A Red Panda",
+                 "poses": {"walk": True, "run": True}, "motion_profile": "corgi"}, ctx)
 
     assert calls["animal"] == "red panda"
     assert calls["remix_strength"] == 0.9
     assert calls["display_name"] == "A Red Panda"
+    assert calls["poses"] == {"walk": True, "run": True}   # v3 pose package forwarded
+    assert calls["motion_profile"] == "corgi"              # v3 pinned key forwarded
     # the handler wrote the decoded bytes to a real path inside result_dir and
     # forwarded THAT path (not the b64) to make_pet_zip
     assert calls["reference_image"] is not None
@@ -273,10 +279,16 @@ def test_adapter_beats_on_pct_change_with_same_msg(monkeypatch):
 
 
 # (d) §A.4 import isolation: pool mode must never import pet_factory -------------
-def test_pool_mode_never_imports_pet_factory(tmp_path, monkeypatch):
+def test_pool_mode_never_imports_the_ml_factory(tmp_path, monkeypatch):
     """Importing the app with PET_GEN_BACKEND=pool must succeed WITHOUT touching
-    pet_factory — the property Part C's GPU-less 'no ML deps' venv gate rests on
-    (§A.4). pet_factory is poisoned so any import attempt fails loudly."""
+    the ML factory module — the property Part C's GPU-less 'no ML deps' venv gate
+    rests on (§A.4). `pet_factory.factory` (numpy/PIL/rembg/ComfyUI) is poisoned so
+    any import of it fails loudly.
+
+    Note (SPEC_MOTION_PROFILES §5.1): the app DOES import `pet_factory.motion_profiles`
+    at module top — that subpackage is pure JSON/data with no ML deps, and the
+    lazy `pet_factory/__init__` (PEP 562) makes importing it NOT pull in factory.
+    So the poison targets `pet_factory.factory` specifically, not the whole package."""
     out_dir = tmp_path / "out"; out_dir.mkdir()
     monkeypatch.setenv("PETMAKER_OUTPUT_DIR", str(out_dir))
     monkeypatch.setenv("PETMAKER_DB_PATH", str(tmp_path / "t.db"))
@@ -289,18 +301,19 @@ def test_pool_mode_never_imports_pet_factory(tmp_path, monkeypatch):
     db_mod.OUTPUT_DIR = out_dir
     db_mod.init_db()
 
-    monkeypatch.delitem(sys.modules, "pet_factory", raising=False)
+    monkeypatch.delitem(sys.modules, "pet_factory.factory", raising=False)
 
     class _Poison:
         def find_spec(self, name, path=None, target=None):
-            if name == "pet_factory" or name.startswith("pet_factory."):
-                raise AssertionError("pool mode imported pet_factory (§A.4 violation)")
+            if name == "pet_factory.factory":
+                raise AssertionError("pool mode imported the ML factory (§A.4 violation)")
 
     monkeypatch.setattr(sys, "meta_path", [_Poison()] + sys.meta_path)
 
     import app as app_mod
-    importlib.reload(app_mod)   # raises if anything at module top imports pet_factory
-    assert "pet_factory" not in sys.modules
+    importlib.reload(app_mod)   # raises if anything at module top imports pet_factory.factory
+    # motion_profiles is allowed and expected; the ML factory must be absent.
+    assert "pet_factory.factory" not in sys.modules
 
 
 # Parity pins for the review fixes (transparent references + composed prompts) ---

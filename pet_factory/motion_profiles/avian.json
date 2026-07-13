@@ -1,0 +1,18 @@
+{
+  "key": "avian",
+  "level": 3,
+  "movement_class": "avian_biped",
+  "keywords": ["bird", "sparrow", "robin", "finch", "canary", "parrot", "parakeet", "budgie", "cockatoo", "owl", "eagle", "hawk", "falcon", "raven", "crow", "pigeon", "dove", "duck", "goose", "swan", "chicken", "hen", "rooster", "penguin", "flamingo", "peacock", "toucan", "woodpecker", "hummingbird", "avian"],
+  "poses": {
+    "walk":  { "enabled": true,  "runtime_role": "active", "action": "hopping and strutting forward on two legs", "suffix": ", small quick bird steps, head bobbing with each hop, wings tucked, in place, no camera movement, no panning" },
+    "idle":  { "enabled": true,  "runtime_role": "rest",   "action": "perched calmly, small head tilts", "suffix": ", gentle breathing, feathers settling, occasional head turn, no walking, no camera movement, no panning" },
+    "run":   { "enabled": true,  "runtime_role": "active", "action": "scurrying quickly on two legs", "suffix": ", rapid little bird steps, body leaning forward, wings half-raised, in place, no camera movement, no panning" },
+    "sleep": { "enabled": true,  "runtime_role": "timed",  "action": "roosting with head tucked into feathers", "suffix": ", still and puffed up, slow breathing, eyes closed, resting loop, no camera movement, no panning" },
+    "sit":   { "enabled": true,  "runtime_role": "timed",  "action": "settled low on its perch", "suffix": ", nestled down with small head movements and gentle breathing, no camera movement, no panning" },
+    "eat":   { "enabled": true,  "runtime_role": "timed",  "action": "pecking downward at seed", "suffix": ", quick repeating head dips to peck then up, small pecking motion, no walking, no camera movement, no panning" },
+    "jump":  { "enabled": true,  "runtime_role": "triggered", "action": "flapping up in a startled hop", "suffix": ", wings flaring out in a quick upward flutter then settling, one reaction flutter, no camera movement, no panning" },
+    "play":  { "enabled": true,  "runtime_role": "triggered", "action": "bobbing and fluttering playfully", "suffix": ", lively wing flicks and head bobs, cheerful reaction loop, no camera movement, no panning" },
+    "swim":  { "enabled": false },
+    "fly":   { "enabled": true,  "runtime_role": "active", "action": "flying with steady wing beats", "suffix": ", wings beating up and down in a smooth flight cycle, hovering in place, no horizontal movement of the body, no camera movement, no panning" }
+  }
+}
