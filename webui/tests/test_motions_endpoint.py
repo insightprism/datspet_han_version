@@ -139,10 +139,9 @@ def test_catalog_endpoint_returns_animal_tree(app_mod):
     keys = [a["key"] for a in body["animals"]]
     assert "cat" in keys and "dog" in keys
     dog = next(a for a in body["animals"] if a["key"] == "dog")
-    # LAUNCH GATE (§4.5, Item 1e): themed_page is null while bases are placeholders,
-    # so the landing page shows no tiles. It's restored to "dog" when real bases are
-    # promoted (catalog.json `_themed_page_when_curated` carries the value).
-    assert dog["themed_page"] is None
+    # Real bases have been promoted (§4.5), so the launch gate is lifted and
+    # themed_page is restored — the landing page shows the Dog World tile again.
+    assert dog["themed_page"] == "dog"
     corgi = next(b for b in dog["breeds"] if b["key"] == "corgi")
     # Every breed pins a motion_profile that resolves (§4.2) and a base image URL.
     assert corgi["motion_profile"]

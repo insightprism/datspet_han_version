@@ -1,30 +1,42 @@
 {
-  "_doc": "Base-animal catalog (SPEC_PET_DESIGNER_PLATFORM §4.2). Master index of curated base animals + breeds. Each entry pins a `motion_profile` key at the MOST SPECIFIC AUTHORED level (§4.2): a breed carries its own key ONLY when a level-1 file exists in the motion registry; otherwise it inherits the animal row's key. `themed_page` names the /design/<slug> route (null = NO landing tile; the page is still reachable by direct URL and the breed falls back to General). A guard test (tests/test_animal_catalog.py) asserts every pinned `motion_profile` key resolves in the motion registry and every base.png exists.",
-  "_LAUNCH_GATE": "SAFETY LEVER (§4.5, Item 1e): the base.png files are still PLACEHOLDERS pending human curation, so `themed_page` is null on every animal — the landing page (which filters tiles on themed_page) shows NO Cat/Dog tiles, so users can never see placeholder heroes. Real bases are being staged under _candidates/ by generate_candidates.py; the reviewer promotes the winners with promote_candidate.py, THEN restores each animal's `themed_page` to its `_themed_page_when_curated` value (a one-line edit) to light up the tiles. General covers every breed meanwhile. Guard test stays green throughout (it does not check themed_page).",
+  "_doc": "Base-animal catalog (SPEC_PET_DESIGNER_PLATFORM \u00a74.2). Master index of curated base animals + breeds. Each entry pins a `motion_profile` key at the MOST SPECIFIC AUTHORED level (\u00a74.2): a breed carries its own key ONLY when a level-1 file exists in the motion registry; otherwise it inherits the animal row's key. `themed_page` names the /design/<slug> route (null = NO landing tile; the page is still reachable by direct URL and the breed falls back to General). A guard test (tests/test_animal_catalog.py) asserts every pinned `motion_profile` key resolves in the motion registry and every base.png exists.",
   "animals": [
     {
       "key": "cat",
       "label": "Cat",
       "motion_profile": "quadruped",
-      "themed_page": null,
-      "_themed_page_when_curated": "cat",
+      "themed_page": "cat",
       "tagline": "Design your own cat",
       "breeds": [
-        { "key": "tabby",   "label": "Tabby" },
-        { "key": "siamese", "label": "Siamese" },
-        { "key": "black",   "label": "Black Cat" }
+        {
+          "key": "tabby",
+          "label": "Tabby"
+        },
+        {
+          "key": "siamese",
+          "label": "Siamese"
+        },
+        {
+          "key": "black",
+          "label": "Black Cat"
+        }
       ]
     },
     {
       "key": "dog",
       "label": "Dog",
       "motion_profile": "quadruped",
-      "themed_page": null,
-      "_themed_page_when_curated": "dog",
+      "themed_page": "dog",
       "tagline": "Design your own dog",
       "breeds": [
-        { "key": "corgi",    "label": "Corgi" },
-        { "key": "labrador", "label": "Labrador" }
+        {
+          "key": "corgi",
+          "label": "Corgi"
+        },
+        {
+          "key": "labrador",
+          "label": "Labrador"
+        }
       ]
     }
   ]
