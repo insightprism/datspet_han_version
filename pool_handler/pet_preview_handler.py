@@ -37,7 +37,9 @@ METADATA = {
         "type": "object",
         "properties": {
             "reference_image_b64": {"type": "string"},   # base64 PNG/JPEG — the base still to redraw
-            "description": {"type": "string", "maxLength": 200},
+            # 250: the composed design string reaches ~240 chars worst case
+            # (render_design_still itself imposes no length limit locally).
+            "description": {"type": "string", "maxLength": 250},
             "strength": {"type": "number", "minimum": 0.3, "maximum": 0.9},
         },
         "required": ["reference_image_b64"],

@@ -462,7 +462,8 @@ and pool deploy conventions already on the box).
 ### C.1a Backend proxy for pool worker-state (Finding 9)
 The "workshop offline / busy" UI (§9, §A.3) needs pet-worker liveness, which lives behind
 `/api/pool` on the pool — **guarded by the `datspet` app key that must NEVER reach the browser.**
-Add a tiny backend endpoint (e.g. `GET /api/datsme/workshop-status`) that the *server* calls
+Add a tiny backend endpoint (implemented in Part A as `GET /api/workshop-status` — not under
+`/api/datsme/` since worker liveness is not DPP-specific) that the *server* calls
 `/api/pool` with the key and returns a reduced `{online: bool, busy: bool}` to the frontend. The
 key stays server-side; the browser learns only the boolean it needs.
 

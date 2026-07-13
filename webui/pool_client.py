@@ -49,11 +49,6 @@ class PoolError(RuntimeError):
     """Any pool-side failure the web tier should surface as a job error."""
 
 
-# Terminal statuses, and the web tier's mapping. The pool's `dead` (a job the
-# supervisor gave up on) has no web equivalent, so it reads as an error.
-_TERMINAL = ("done", "dead", "error")
-
-
 def _req(method: str, path: str, *, body: Optional[dict] = None, timeout: int = 60):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
@@ -123,12 +118,17 @@ def run_to_result(
     """
     job_id = submit(task, params)
     deadline = time.monotonic() + timeout_s
-    last_msg = None
+    last_beat = None
     while True:
         s = poll(job_id)
-        if on_progress is not None and s["msg"] != last_msg:
+        # Beat on any (msg, pct) change — a handler may hold one message while
+        # its pct climbs, and gating on the message alone would freeze the bar.
+        # Skip empty messages (a still-queued job reports msg "") so the
+        # caller's "Waiting…" text isn't blanked before the first real beat.
+        beat = (s["msg"], s["pct"])
+        if on_progress is not None and s["msg"] and beat != last_beat:
             on_progress(s["msg"], s["pct"] / 100.0)
-            last_msg = s["msg"]
+            last_beat = beat
         if s["status"] == "done":
             return result_bytes(job_id)
         if s["status"] == "error":

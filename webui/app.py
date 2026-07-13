@@ -207,7 +207,12 @@ def _encode_reference_image(path: Path, max_px: int = 1024) -> str:
     from PIL import Image
 
     with Image.open(path) as im:
-        im = im.convert("RGBA") if im.mode in ("P", "LA") else im.convert("RGB")
+        # ALWAYS carry alpha (RGBA): sprite-sheet crops sit on a transparent
+        # background, and convert("RGB") would land them on BLACK — while the
+        # local path's _prep_reference_image composites alpha onto WHITE. The
+        # worker stays the one flattening authority; PNG transport keeps alpha,
+        # so pool and local generations see the identical reference.
+        im = im.convert("RGBA")
         if max(im.size) > max_px:
             im.thumbnail((max_px, max_px), Image.LANCZOS)
         buf = io.BytesIO()
@@ -249,16 +254,22 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
     package/zip as blobs), born a DRAFT — it joins the house only when the
     user saves (POST /api/pets/{id}/keep)."""
     try:
-        with JOBS_LOCK:
-            job.status = "running"
-
         if PET_GEN_BACKEND == "pool":
+            with JOBS_LOCK:
+                job.status = "running"
             breed_id, zip_bytes = _generate_via_pool(
                 job, description=description, reference_image=reference_image,
                 remix_strength=remix_strength, display_name=display_name)
         else:
             make_pet_zip, _ = _local_pet_factory()
             with GPU_LOCK:
+                # "running" only once the GPU is actually ours — a job waiting on
+                # the lock stays "queued" ("Waiting for the GPU…"), exactly as
+                # before the pool backend existed. The pool branch marks running
+                # at submit: queueing is the pool's job there.
+                with JOBS_LOCK:
+                    job.status = "running"
+
                 def on_progress(msg, pct):
                     with JOBS_LOCK:
                         job.message = msg
@@ -363,6 +374,9 @@ def preview_design(
                  "description": description, "strength": strength},
                 poll_interval=1.0, timeout_s=180.0)
         except pool_client.PoolError as e:
+            # Surface the real cause in the server log — a missing app key or a
+            # schema 422 must be distinguishable from "actually busy" for ops.
+            print(f"[webui] pet_preview pool error: {e}", flush=True)
             raise HTTPException(423, "The workshop couldn't preview that just now — try again in a bit.") from e
     else:
         _, render_design_still = _local_pet_factory()

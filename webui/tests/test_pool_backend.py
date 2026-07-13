@@ -237,3 +237,100 @@ def test_adapter_hands_fraction_not_pct(monkeypatch):
     # (which expects 0..1) would pin at 100× (R5-1).
     assert fractions == [0.5, 1.0], f"expected 0..1 fractions, got {fractions}"
     assert all(0.0 <= f <= 1.0 for f in fractions)
+
+
+def test_adapter_beats_on_pct_change_with_same_msg(monkeypatch):
+    """A handler may hold one message while its pct climbs; gating beats on the
+    message alone would freeze the UI bar. Also: empty (still-queued) messages
+    must not blank the caller's 'Waiting…' text."""
+    import pool_client
+    importlib.reload(pool_client)
+
+    seq = iter([
+        {"status": "queued", "pct": 0.0, "msg": ""},           # no beat: empty msg
+        {"status": "running", "pct": 30.0, "msg": "rendering"},
+        {"status": "running", "pct": 60.0, "msg": "rendering"},  # same msg, new pct
+        {"status": "done", "pct": 100.0, "msg": "done"},
+    ])
+    monkeypatch.setattr(pool_client, "submit", lambda task, params: "jid")
+    monkeypatch.setattr(pool_client, "poll", lambda jid: next(seq))
+    monkeypatch.setattr(pool_client, "result_bytes", lambda jid: b"RESULT")
+    monkeypatch.setattr(pool_client.time, "sleep", lambda *_: None)
+
+    beats = []
+    pool_client.run_to_result("pet_factory", {"animal": "x"},
+                              on_progress=lambda msg, frac: beats.append((msg, frac)))
+    assert beats == [("rendering", 0.3), ("rendering", 0.6), ("done", 1.0)]
+
+
+# (d) §A.4 import isolation: pool mode must never import pet_factory -------------
+def test_pool_mode_never_imports_pet_factory(tmp_path, monkeypatch):
+    """Importing the app with PET_GEN_BACKEND=pool must succeed WITHOUT touching
+    pet_factory — the property Part C's GPU-less 'no ML deps' venv gate rests on
+    (§A.4). pet_factory is poisoned so any import attempt fails loudly."""
+    out_dir = tmp_path / "out"; out_dir.mkdir()
+    monkeypatch.setenv("PETMAKER_OUTPUT_DIR", str(out_dir))
+    monkeypatch.setenv("PETMAKER_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setenv("PET_GEN_BACKEND", "pool")
+
+    import db as db_mod
+    importlib.reload(db_mod)
+    db_mod._conn = None
+    db_mod.DB_PATH = tmp_path / "t.db"
+    db_mod.OUTPUT_DIR = out_dir
+    db_mod.init_db()
+
+    monkeypatch.delitem(sys.modules, "pet_factory", raising=False)
+
+    class _Poison:
+        def find_spec(self, name, path=None, target=None):
+            if name == "pet_factory" or name.startswith("pet_factory."):
+                raise AssertionError("pool mode imported pet_factory (§A.4 violation)")
+
+    monkeypatch.setattr(sys, "meta_path", [_Poison()] + sys.meta_path)
+
+    import app as app_mod
+    importlib.reload(app_mod)   # raises if anything at module top imports pet_factory
+    assert "pet_factory" not in sys.modules
+
+
+# Parity pins for the review fixes (transparent references + composed prompts) ---
+def test_encode_reference_image_preserves_alpha(pool_app, tmp_path):
+    """A transparent reference (a sprite-sheet crop) must stay transparent in
+    transport: convert('RGB') would land it on BLACK, while the worker's
+    _prep_reference_image flattens alpha onto WHITE exactly like the local
+    path. Alpha must survive the b64 round-trip so both backends see the
+    identical reference (review Bug 1)."""
+    from PIL import Image
+    src = tmp_path / "src.png"
+    Image.new("RGBA", (64, 64), (255, 0, 0, 0)).save(src)   # fully transparent
+    b64 = pool_app._encode_reference_image(src)
+    out = Image.open(io.BytesIO(base64.b64decode(b64)))
+    assert out.mode == "RGBA"
+    assert out.getpixel((0, 0))[3] == 0, "alpha channel lost in transport"
+
+
+def test_handler_schemas_admit_composed_design_prompts():
+    """The web tier submits the COMPOSED design string (species≤60 + color≤20 +
+    3 accessories≤30 + fixed clauses ≈ 240 chars worst case) as `animal` /
+    `description`. The schemas must not reject what the local backend accepts —
+    make_pet_zip's own [:60] cut stays the single truncation authority, so pool
+    and local truncate identically (review Bug 2)."""
+    import importlib.util
+
+    def load(fname, modname):
+        spec = importlib.util.spec_from_file_location(
+            modname, os.path.join(REPO, "pool_handler", fname))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    worst = ("vivid " + "c" * 20 + " " + "s" * 60 + " wearing an " + "a" * 30
+             + ", an " + "b" * 30 + ", an " + "d" * 30
+             + ", recolored entirely " + "c" * 20)
+    assert len(worst) == 240   # the composed worst case from app.compose_design's caps
+
+    pf = load("pet_factory_handler.py", "pfh_schema_check")
+    pv = load("pet_preview_handler.py", "pvh_schema_check")
+    assert pf.METADATA["params_schema"]["properties"]["animal"]["maxLength"] >= len(worst)
+    assert pv.METADATA["params_schema"]["properties"]["description"]["maxLength"] >= len(worst)
