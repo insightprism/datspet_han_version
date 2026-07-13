@@ -65,7 +65,8 @@ class MotionProfile:
     key: str
     level: int
     movement_class: str
-    poses: dict          # pose name -> Pose (the file's own full canonical set)
+    poses: dict                       # pose name -> Pose (the file's own full canonical set)
+    keywords: tuple = ()              # the file's classification keywords (cached; §3.5)
 
     def pose(self, name: str) -> Optional[Pose]:
         return self.poses.get(name)
@@ -124,6 +125,7 @@ def _load_profile_by_key(key: str) -> Optional[MotionProfile]:
         profile = MotionProfile(
             key=raw["key"], level=int(raw["level"]),
             movement_class=raw["movement_class"], poses=poses,
+            keywords=tuple(raw.get("keywords", [])),
         )
         _PROFILE_CACHE[key] = profile
         return profile
@@ -150,12 +152,13 @@ def _classify(animal: str) -> str:
     best_key = None
     best_level = None        # lower is more specific
     best_len = -1
+    # Iterate the CACHED profiles (keywords live on MotionProfile) — no per-call
+    # JSON re-read. Each file is read once, on first load, and cached thereafter.
     for entry in _registry()["profiles"]:
         prof = _load_profile_by_key(entry["key"])
         if prof is None:
             continue
-        raw = json.loads((_DIR / entry["file"]).read_text())
-        for kw in raw.get("keywords", []):
+        for kw in prof.keywords:
             if not re.search(r"\b" + re.escape(kw.lower()) + r"\b", text):
                 continue
             level = prof.level

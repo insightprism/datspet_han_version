@@ -140,3 +140,47 @@ def test_disabled_poses_excluded_from_enabled_list():
     enabled = set(prof.enabled_poses())
     assert "jump" not in enabled and "fly" not in enabled
     assert "walk" in enabled and "swim" in enabled
+
+
+# --- classification caching (F4): no per-call JSON re-read, identical winners --
+def test_classify_does_not_reread_json_per_call():
+    # Warm every profile into the cache, then assert classification touches no files.
+    for a in ("dog", "cobra", "sparrow", "fish", "dragon"):
+        mp.resolve_motion_profile(a)
+    import collections
+    reads = collections.Counter()
+    orig = Path.read_text
+
+    def counting(self, *a, **k):
+        reads[self.name] += 1
+        return orig(self, *a, **k)
+
+    Path.read_text = counting
+    try:
+        for a in ("golden retriever", "a green cobra", "baby dragon", "zzz gibberish"):
+            mp.resolve_motion_profile(a)
+    finally:
+        Path.read_text = orig
+    assert not reads, f"classification re-read profile files (should be cached): {dict(reads)}"
+
+
+def test_classify_cached_matches_reading_from_disk():
+    # The cached classifier must give the SAME winner as re-reading each JSON.
+    import re
+
+    def classify_from_disk(animal):
+        text = (animal or "").lower(); bk = None; bl = None; blen = -1
+        for entry in _all_entries():
+            raw = json.loads((_DIR / entry["file"]).read_text())
+            prof = mp.load_motion_profile(entry["key"])
+            for kw in raw.get("keywords", []):
+                if not re.search(r"\b" + re.escape(kw.lower()) + r"\b", text):
+                    continue
+                lv, kl = prof.level, len(kw)
+                if bk is None or lv < bl or (lv == bl and kl > blen):
+                    bk, bl, blen = entry["key"], lv, kl
+        return bk or json.loads((_DIR / "registry.json").read_text())["default"]
+
+    for a in ["golden retriever", "cobra", "betta fish", "baby dragon", "sparrow",
+              "cat", "penguin", "sea snake", "dragonfly", "horse", "goldfish", "zzz"]:
+        assert mp.resolve_motion_profile(a).key == classify_from_disk(a), f"drift on {a!r}"

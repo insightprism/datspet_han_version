@@ -20,6 +20,24 @@ also hosts DatsMe (prod + staging) and the pool dispatcher.
 land with the host repo. Verify:
 `webui/venv/bin/python -c "from datsme_partner_sdk.host_signature import verify_host_signature"`.
 
+**`pet_factory` as a data-only install (motion profiles).** The web tier now imports
+`pet_factory.motion_profiles` at module top (the species-aware pose menu — pure JSON/data,
+SPEC_MOTION_PROFILES §5.1). `pet_factory/__init__` is lazy (PEP 562), so importing that
+subpackage does NOT pull in the ML factory. But `pet_factory` must be *findable* on the
+GPU-less venv, and the repo root is not on the backend's `sys.path` (cwd is `webui/`).
+Install it **`--no-deps`** — this is essential; `pyproject.toml`'s deps include numpy/rembg,
+so a plain install would destroy the GPU-less posture:
+
+```bash
+webui/venv/bin/pip install --no-deps -e /var/www/datspet          # prod
+# (staging: -e /var/www/datspet-staging)
+```
+
+Verify after: `webui/venv/bin/python -c "from pet_factory import motion_profiles"` works, AND
+`webui/venv/bin/python -c "import numpy"` still fails (numpy absent). A lazy factory attribute
+(`pet_factory.make_pet_zip`) raises `ModuleNotFoundError: numpy` *at access time* — never at app
+import — which is exactly the GPU-less property the backend relies on.
+
 **UFW gotcha:** container→host traffic needs an explicit bridge rule or the
 proxy times out while the backend works locally:
 `ufw allow in on br-03ba34c7f8c0 to any port 29954 proto tcp`.
@@ -31,15 +49,23 @@ git bundle create /tmp/datspet.bundle main && scp /tmp/datspet.bundle root@5.161
 ssh root@5.161.70.13 '
   cd /var/www/datspet && git pull /tmp/datspet.bundle main
   webui/venv/bin/pip install -q -r webui/requirements.txt        # if reqs changed
+  webui/venv/bin/pip install -q --no-deps -e /var/www/datspet    # data-only pet_factory (idempotent; see above)
   cp deploy/nginx-default.conf nginx-default.conf                # if conf changed
   cd web && DATSPET_STATIC_EXPORT=1 NEXT_PUBLIC_API_URL=https://pet.datsme.me npm run build  # if web/ changed
   systemctl restart datspet-backend && docker restart datspet-nginx'
 ```
 
-Gates after any deploy: `pip list | grep -iE "rembg|onnxruntime|pet.factory"`
-must be EMPTY (the no-ML proof, §C.1); `curl https://pet.datsme.me/api/health`
-shows `workshop.online: true`; a standalone design → preview →
-create-from-preview works end to end.
+**First deploy of the motion-profiles code (and on any fresh venv):** run the
+`--no-deps -e` install above BEFORE restarting the backend — the web tier imports
+`pet_factory.motion_profiles` at module top, so without it the backend hits
+`ModuleNotFoundError: pet_factory` and `Restart=always` crash-loops.
+
+Gates after any deploy (the no-ML proof, §C.1 — updated for the data-only pet_factory):
+`pip list | grep -iE "rembg|onnxruntime|numpy|torch"` must be **EMPTY** (the ML stack is
+absent); `pet_factory` MAY appear (it's a `--no-deps` data-only install and drags in no ML);
+`webui/venv/bin/python -c "from pet_factory import motion_profiles; import sys; sys.exit(0)"`
+imports cleanly while `import numpy` fails. Then `curl https://pet.datsme.me/api/health` shows
+`workshop.online: true`; a standalone design → preview → create-from-preview works end to end.
 
 ## Production posture (§7 step 9)
 
@@ -62,7 +88,8 @@ routed per-environment. Staging therefore runs a full twin (live since
 2026-07-13): `/var/www/datspet-staging`, `datspet-staging-backend.service` on
 port **29964**, `datspet-staging-nginx` vhost, own data dir, own secret,
 `DATSME_BASE_URL=https://staging.datsme.me`. Update it the same way as prod
-(same bundle → `git pull` in `/var/www/datspet-staging`, rebuild the static
+(same bundle → `git pull` in `/var/www/datspet-staging`, the `--no-deps -e
+/var/www/datspet-staging` data-only `pet_factory` install, rebuild the static
 export with `NEXT_PUBLIC_API_URL=https://pet-staging.datsme.me`). Never point
 both hosts' partner rows at one instance — the launch may verify (shared
 secret) but the writeback lands on the wrong environment.

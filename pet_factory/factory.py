@@ -69,16 +69,10 @@ NEG = ("oversaturated, neon, vibrant, hyper-colored, anime, blurry, photo, "
        "realistic, low quality, watermark, signature, multiple subjects, "
        "deformed, human, person, hands, text")
 
-# Motion suffixes: keep the face still and the body anchored in place (the pet
-# runtime handles horizontal movement), and ask for a clean looping cycle.
-WALK_SUFFIX = (", mouth closed, no facial animation, no chewing, no talking, eyes still, "
-               "performing a full walk cycle in place: legs and feet cycling through one "
-               "complete stride, body bobbing naturally up and down with each step, classic "
-               "looping sprite walk animation, no horizontal movement of the body, no camera "
-               "movement, no panning")
-IDLE_SUFFIX = (", mouth closed, no facial animation, no chewing, no talking, eyes still, "
-               "gentle idle motion: soft breathing, slight sway, a small bob in place, "
-               "no walking, no camera movement, no panning")
+# Motion wording is now content, not code: each pose's action+suffix lives in the
+# motion_profiles/*.json files and is composed by motion_profiles.compose_pose_prompt.
+# The former WALK_SUFFIX/IDLE_SUFFIX constants were removed — quadruped.json carries
+# their exact wording, and tests/test_motion_profiles.py pins it byte-for-byte (§6).
 
 _REMBG = None
 

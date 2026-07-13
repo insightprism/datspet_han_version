@@ -113,6 +113,31 @@ the fleet is 1–2 owned nodes.
 
 ---
 
+## Rev.6 — motion-profiles impact: the "no-ML" gate is now "no-ML-STACK" (2026-07-13)
+
+The species-aware motion-profiles feature (`SPEC_MOTION_PROFILES`) made the GPU-less web tier import
+`pet_factory.motion_profiles` at module top — the pose menu is **pure JSON data** the web tier reads
+(`/api/motions`, the pose loop's profile resolution). This changes one deploy property and nothing else:
+
+- **The gate was "no `pet_factory` at all"; it is now "no ML *stack*".** `pet_factory` must be *findable*
+  on the GPU-less venv (the repo root is not on the backend's `sys.path` — cwd is `webui/`), so it is
+  installed **`pip install --no-deps -e /var/www/datspet`**. `--no-deps` is essential — `pyproject.toml`'s
+  deps include numpy/rembg, so a plain install would reintroduce the ML stack. The lazy PEP-562
+  `pet_factory/__init__` means importing `motion_profiles` never pulls `.factory`; a factory attribute
+  (`make_pet_zip`) raises `ModuleNotFoundError: numpy` only at access time, which the pool backend never
+  reaches. **Verified locally in a throwaway venv:** `--no-deps -e .` → `from pet_factory import
+  motion_profiles` works, `import numpy` fails, `pip list` shows `pet_factory` but no rembg/onnxruntime/
+  numpy/torch.
+- **Consequence for the acceptance gate** (§C.1, §7 step 5, and `deploy/README.md`): the grep is now
+  `rembg|onnxruntime|numpy|torch` must be EMPTY; `pet_factory` MAY appear (data-only). The positive
+  check is `from pet_factory import motion_profiles` imports while `import numpy` fails.
+- **First-deploy ordering:** run the `--no-deps -e` install BEFORE restarting the backend, or the
+  module-top import hits `ModuleNotFoundError` and `Restart=always` crash-loops. Documented in
+  `deploy/README.md` (update procedure + first-deploy note). No fleet/handler change; this is web-tier
+  packaging only.
+
+---
+
 ## 0. What is already TRUE (verified 2026-07-12, not assumed)
 
 This spec is deliberately small because most of the machinery already exists and was
@@ -452,10 +477,14 @@ and pool deploy conventions already on the box).
     install it editable from that path; if it is *not* co-located, ship the SDK as a wheel/vendored
     copy and install from there. **State the chosen mechanism in the deploy runbook** (Finding 5).
     Verify at deploy: `python -c "from datsme_partner_sdk.host_signature import verify_host_signature"`.
-  - fastapi, uvicorn, python-multipart, httpx (already pinned), + Pillow. Acceptance gate (R3-2):
-    `pip list` on the Hetzner venv shows **no rembg, no onnxruntime, and no pet_factory install**,
-    and the backend imports cleanly with `PET_GEN_BACKEND=pool` — the analog of the reference
-    queue's "Flask + gunicorn only, no ML libs".
+  - fastapi, uvicorn, python-multipart, httpx (already pinned), + Pillow. Acceptance gate
+    (R3-2, **reworded in R6** — see below): `pip list` on the Hetzner venv shows **no rembg, no
+    onnxruntime, no numpy, no torch** (the ML stack is absent), and the backend imports cleanly with
+    `PET_GEN_BACKEND=pool`. **`pet_factory` MAY be present** — but only as a `pip install --no-deps -e`
+    **data-only** install (motion profiles are pure JSON the web tier reads; the lazy PEP-562
+    `pet_factory/__init__` never pulls the ML factory unless a factory attribute is accessed, which
+    the pool backend never does). Confirm: `from pet_factory import motion_profiles` imports while
+    `import numpy` fails. This is the analog of the reference queue's "Flask + gunicorn only, no ML libs".
 - **DatsPet frontend** (Next.js, `web/`) — built (`next build`) and served (or statically
   exported + proxied). `NEXT_PUBLIC_API_URL=https://pet.datsme.me` (same-origin API; see C.3).
 
@@ -631,7 +660,9 @@ second generator is added afterwards (fleet behavior second).
    restarts from zero — `preemptible: "abort"` is by design, not a bug).*
 5. **Part C:** deploy the GPU-less web tier to `pet.datsme.me` (backend `--workers 1` + frontend +
    proxy + TLS). *Gate: `https://pet.datsme.me` serves the designer standalone; **`pip list` shows
-   no rembg/onnxruntime/pet_factory** (§C.1, R3-2); the SDK + Pillow import cleanly; a standalone
+   no rembg/onnxruntime/numpy/torch** (the ML stack absent — §C.1, R6); `pet_factory` may appear only
+   as the `--no-deps` data-only install and `from pet_factory import motion_profiles` imports while
+   `import numpy` fails; the SDK + Pillow import cleanly; a standalone
    design → preview → create-from-preview → download works via the pool. **Origin/cookie preflight
    (§C.5): the top three env URLs are byte-for-byte `https://pet.datsme.me`; the frontend was built
    AFTER `NEXT_PUBLIC_API_URL` was set (R4-4); TLS terminates for the vhost (R4-2); no `web/.next`
