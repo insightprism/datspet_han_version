@@ -106,7 +106,7 @@ def run_to_result(
     timeout_s: float = 900.0,
 ) -> bytes:
     """Submit → poll to completion → return the result bytes, driving a progress
-    callback along the way. This is the single entry point the web tier uses.
+    callback along the way.
 
     on_progress(msg, fraction) receives a FRACTION 0..1 (pct ÷ 100), so it plugs
     straight into the same code the local make_pet_zip callback feeds (R5-1).
@@ -116,7 +116,21 @@ def run_to_result(
     timeout_s: a client-side ceiling; the pool's own watchdog is authoritative,
     this just stops an unbounded wait if the dispatcher goes away.
     """
-    job_id = submit(task, params)
+    return drive_to_result(submit(task, params), on_progress=on_progress,
+                           poll_interval=poll_interval, timeout_s=timeout_s)
+
+
+def drive_to_result(
+    job_id: str,
+    *,
+    on_progress: Optional[Callable[[str, float], None]] = None,
+    poll_interval: float = 4.0,
+    timeout_s: float = 900.0,
+) -> bytes:
+    """Poll an ALREADY-SUBMITTED pool job to completion and return its bytes.
+    Split out of run_to_result so the web tier can persist the pool job id
+    between submit and drive — that persisted id is what lets a restarted web
+    tier REATTACH to a job still generating on a worker (Opt-1, spec §A.6)."""
     deadline = time.monotonic() + timeout_s
     last_beat = None
     while True:

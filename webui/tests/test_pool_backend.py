@@ -70,16 +70,23 @@ def pool_app(tmp_path, monkeypatch):
 def test_pool_submit_carries_reference_image_and_params(pool_app, tmp_path, monkeypatch):
     captured = {}
 
-    def fake_run_to_result(task, params, **kw):
+    # Mock at the submit/drive seam (the app records the pool job id between
+    # the two for Opt-1 reattach) — mocking run_to_result would let a REAL
+    # submit through to the live pool.
+    def fake_submit(task, params):
         captured["task"] = task
         captured["params"] = params
+        return "pool-jid-test1"
+
+    def fake_drive(pool_job_id, **kw):
         # drive a couple of progress beats to exercise the callback plumbing
         cb = kw.get("on_progress")
         if cb:
             cb("working", 0.5)
         return _fake_bundle()
 
-    monkeypatch.setattr(pool_app.pool_client, "run_to_result", fake_run_to_result)
+    monkeypatch.setattr(pool_app.pool_client, "submit", fake_submit)
+    monkeypatch.setattr(pool_app.pool_client, "drive_to_result", fake_drive)
 
     ref = tmp_path / "ref.png"
     from PIL import Image
@@ -106,8 +113,10 @@ def test_pool_submit_carries_reference_image_and_params(pool_app, tmp_path, monk
 
 def test_pool_submit_omits_reference_when_none(pool_app, tmp_path, monkeypatch):
     captured = {}
-    monkeypatch.setattr(pool_app.pool_client, "run_to_result",
-                        lambda task, params, **kw: (captured.update(params=params) or _fake_bundle()))
+    monkeypatch.setattr(pool_app.pool_client, "submit",
+                        lambda task, params: (captured.update(params=params) or "pool-jid-test2"))
+    monkeypatch.setattr(pool_app.pool_client, "drive_to_result",
+                        lambda pool_job_id, **kw: _fake_bundle())
 
     job = pool_app.Job(id="job000000002", name="turtle", dir=tmp_path)
     pool_app.run_pet_job(job, description="a green turtle", reference_image=None)

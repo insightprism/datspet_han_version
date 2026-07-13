@@ -1,0 +1,17 @@
+[Unit]
+Description=DatsPet (Pet Maker) Backend — GPU-less, generation via the shared_gpu_cpu pool
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/datspet/webui
+# --workers 1 is REQUIRED, not tuning (spec Finding 6): JOBS/JOBS_LOCK are
+# in-memory and the SQLite store uses a single module-level connection.
+ExecStart=/var/www/datspet/webui/venv/bin/uvicorn app:app --host 0.0.0.0 --port 29954 --workers 1 --log-level info
+EnvironmentFile=/var/www/datspet/webui/.env
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

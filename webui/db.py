@@ -97,6 +97,12 @@ def init_db() -> None:
     with _lock:
         conn = _connect()
         conn.executescript(_SCHEMA)
+        # Opt-1 (spec §A.6): the jobs table gained the pool-job linkage columns.
+        # ALTER-if-missing so existing DBs migrate in place on startup.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+        for col in ("pool_job_id", "description", "display_name"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
         conn.commit()
     _migrate_legacy_folders()
 
@@ -310,20 +316,40 @@ def revoke_user(external_user_id: str, action: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Jobs — the in-memory Job dataclass stays the live status object; this table
-# only records identity scoping so a restart mid-queue doesn't lose whose job
-# it was. (Live progress remains in memory; the DB is not polled per tick.)
+# Pool-job persistence (Opt-1, spec §A.6) — the in-memory Job dataclass stays
+# the live status object; this table records the web-job ↔ pool-job linkage so
+# a web-tier restart can REATTACH to a pool job that is still generating on a
+# worker, instead of orphaning it. A row exists only while a pool job is in
+# flight: recorded at submit, deleted at either terminal state.
 # ---------------------------------------------------------------------------
-def upsert_job(*, job_id: str, status: str, progress: float, message: str,
-               created_at: float, external_user_id: Optional[str] = None) -> None:
+def record_pool_job(*, job_id: str, pool_job_id: str, description: str,
+                    display_name: Optional[str], created_at: float,
+                    external_user_id: Optional[str] = None) -> None:
     with _lock:
         conn = _connect()
         conn.execute(
             """INSERT OR REPLACE INTO jobs
-               (id, status, progress, message, created_at, external_user_id)
-               VALUES (?,?,?,?,?,?)""",
-            (job_id, status, progress, message, created_at, external_user_id))
+               (id, status, progress, message, created_at, external_user_id,
+                pool_job_id, description, display_name)
+               VALUES (?, 'running', 0, '', ?, ?, ?, ?, ?)""",
+            (job_id, created_at, external_user_id,
+             pool_job_id, description, display_name))
         conn.commit()
+
+
+def delete_pool_job(job_id: str) -> None:
+    with _lock:
+        conn = _connect()
+        conn.execute("DELETE FROM jobs WHERE id=?", (job_id,))
+        conn.commit()
+
+
+def list_pool_jobs() -> list[sqlite3.Row]:
+    """In-flight pool jobs to reattach on startup (oldest first)."""
+    with _lock:
+        return _connect().execute(
+            """SELECT * FROM jobs WHERE pool_job_id IS NOT NULL
+               ORDER BY created_at""").fetchall()
 
 
 # ---------------------------------------------------------------------------
@@ -360,3 +386,16 @@ def burn_bundle_token(token: str) -> None:
             "UPDATE bundle_tokens SET downloaded_at=? WHERE token=?",
             (time.time(), token))
         conn.commit()
+
+
+def purge_expired_bundle_tokens(grace_s: float = 3600) -> int:
+    """Sweep long-expired token rows (resolve already refuses them; this is
+    retention hygiene, §7 step 9). The grace keeps recently-expired rows
+    around briefly for debugging a failed fetch. Returns rows removed."""
+    with _lock:
+        conn = _connect()
+        cur = conn.execute(
+            "DELETE FROM bundle_tokens WHERE expires_at < ?",
+            (time.time() - grace_s,))
+        conn.commit()
+        return cur.rowcount

@@ -22,6 +22,7 @@ Needs ComfyUI up (./start_comfyui_only.sh).
 import io
 import json
 import os
+import shutil
 import threading
 import time
 import uuid
@@ -239,10 +240,18 @@ def _generate_via_pool(job: Job, *, description: str, reference_image: Optional[
     if reference_image is not None:
         params["reference_image_b64"] = _encode_reference_image(reference_image)
 
-    zip_bytes = pool_client.run_to_result(
-        "pet_factory", params, on_progress=on_progress, poll_interval=4.0, timeout_s=900.0)
-    # The bundle carries the breed_id in its filenames/manifest; the web tier reads
-    # it back below from the manifest, so return "" and let the unpack fill it in.
+    # Persist the linkage BEFORE driving (Opt-1, §A.6): if this process dies
+    # mid-generation, startup reattaches to the still-running pool job instead
+    # of orphaning it. The row is deleted at either terminal state.
+    pool_job_id = pool_client.submit("pet_factory", params)
+    db.record_pool_job(
+        job_id=job.id, pool_job_id=pool_job_id, description=description,
+        display_name=display_name, created_at=job.created_at,
+        external_user_id=job.external_user_id)
+    zip_bytes = pool_client.drive_to_result(
+        pool_job_id, on_progress=on_progress, poll_interval=4.0, timeout_s=900.0)
+    # The bundle carries the breed_id in its manifest; the finalize reads it
+    # back, so return "" and let the unpack fill it in.
     return "", zip_bytes
 
 
@@ -280,48 +289,105 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
                     reference_image=str(reference_image) if reference_image else None,
                     remix_strength=remix_strength, display_name=display_name)
 
-        # Unpack sheet/manifest/package out of the bundle so the engine can
-        # render the pet without unzipping in the browser. Bytes go in the DB.
-        # breed_id and display_name are authoritative from package.json — the pool
-        # backend returns "" for breed_id (the worker minted it), so read it here;
-        # the local backend's return value agrees with the package.json anyway.
-        sheet_png = None
-        manifest_json = None
-        package_json = None
-        display_name = description.title()
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-            for member in z.namelist():
-                if member.endswith("_sprite.png"):
-                    sheet_png = z.read(member)
-                elif member == "manifest.json":
-                    manifest_json = z.read(member).decode("utf-8")
-                elif member == "package.json":
-                    package_json = z.read(member).decode("utf-8")
-                    pkg = json.loads(package_json)
-                    display_name = pkg.get("display_name", display_name)
-                    breed_id = breed_id or pkg.get("breed_id", breed_id)
-
-        db.insert_pet(
-            pet_id=job.id, breed_id=breed_id, display_name=display_name,
-            created_at=job.created_at, draft=True,
-            sheet_png=sheet_png, manifest_json=manifest_json,
-            package_json=package_json, bundle_zip=zip_bytes,
-            external_user_id=job.external_user_id,
-        )
-
-        with JOBS_LOCK:
-            job.status = "done"
-            job.breed_id = breed_id
-            job.name = display_name
-            job.message = "Done!"
-            job.progress = 1.0
-            job.finished_at = time.time()
+        _finalize_pet_from_zip(job, description=description, breed_id=breed_id,
+                               zip_bytes=zip_bytes)
     except Exception as e:
         with JOBS_LOCK:
             job.status = "error"
             job.error = str(e)
             job.message = f"Error: {e}"
             job.finished_at = time.time()
+        db.delete_pool_job(job.id)   # web-terminal → drop the reattach row
+
+
+def _finalize_pet_from_zip(job: Job, *, description: str, breed_id: str,
+                           zip_bytes: bytes) -> None:
+    """Unpack sheet/manifest/package out of the bundle so the engine can render
+    the pet without unzipping in the browser, persist the pet row (born a
+    DRAFT), and mark the job done. Shared by a fresh generation and a
+    reattached pool job (Opt-1). breed_id and display_name are authoritative
+    from package.json — the pool path passes breed_id="" (the worker minted
+    it); the local backend's return value agrees with package.json anyway."""
+    sheet_png = None
+    manifest_json = None
+    package_json = None
+    display_name = description.title()
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+        for member in z.namelist():
+            if member.endswith("_sprite.png"):
+                sheet_png = z.read(member)
+            elif member == "manifest.json":
+                manifest_json = z.read(member).decode("utf-8")
+            elif member == "package.json":
+                package_json = z.read(member).decode("utf-8")
+                pkg = json.loads(package_json)
+                display_name = pkg.get("display_name", display_name)
+                breed_id = breed_id or pkg.get("breed_id", breed_id)
+
+    db.insert_pet(
+        pet_id=job.id, breed_id=breed_id, display_name=display_name,
+        created_at=job.created_at, draft=True,
+        sheet_png=sheet_png, manifest_json=manifest_json,
+        package_json=package_json, bundle_zip=zip_bytes,
+        external_user_id=job.external_user_id,
+    )
+
+    with JOBS_LOCK:
+        job.status = "done"
+        job.breed_id = breed_id
+        job.name = display_name
+        job.message = "Done!"
+        job.progress = 1.0
+        job.finished_at = time.time()
+    db.delete_pool_job(job.id)   # no-op for local jobs
+
+
+def _resume_pool_job(job: Job, pool_job_id: str, description: str) -> None:
+    """Drive a reattached pool job to its result (Opt-1). Same terminal
+    behavior as run_pet_job — the generation itself never stopped; only the
+    web tier restarted around it."""
+    try:
+        def on_progress(msg, fraction):
+            with JOBS_LOCK:
+                job.message = msg
+                job.progress = fraction
+
+        zip_bytes = pool_client.drive_to_result(
+            pool_job_id, on_progress=on_progress, poll_interval=4.0, timeout_s=900.0)
+        _finalize_pet_from_zip(job, description=description, breed_id="",
+                               zip_bytes=zip_bytes)
+    except Exception as e:
+        with JOBS_LOCK:
+            job.status = "error"
+            job.error = str(e)
+            job.message = f"Error: {e}"
+            job.finished_at = time.time()
+        db.delete_pool_job(job.id)
+
+
+def _reattach_pool_jobs() -> None:
+    """Opt-1 (spec §A.6): a restart used to orphan the in-memory job tracker
+    while the pool job kept generating server-side. Rebuild a live Job for
+    every persisted in-flight pool job and resume polling it."""
+    if PET_GEN_BACKEND != "pool":
+        return
+    for row in db.list_pool_jobs():
+        job = Job(
+            id=row["id"],
+            name=row["display_name"] or row["description"] or "pet",
+            dir=SCRATCH_DIR / row["id"],
+            status="running",
+            message="Reattached after a restart — still generating…",
+            created_at=row["created_at"],
+            external_user_id=row["external_user_id"],
+        )
+        with JOBS_LOCK:
+            JOBS[job.id] = job
+        threading.Thread(
+            target=_resume_pool_job,
+            args=(job, row["pool_job_id"], row["description"] or ""),
+            daemon=True,
+        ).start()
 
 
 @app.post("/api/preview")
@@ -412,6 +478,18 @@ def workshop_status():
     if PET_GEN_BACKEND != "pool":
         return {"online": True, "busy": False}
     return pool_client.workshop_status("pet_preview")
+
+
+@app.get("/api/health")
+def health():
+    """Liveness + dependency summary for monitoring (§7 step 9). Cheap enough
+    to poll: at most one /api/pool read (8 s timeout, fail-safe offline)."""
+    with JOBS_LOCK:
+        active = sum(1 for j in JOBS.values() if j.status in ("queued", "running"))
+    out = {"status": "ok", "backend": PET_GEN_BACKEND, "active_jobs": active}
+    if PET_GEN_BACKEND == "pool":
+        out["workshop"] = pool_client.workshop_status("pet_factory")
+    return out
 
 
 @app.post("/api/generate")
@@ -536,7 +614,8 @@ def _purge_drafts(external_user_id: Optional[str] = "__all__") -> None:
             JOBS.pop(pet_id, None)
 
 
-_purge_drafts()  # startup cleanup — "__all__" scope
+_purge_drafts()        # startup cleanup — "__all__" scope
+_reattach_pool_jobs()  # Opt-1: resume pool jobs orphaned by a restart
 
 
 @app.get("/api/pets")
@@ -606,6 +685,78 @@ def pet_zip(pet_id: str, request: Request):
         content=row["bundle_zip"], media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{row["breed_id"]}.zip"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Production posture (§7 step 9): one maintenance thread owns the periodic
+# work — the DPP retry-queue drain (queued writebacks deliver without waiting
+# for user traffic) and transient retention (preview stills, job scratch dirs,
+# long-expired bundle tokens). Started from the ASGI startup hook, so plain
+# imports (tests, tooling) never spawn it.
+# ---------------------------------------------------------------------------
+MAINTENANCE_TICK_S = 60
+RETRY_DRAIN_EVERY_S = 5 * 60
+TRANSIENT_SWEEP_EVERY_S = 60 * 60
+TRANSIENT_MAX_AGE_S = 24 * 60 * 60
+
+
+def _cleanup_transients(max_age_s: float = TRANSIENT_MAX_AGE_S) -> int:
+    """Remove preview stills and job scratch dirs older than max_age_s — they
+    are working files; pets live in the DB — plus long-expired bundle tokens.
+    Scratch dirs of still-active jobs are never touched. Returns items removed."""
+    cutoff = time.time() - max_age_s
+    removed = 0
+    for f in PREVIEW_DIR.iterdir():
+        try:
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                f.unlink()
+                removed += 1
+        except OSError:
+            continue
+    for d in SCRATCH_DIR.iterdir():
+        with JOBS_LOCK:
+            job = JOBS.get(d.name)
+            active = job is not None and job.status in ("queued", "running")
+        try:
+            if not active and d.stat().st_mtime < cutoff:
+                shutil.rmtree(d, ignore_errors=True)
+                removed += 1
+        except OSError:
+            continue
+    removed += db.purge_expired_bundle_tokens()
+    return removed
+
+
+def _maintenance_loop() -> None:
+    last_drain = 0.0
+    last_sweep = 0.0
+    while True:
+        now = time.monotonic()
+        # Drain only when DPP is configured — an unconfigured standalone
+        # install has no secret and nothing queued worth warning about.
+        if os.environ.get("DATSME_HMAC_SECRET") and now - last_drain >= RETRY_DRAIN_EVERY_S:
+            last_drain = now
+            try:
+                drained = datsme_integration.drain_retry_queue()
+                if drained:
+                    print(f"[webui] retry-drain attempted {len(drained)} writeback(s)", flush=True)
+            except Exception as e:
+                print(f"[webui] retry-drain failed: {e}", flush=True)
+        if now - last_sweep >= TRANSIENT_SWEEP_EVERY_S:
+            last_sweep = now
+            try:
+                n = _cleanup_transients()
+                if n:
+                    print(f"[webui] transient sweep removed {n} item(s)", flush=True)
+            except Exception as e:
+                print(f"[webui] transient sweep failed: {e}", flush=True)
+        time.sleep(MAINTENANCE_TICK_S)
+
+
+@app.on_event("startup")
+def _start_maintenance() -> None:
+    threading.Thread(target=_maintenance_loop, daemon=True,
+                     name="datspet-maintenance").start()
 
 
 if __name__ == "__main__":
