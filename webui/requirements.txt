@@ -14,6 +14,18 @@ uvicorn>=0.30
 python-multipart>=0.0.9
 httpx>=0.24
 
+# Pillow — the web tier uses PIL directly (extract_base_frame reads/crops a pet's
+# sprite sheet; _encode_reference_image downscales the reference image before it
+# rides to a pool worker). In the local backend Pillow arrives transitively via
+# pet_factory's env, but the GPU-less pool deploy has no pet_factory install, so it
+# must be declared here explicitly (spec Finding 4 / §C.1).
+Pillow>=10
+
 # DatsMe partner SDK — path dependency, installed editable in dev:
 #   pip install -e ../../datsme_me/api/sdk/
 # (provides datsme_partner_sdk: launch/manifest/writeback/retry/testkit)
+#
+# On the GPU-less pool deploy the SDK is installed the same way from the co-located
+# datsme_me repo (spec §C.1). pet_factory and its ML stack (rembg/onnxruntime/numpy)
+# are intentionally ABSENT there — the web tier imports pet_factory only in the
+# PET_GEN_BACKEND=local branch (§A.4).

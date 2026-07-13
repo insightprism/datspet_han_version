@@ -35,7 +35,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
 import db
-from pet_factory import make_pet_zip, render_design_still
+import pool_client
+
+# Generation backend (spec §A.6): "local" runs the on-box GPU directly (dev / break-
+# glass); "pool" routes generation to the shared_gpu_cpu pool (prod, GPU-less box).
+# The web tier is otherwise identical either way — only the generation SOURCE changes.
+PET_GEN_BACKEND = os.environ.get("PET_GEN_BACKEND", "local").strip().lower()
+
+# pet_factory (and its ML stack: rembg → onnxruntime-CUDA, the ComfyUI-driving code) is
+# imported ONLY in the local branch, lazily (spec §A.4). This is what keeps the GPU-less
+# Hetzner venv free of the ML deps — importing it at module top would drag them onto a box
+# that has no GPU to use them.
+def _local_pet_factory():
+    from pet_factory import make_pet_zip, render_design_still
+    return make_pet_zip, render_design_still
+
 
 app = FastAPI(title="Pet Maker API")
 
@@ -183,6 +197,50 @@ def extract_base_frame(pet_id: str, dest: Path) -> Path:
     return dest
 
 
+def _encode_reference_image(path: Path, max_px: int = 1024) -> str:
+    """Read a reference image, downscale its longest side to ≤max_px, and return
+    it base64-encoded as PNG — the transport that carries the image to a pool
+    worker on another machine (spec §A.2). The downscale keeps the dispatcher DB
+    small and stays well under the body cap; it is loss-safe because the worker's
+    _prep_reference_image re-pads/normalizes to a square canvas anyway."""
+    import base64
+    from PIL import Image
+
+    with Image.open(path) as im:
+        im = im.convert("RGBA") if im.mode in ("P", "LA") else im.convert("RGB")
+        if max(im.size) > max_px:
+            im.thumbnail((max_px, max_px), Image.LANCZOS)
+        buf = io.BytesIO()
+        im.save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+def _generate_via_pool(job: Job, *, description: str, reference_image: Optional[Path],
+                       remix_strength: Optional[float],
+                       display_name: Optional[str]) -> tuple[str, bytes]:
+    """Pool backend (§A.2): submit the SAME params the local call used — carrying
+    the reference image as base64 so it travels to the worker — and drive the job
+    to its .zip result. Concurrency is the pool's job (no GPU_LOCK here)."""
+    def on_progress(msg, fraction):     # adapter hands a FRACTION 0..1 (R5-1)
+        with JOBS_LOCK:
+            job.message = msg
+            job.progress = fraction
+
+    params: dict = {"animal": description}
+    if display_name:
+        params["display_name"] = display_name
+    if remix_strength is not None:
+        params["remix_strength"] = remix_strength
+    if reference_image is not None:
+        params["reference_image_b64"] = _encode_reference_image(reference_image)
+
+    zip_bytes = pool_client.run_to_result(
+        "pet_factory", params, on_progress=on_progress, poll_interval=4.0, timeout_s=900.0)
+    # The bundle carries the breed_id in its filenames/manifest; the web tier reads
+    # it back below from the manifest, so return "" and let the unpack fill it in.
+    return "", zip_bytes
+
+
 def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
                 remix_strength: Optional[float] = None,
                 display_name: Optional[str] = None) -> None:
@@ -191,22 +249,31 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
     package/zip as blobs), born a DRAFT — it joins the house only when the
     user saves (POST /api/pets/{id}/keep)."""
     try:
-        with GPU_LOCK:
-            with JOBS_LOCK:
-                job.status = "running"
+        with JOBS_LOCK:
+            job.status = "running"
 
-            def on_progress(msg, pct):
-                with JOBS_LOCK:
-                    job.message = msg
-                    job.progress = pct
-
-            breed_id, zip_bytes = make_pet_zip(
-                description, on_progress=on_progress,
-                reference_image=str(reference_image) if reference_image else None,
+        if PET_GEN_BACKEND == "pool":
+            breed_id, zip_bytes = _generate_via_pool(
+                job, description=description, reference_image=reference_image,
                 remix_strength=remix_strength, display_name=display_name)
+        else:
+            make_pet_zip, _ = _local_pet_factory()
+            with GPU_LOCK:
+                def on_progress(msg, pct):
+                    with JOBS_LOCK:
+                        job.message = msg
+                        job.progress = pct
+
+                breed_id, zip_bytes = make_pet_zip(
+                    description, on_progress=on_progress,
+                    reference_image=str(reference_image) if reference_image else None,
+                    remix_strength=remix_strength, display_name=display_name)
 
         # Unpack sheet/manifest/package out of the bundle so the engine can
         # render the pet without unzipping in the browser. Bytes go in the DB.
+        # breed_id and display_name are authoritative from package.json — the pool
+        # backend returns "" for breed_id (the worker minted it), so read it here;
+        # the local backend's return value agrees with the package.json anyway.
         sheet_png = None
         manifest_json = None
         package_json = None
@@ -219,7 +286,9 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
                     manifest_json = z.read(member).decode("utf-8")
                 elif member == "package.json":
                     package_json = z.read(member).decode("utf-8")
-                    display_name = json.loads(package_json).get("display_name", display_name)
+                    pkg = json.loads(package_json)
+                    display_name = pkg.get("display_name", display_name)
+                    breed_id = breed_id or pkg.get("breed_id", breed_id)
 
         db.insert_pet(
             pet_id=job.id, breed_id=breed_id, display_name=display_name,
@@ -276,13 +345,34 @@ def preview_design(
     preview_id = uuid.uuid4().hex[:12]
     base_frame = extract_base_frame(base_pet_id, PREVIEW_DIR / f"{preview_id}_base.png")
 
-    # Fail fast instead of stalling the page behind a 3-minute generation.
-    if not GPU_LOCK.acquire(timeout=1.5):
-        raise HTTPException(423, "The GPU is busy generating a pet — try again in a bit.")
-    try:
-        png = render_design_still(description, base_frame, strength)
-    finally:
-        GPU_LOCK.release()
+    if PET_GEN_BACKEND == "pool":
+        # Best-effort fast-fail (§A.3, R5-5): the pool has no per-task admission
+        # control, so a preview would otherwise queue silently behind a 3-min
+        # build. Check pet-worker busy-state first and return the same 423 the
+        # local path does. NOT a hard guarantee — the check and the submit are two
+        # steps, so an occasional preview can still queue behind a concurrent build.
+        status = pool_client.workshop_status("pet_preview")
+        if not status["online"]:
+            raise HTTPException(423, "The workshop is offline right now — try again in a bit.")
+        if status["busy"]:
+            raise HTTPException(423, "The workshop is busy generating a pet — try again in a bit.")
+        try:
+            png = pool_client.run_to_result(
+                "pet_preview",
+                {"reference_image_b64": _encode_reference_image(base_frame),
+                 "description": description, "strength": strength},
+                poll_interval=1.0, timeout_s=180.0)
+        except pool_client.PoolError as e:
+            raise HTTPException(423, "The workshop couldn't preview that just now — try again in a bit.") from e
+    else:
+        _, render_design_still = _local_pet_factory()
+        # Fail fast instead of stalling the page behind a 3-minute generation.
+        if not GPU_LOCK.acquire(timeout=1.5):
+            raise HTTPException(423, "The GPU is busy generating a pet — try again in a bit.")
+        try:
+            png = render_design_still(description, base_frame, strength)
+        finally:
+            GPU_LOCK.release()
 
     (PREVIEW_DIR / f"{preview_id}.png").write_bytes(png)
     return {"preview_id": preview_id}
@@ -296,6 +386,18 @@ def preview_image(preview_id: str):
     if not path.exists():
         raise HTTPException(404, "preview not found")
     return FileResponse(path, media_type="image/png")
+
+
+@app.get("/api/workshop-status")
+def workshop_status():
+    """Pet-worker liveness for the 'workshop offline/busy' UI (§C.1a). The SERVER
+    calls the pool's /api/pool with the app key and returns only the two booleans
+    the frontend needs — the key never reaches the browser (Finding 9). In local
+    mode there is no pool, so report online + not-busy (the on-box GPU is the
+    'workshop', and the preview path's own GPU_LOCK handles busy)."""
+    if PET_GEN_BACKEND != "pool":
+        return {"online": True, "busy": False}
+    return pool_client.workshop_status("pet_preview")
 
 
 @app.post("/api/generate")
