@@ -350,13 +350,19 @@ pool app key (server-side secrets never reach the client, deploy spec Finding 9)
 
 ## 8. Build order (Rev.4 — synced to the implemented motion layer; General never regresses)
 
-0. **PREREQUISITE — v3 fleet rollout** per SPEC_DEPLOY_PETDATSME_POOL §B.1 (Omen first, then the
-   dual-nvidia card), using SPEC_MOTION_PROFILES §10 step-3's gates (both-field probes + the
-   unknown-`motion_profile` fallback probe). **This moved from last step to prerequisite (Rev.4):**
-   the shipped pose selector sends `poses` params, so any web-tier deploy of current `main` before
-   v3 is fleet-wide means a user picking one optional pose gets a dispatcher 422. No platform step
-   deploys anywhere until this is done. (Web deploys also need the `--no-deps -e` install first —
-   deploy spec Rev.6 / deploy/README.md.)
+0. **PREREQUISITE — v3 fleet rollout** per **`docs/SPEC_V3_FLEET_ROLLOUT.md`** (the standalone
+   runbook; distills SPEC_DEPLOY_PETDATSME_POOL §B.1 to the exact node commands + gate). **Note
+   (Rev.5 correction):** the fleet is now **two pet nodes already live** — `omen-pet` AND
+   `dual-nvidia-pet` both serve `pet_factory` today (verified `GET /api/pool`), NOT "Omen first then
+   add the dual-nvidia card." Both must be upgraded to v3 back-to-back with a `poses`-traffic freeze
+   across the mixed window (the runbook §2–3 handles this; v3's optional fields make the window
+   degrade to "fewer poses," never a wrong pet). **This is a DEPLOY gate, not a start gate:** steps
+   1–5 below can be BUILT in `local` dev mode without the pool; v3 must be fleet-wide before any of
+   this **deploys to a pool-backed environment**. **This moved from last step to prerequisite
+   (Rev.4):** the shipped pose selector sends `poses` params, so any web-tier deploy of current
+   `main` before v3 is fleet-wide means a user picking one optional pose gets a dispatcher 422. No
+   platform step DEPLOYS anywhere until this is done. (Web deploys also need the `--no-deps -e`
+   install first — deploy spec Rev.6 / deploy/README.md.)
 1. **Extract `<PetDesigner>`** from `/design/page.tsx`; move the current page to `/design/general`.
    **Scope grew (Rev.4):** the extraction now carries the implemented pose selector, cost hint,
    `fetchMotions` wiring, and the `PoseGallery`/`PosePlayer` result components along with the
@@ -416,5 +422,6 @@ pool app key (server-side secrets never reach the client, deploy spec Finding 9)
   `reference_image`/`remix_strength`); reference transport `reference_image_b64` (deploy spec §A.2).
 - Credit charge point: `docs/SPEC_DATSPET_DPP_INTEGRATION.md` (`credit_pet_design_cost`, at Accept).
 - Motion/pose layer: `docs/SPEC_MOTION_PROFILES.md`.
-- Fleet cutover discipline: `docs/SPEC_DEPLOY_PETDATSME_POOL.md` §B.1.
+- Fleet cutover discipline: `docs/SPEC_DEPLOY_PETDATSME_POOL.md` §B.1; the concrete v3 runbook (step 0):
+  `docs/SPEC_V3_FLEET_ROLLOUT.md`.
 - DPP launch deep-link (survives navigation to themed pages): `webui/datsme_integration.py` (`/launch`).
