@@ -1,9 +1,19 @@
 # SPEC — Pet Designer Platform (landing + themed pages + base catalog + tiers)
 
-**Status:** Design — **Rev.3** (2026-07-13). Umbrella spec for the DatsPet designer surface. Builds
-on **`docs/SPEC_MOTION_PROFILES.md`** (the movement layer, now Rev.3 with specificity levels) and
-reuses the deploy/cutover discipline of **`docs/SPEC_DEPLOY_PETDATSME_POOL.md`**. Grounded against
-the working tree.
+**Status:** Design — **Rev.4** (2026-07-13), **implementation-ready**. Umbrella spec for the DatsPet
+designer surface. Builds on **`docs/SPEC_MOTION_PROFILES.md`** (the movement layer — now
+**implemented**, commits `464095a`/`6e13aba`) and reuses the deploy/cutover discipline of
+**`docs/SPEC_DEPLOY_PETDATSME_POOL.md`** (now Rev.6). Grounded against the working tree.
+**Rev.4 — reality sync after the motion-profiles implementation landed.** Phase 1 overshot this
+spec's boundary in four ways §8 now reflects: (a) the pose selector + cost hint + `/api/motions`
+shipped **inside the current `/design` page** (step 1's extraction hadn't happened), so the
+`<PetDesigner>` extraction now carries them along; (b) the **v3 fleet rollout moved from last step
+to PREREQUISITE** — the shipped selector sends `poses` params, so deploying any web tier before v3
+is on the fleet means user-visible 422s; (c) step 6 must **replace the interim hardcoded
+`MAX_SELECTABLE_POSES = 5`** (every user currently gets the plus cap, unpriced) with the resolved
+entitlement + server-side per-user enforcement; (d) the base-animal catalog inherits the **data-only
+`--no-deps` deploy posture** the motion profiles established (deploy spec Rev.6). Also resolved:
+launch animals = **Cat + Dog + General** (§7.5).
 **Rev.3** aligns the catalog with the motion spec's specificity levels: catalog entries pin a
 **`motion_profile` key at the most specific authored level** (breed → species → animal type, §4.2)
 instead of stopping at `body_type` — without this, a catalog Corgi would resolve the coarse
@@ -21,7 +31,9 @@ up to 8, priced by GPU cost. Pull a curated base image the moment an animal/bree
 user starts from a picture, not a blank screen — which also makes the body type (and thus the
 animation) consistent."
 **Repos touched:** `datsme-pet-factory_wu` (frontend pages, web tier, `pet_factory`, pool handler).
-`shared_gpu_cpu` and `datsme_me` are **not** modified.
+`shared_gpu_cpu` and `datsme_me` are **not** modified — with ONE deliberate deferred exception:
+the `credit_pet_extra_pose_cost` config knob + manifest-based pose count at adopt (§5.2/§7.1),
+a small host-side addition that ships with step 6.
 
 ---
 
@@ -194,6 +206,12 @@ fidelity, always.) The keyword classifier from SPEC_MOTION_PROFILES §3.5 remain
 General free-text path. A guard test asserts every pinned `motion_profile` key exists in the motion
 registry — a catalog entry cannot point at a missing profile.
 
+**Deploy posture (Rev.4):** `animal_catalog/` is data-only content inside the `pet_factory` package —
+it inherits the exact deploy story the motion profiles established (deploy spec Rev.6): it reaches the
+GPU-less web tiers via the `--no-deps -e` install, adds no ML dependency, and content additions follow
+the node-first ordering habit where the workers need them (base images ride to workers as
+`reference_image_b64`, so workers do NOT need the catalog itself — only the web tier reads it).
+
 ### 4.3 Instant base image + how it feeds generation
 - Pick animal → breed → the base PNG displays **immediately** (a static file load, no generation).
   The user starts from a picture, not a blank screen.
@@ -253,17 +271,34 @@ watchdog, so no handler-timeout change is needed at launch (SPEC_MOTION_PROFILES
 > profiles but **hidden from the selector** until a DatsMe trigger is wired (SPEC_MOTION_PROFILES §7),
 > so tier caps count against the *visible* menu — a user never pays for a pose that won't move.
 
-### 5.2 Pricing wires to pose count
+### 5.2 Pricing wires to pose count (Rev.4: defaults set — all admin-tunable)
 Each generated pose is real GPU cost (~75 s), so price scales with pose count. This ties into DatsMe's
 **existing credit system** — `credit_pet_design_cost` is charged today at Accept
-(SPEC_DATSPET_DPP_INTEGRATION, currently a flat 100). The extension: cost = base + (extra poses ×
-`price_per_extra_pose`), computed from the selected pose count, surfaced to the user **before** they
-commit (the cost hint already planned in SPEC_MOTION_PROFILES §4.2), charged at Accept as today.
-**Adopting a sample (§4.4) is generation-free → cheapest/free tier lever.**
+(SPEC_DATSPET_DPP_INTEGRATION, currently a flat 100).
 
-> **Decision (§7.1):** the *mechanics* of tiered charging (how pose-count maps to credits, exactly
-> where the charge happens) is a product/billing design that gets pinned before the tier UI ships;
-> the pose-count **entitlement** (capping the selector) does not depend on it and can land first.
+**The formula and defaults (every number a config knob, none load-bearing):**
+
+```
+charge at Accept = credit_pet_design_cost  +  extra_poses × credit_pet_extra_pose_cost
+                   (default 100)              (default 50 per pose beyond walk+idle)
+```
+
+So: walk+idle pet = **100** (unchanged from today); a 5-pose pet = 100 + 3×50 = **250**. The 50 tracks
+the marginal GPU (~75 s/pose vs the ~3-min base build) as a clean round number — deliberately *not*
+precision-priced, since it's admin-tunable anyway. The full price is surfaced **before** the user
+commits (the cost hint, SPEC_MOTION_PROFILES §4.2, plus the session `cost` field the launch banner
+already shows) — never a surprise at Accept.
+
+**Charging mechanics — server-authoritative from the artifact.** The host (DatsMe) is the only party
+that can charge credits, and it should not trust a partner-claimed pose count. It doesn't have to:
+the host **fetches the bundle at Accept** (§C.4 of the deploy spec) and the manifest's `animations`
+map *is* the pose count. Charge = base + `max(0, len(animations) − 2)` × extra-pose cost, computed
+from the fetched artifact itself. **This needs one small host-side addition** (the
+`credit_pet_extra_pose_cost` config knob + the count-from-manifest at adopt) — the ONE deliberate
+exception to this spec's "no `datsme_me` change" guard, deferred to when step 6 ships. **Until it
+lands, charging stays flat 100** regardless of poses (extra poses are effectively free — acceptable:
+the entitlement cap still bounds GPU, and the UI already displays the intended full price).
+**Adopting a sample (§4.4) is generation-free → cheapest/free tier lever.**
 
 ### 5.3 Where entitlement is resolved
 The web tier resolves the caller's tier (from the DPP launch identity / DatsMe user, or "base" for
@@ -280,7 +315,7 @@ pool app key (server-side secrets never reach the client, deploy spec Finding 9)
 | Landing | new `/design` page | — | reads `catalog.json` for tiles | — |
 | Themed pages | new `/design/{animal}` + extracted `<PetDesigner>` | — | — | — |
 | Base catalog | breed picker + base image + samples | `GET /api/catalog`, base/sample serving, adopt endpoint | new `animal_catalog/` dir + loader | — |
-| Motion (spec'd) | pose selector | `GET /api/motions`, `poses` on generate | motion profiles + pose loop | **v3** (poses param) |
+| Motion (**DONE** — implemented) | pose selector (shipped; step 1 relocates it) | `GET /api/motions`, `poses` on generate (shipped) | motion profiles + pose loop (shipped) | **v3** (shipped in repo; fleet rollout = step 0) |
 | Tiers | pose caps + upsell + cost hint | tier resolution, cost computation | `tiers.json` loader | — |
 
 - **The one shared UI extraction:** today's `/design/page.tsx` form logic → a reusable `<PetDesigner>`
@@ -296,36 +331,61 @@ pool app key (server-side secrets never reach the client, deploy spec Finding 9)
 
 ## 7. Decisions
 
-1. **Tiered charging mechanics — OPEN (product/billing), does not gate the entitlement cap** (§5.2).
-   The selector cap + cost *display* can ship on the base entitlement; the credit-charge formula is
-   pinned with DatsMe billing before real money moves.
+1. **Tiered charging — RESOLVED (Rev.4): defaults set, all admin-tunable** (§5.2). Base
+   `credit_pet_design_cost` = 100 (unchanged), `credit_pet_extra_pose_cost` = 50 per optional pose,
+   charged once at Accept, pose count read **server-authoritatively from the fetched bundle's
+   manifest** (never partner-claimed). The extra-pose knob is one small deferred `datsme_me`
+   addition (the one exception to the no-host-change guard); until it lands, charging stays flat
+   100 while the UI shows the intended full price. The numbers are deliberately unceremonious —
+   they're config, revisit freely.
 2. **Page model — RESOLVED: themed chrome hard-coded, generation contract shared** (§0/§3). Many
    themed shells, one shared `<PetDesigner>` + shared config.
 3. **Base authoring — RESOLVED: generate-then-curate, long tail falls back to General** (§4.5).
 4. **Doc structure — RESOLVED: this umbrella spec + SPEC_MOTION_PROFILES as the movement layer.**
-5. **Which animals get themed pages at launch — OPEN (product):** the machinery is animal-agnostic;
-   this is just which themed shells + catalogs to author first. Recommendation: Cat + Dog (the two
-   highest-demand quadrupeds) + General, then expand.
+5. **Which animals get themed pages at launch — RESOLVED (Rev.4): Cat + Dog + General.** The two
+   highest-demand quadrupeds get themed pages + curated catalogs first; General remains the
+   long-tail path. Expansion after launch is one catalog folder + one themed shell per animal.
 
 ---
 
-## 8. Build order (each independently shippable; General never regresses)
+## 8. Build order (Rev.4 — synced to the implemented motion layer; General never regresses)
 
-1. **Extract `<PetDesigner>`** from `/design/page.tsx` with no behavior change; move current page to
-   `/design/general`. *Gate: `/design/general` is byte-identical in behavior to today.*
-2. **Landing page** at `/design` with a General tile (+ tiles for any themed page as they land).
-   *Gate: `/design` → pick General → the current flow, end to end; DPP launch still works.*
-3. **Base-animal catalog** — `animal_catalog/` + loader + `/api/catalog` + base-image serving; wire the
-   base image as the img2img source. *Gate: pick cat→tabby → base shows instantly → generate redraws
-   from it → consistent output.* (Bootstraps with a small curated set; General covers the rest.)
-4. **Motion profiles + pose selector** — per SPEC_MOTION_PROFILES (its own build order); the pose
-   selector lands in `<PetDesigner>`. *Gate: that spec's gates.*
-5. **First themed page** (Cat World) — bespoke chrome around `<BreedPicker>`+`<PetDesigner>`+`<SampleGallery>`.
-   *Gate: Cat World themed, uncluttered, generates via the shared engine; sample-adopt works GPU-free.*
-6. **Tiers** — entitlement resolution + selector caps + cost hint (charging mechanics per §7.1).
-   *Gate: a base user is capped at 2 poses (walk+idle) with an upsell; a plus user freely picks up to
-   5 poses from the body type's available set; a selection over cap is refused/clipped server-side.*
-7. **Fleet rollout** of handler v3 per SPEC_DEPLOY_PETDATSME_POOL §B.1 (Omen first).
+0. **PREREQUISITE — v3 fleet rollout** per SPEC_DEPLOY_PETDATSME_POOL §B.1 (Omen first, then the
+   dual-nvidia card), using SPEC_MOTION_PROFILES §10 step-3's gates (both-field probes + the
+   unknown-`motion_profile` fallback probe). **This moved from last step to prerequisite (Rev.4):**
+   the shipped pose selector sends `poses` params, so any web-tier deploy of current `main` before
+   v3 is fleet-wide means a user picking one optional pose gets a dispatcher 422. No platform step
+   deploys anywhere until this is done. (Web deploys also need the `--no-deps -e` install first —
+   deploy spec Rev.6 / deploy/README.md.)
+1. **Extract `<PetDesigner>`** from `/design/page.tsx`; move the current page to `/design/general`.
+   **Scope grew (Rev.4):** the extraction now carries the implemented pose selector, cost hint,
+   `fetchMotions` wiring, and the `PoseGallery`/`PosePlayer` result components along with the
+   original controls. *Gate: `/design/general` is byte-identical in behavior to today's
+   page-with-selector.*
+2. **Landing page** at `/design` with tiles for Cat World, Dog World, General.
+   *Gate: `/design` → pick General → the current flow, end to end; DPP launch still works (the
+   launch cookie is origin-scoped, so it survives the landing hop — §2).*
+3. **Base-animal catalog** — `pet_factory/animal_catalog/` (cat + dog per §7.5) + loader +
+   `/api/catalog` + base-image serving; wire the base image as the img2img source and pass the
+   pinned `motion_profile` key on generate (motion spec §5.2). *Gate: pick cat→tabby → base shows
+   instantly → generate redraws from it, pinned profile governs the build (assert via manifest
+   `movement_class`) → consistent output.* (Bootstraps via generate-then-curate, §4.5; General
+   covers the long tail.)
+4. ~~Motion profiles + pose selector~~ — **DONE** (SPEC_MOTION_PROFILES implemented: commits
+   `464095a` + `6e13aba`; 60 tests green). Landed in the current design page; step 1 relocates it
+   into `<PetDesigner>`.
+5. **First themed pages** (Cat World, then Dog World) — bespoke chrome around
+   `<BreedPicker>`+`<PetDesigner>`+`<SampleGallery>`. *Gate: themed, uncluttered, generates via the
+   shared engine; sample-adopt works GPU-free.*
+6. **Tiers + charging** — entitlement resolution + selector caps + the resolved pricing (§7.1:
+   base 100 + 50/extra pose, all admin-tunable). **Must replace the interim hardcoded
+   `MAX_SELECTABLE_POSES = 5`** in the designer with the server-resolved entitlement, add
+   **server-side per-user enforcement** (today the only server cap is the global `MAX_POSES=10` —
+   every user effectively has the plus cap, unpriced), and land the one deferred host-side piece:
+   the `credit_pet_extra_pose_cost` knob + manifest-based pose count at adopt (§5.2). *Gate: a base
+   user is capped at 2 poses (walk+idle) with an upsell; a plus user freely picks up to 5; a
+   selection over cap is refused/clipped server-side, not just in the UI; a 5-pose Accept charges
+   250 (observed in the credit ledger) while a walk+idle Accept still charges 100.*
 
 ---
 
