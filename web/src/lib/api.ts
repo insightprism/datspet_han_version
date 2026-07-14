@@ -351,8 +351,14 @@ export async function acceptPetToDatsme(petId: string): Promise<AcceptResult> {
   });
   const data = await r.json().catch(() => ({}));
   if (!r.ok) {
-    // 402 (credits), 409 (house full), 401 (relaunch) surface their detail.
-    throw new Error(data.detail || "Could not send this pet to DatsMe");
+    // 402 (credits), 409 (house full), 401 (relaunch) surface their detail. The
+    // detail may be a STRING or a structured object ({error, detail, hint} from a
+    // host validation failure) — extract a readable message, never "[object Object]".
+    const d = data.detail;
+    const msg = typeof d === "string" ? d
+      : d && typeof d === "object" ? (d.detail || d.error || JSON.stringify(d))
+      : "Could not send this pet to DatsMe";
+    throw new Error(msg);
   }
   return data;
 }
