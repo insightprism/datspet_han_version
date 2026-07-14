@@ -49,6 +49,7 @@ export default function PublicLanding() {
     const signin = params.get("signin");
     if (signin === "unavailable") setNotice({ text: "DatsMe is unavailable right now — try again in a bit.", tone: "warn" });
     else if (signin === "declined") setNotice({ text: "Sign-in cancelled. You can still explore DatsPet.", tone: "info" });
+    else if (signin === "admin_denied") setNotice({ text: "The admin area is for DatsMe system admins only.", tone: "warn" });
     if (signin) {
       params.delete("signin");
       const qs = params.toString();

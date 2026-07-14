@@ -23,13 +23,29 @@ export default function NavAuth() {
 
   if (session.launched) {
     const name = session.display_name || "your DatsMe";
+    // Admin entry shown to ANY signed-in user (SPEC_MOTION_PROFILE_ADMIN §2.4,
+    // discoverable variant). If already elevated (adm cookie) go straight to the
+    // editor; otherwise click triggers the admin-launch bounce, where the DatsMe
+    // host enforces the actual role — an admin gets in, a non-admin is denied.
+    // The host origin comes from signin_url (same origin as admin-launch).
+    const hostOrigin = session.signin_url ? new URL(session.signin_url).origin : "";
+    const adminHref = session.admin
+      ? "/admin/motions"
+      : hostOrigin
+        ? `${hostOrigin}/api/integrations/admin-launch?return=/admin/motions`
+        : "";
     return (
       <span className="flex items-center gap-3 text-sm">
-        {/* Admin link — only for a verified admin session (SPEC_MOTION_PROFILE_ADMIN §2.4). */}
-        {session.admin && (
-          <Link href="/admin/motions" className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
-            Admin
-          </Link>
+        {adminHref && (
+          session.admin ? (
+            <Link href={adminHref} className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
+              Admin
+            </Link>
+          ) : (
+            <a href={adminHref} className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
+              Admin
+            </a>
+          )
         )}
         <span className="flex items-center gap-1.5" style={{ color: "var(--muted)" }}>
           <span aria-hidden>👤</span>
