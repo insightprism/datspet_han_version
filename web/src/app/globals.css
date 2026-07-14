@@ -52,3 +52,17 @@ body {
 .mono {
   font-family: "Fira Code", "JetBrains Mono", monospace;
 }
+
+/* Running-figure bob shown next to the elapsed timer while a pet generates —
+   a small motion cue that reinforces "still working." Decorative only: the
+   climbing timer carries the meaning, so it's held still under reduced-motion. */
+@keyframes pet-run-bob {
+  0%, 100% { transform: translateY(0) rotate(-4deg); }
+  50%      { transform: translateY(-2px) rotate(4deg); }
+}
+.pet-run {
+  animation: pet-run-bob 0.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .pet-run { animation: none; }
+}

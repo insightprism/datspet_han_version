@@ -27,8 +27,32 @@ interface Props {
   resetLabel?: string;
 }
 
+// Elapsed seconds → compact human string. Under a minute reads "12s"; past that,
+// "1:05" so a long build is legible at a glance without a stopwatch.
+function formatElapsed(sec: number): string {
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 export default function PetJobResult({ job, onReset, resetLabel = "Make another" }: Props) {
   const done = job.status === "done";
+  // Live elapsed-time counter while the pet is being built. Anchored to when this
+  // component first sees a given job.id (generation start, from the user's view) —
+  // JobStatus carries no server start time. Ticks every second so the number
+  // visibly climbs (proof it's still working) and stops the instant it finishes
+  // or errors. Reset per job.id so "Make another" starts the clock fresh.
+  const running = job.status === "queued" || job.status === "running";
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    setElapsed(0);
+    if (!running) return;
+    const startedAt = Date.now();
+    const t = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => clearInterval(t);
+    // Re-anchor when the job identity changes, or when it stops running (clears the timer).
+  }, [job.id, running]);
   // Fresh pets are DRAFTS: they only join the house when saved here.
   // Unsaved drafts are removed when the next generation starts.
   const [saved, setSaved] = useState(false);
@@ -108,8 +132,18 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
       : "✓ Accept — send to my DatsMe";
   return (
     <div className="card p-6">
-      <div className="mono mb-1.5 text-sm" style={{ color: job.status === "error" ? "var(--accent)" : "var(--gold)" }}>
-        {job.message}
+      <div className="mono mb-1.5 flex items-center gap-2 text-sm" style={{ color: job.status === "error" ? "var(--accent)" : "var(--gold)" }}>
+        {running && (
+          // Running figure — the little bob signals "still working" alongside the
+          // climbing timer. aria-hidden: the elapsed text carries the meaning.
+          <span aria-hidden className="pet-run inline-block" style={{ lineHeight: 1 }}>🏃</span>
+        )}
+        <span>{job.message}</span>
+        {running && (
+          <span className="tabular-nums" style={{ color: "var(--muted)" }}>
+            · {formatElapsed(elapsed)}
+          </span>
+        )}
       </div>
       <div className="h-2 overflow-hidden rounded" style={{ background: "#262626" }}>
         <div
