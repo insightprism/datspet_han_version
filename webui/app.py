@@ -54,6 +54,17 @@ from pet_factory import tiers as tiers_mod
 # The web tier is otherwise identical either way — only the generation SOURCE changes.
 PET_GEN_BACKEND = os.environ.get("PET_GEN_BACKEND", "local").strip().lower()
 
+# Startup guard: in local mode, generation drives ComfyUI at PET_FACTORY_COMFY_URL.
+# If that env isn't set, pet_factory.factory falls back to its upstream default
+# :8188 — which is NOT where our ComfyUI runs (:19953, per pet_env.sh). That
+# mismatch fails silently until the first "Create my design" with a confusing
+# "connection refused :8188". Warn LOUDLY at boot instead, so a backend started
+# without sourcing pet_env.sh (e.g. only pet_env.local.sh) is caught immediately.
+if PET_GEN_BACKEND == "local" and not os.environ.get("PET_FACTORY_COMFY_URL"):
+    print("[webui] WARNING: PET_GEN_BACKEND=local but PET_FACTORY_COMFY_URL is unset — "
+          "generation will try ComfyUI at the :8188 default, NOT our :19953. "
+          "Source pet_env.sh (which sets it) before starting the backend.", flush=True)
+
 # pet_factory (and its ML stack: rembg → onnxruntime-CUDA, the ComfyUI-driving code) is
 # imported ONLY in the local branch, lazily (spec §A.4). This is what keeps the GPU-less
 # Hetzner venv free of the ML deps — importing it at module top would drag them onto a box
