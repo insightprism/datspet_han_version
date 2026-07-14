@@ -31,7 +31,7 @@ export default function GeneralDesignPage() {
           ← All the design worlds
         </Link>
         <Link
-          href="/"
+          href="/make"
           className="inline-block rounded-lg border px-5 py-2.5 text-sm font-semibold transition hover:opacity-85"
           style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}
         >

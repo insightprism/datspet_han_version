@@ -31,10 +31,10 @@ export default function RootLayout({
           </span>
           <nav className="flex gap-5 text-sm font-medium">
             <Link href="/" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
-              Describe
-            </Link>
-            <Link href="/design" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
               Design
+            </Link>
+            <Link href="/make" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
+              Describe
             </Link>
             <Link href="/house" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
               Pet house

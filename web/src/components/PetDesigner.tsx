@@ -336,7 +336,7 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
         <div className="card mb-6 p-6">
           {houseEmpty ? (
             <p className="text-sm" style={{ color: "var(--faint)" }}>
-              The house is empty — <Link href="/" className="underline">make a pet first</Link>, then design on top of it.
+              The house is empty — <Link href="/make" className="underline">make a pet first</Link>, then design on top of it.
             </p>
           ) : (
             <>

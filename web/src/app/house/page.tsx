@@ -50,7 +50,7 @@ export default function HousePage() {
         className="mb-6 inline-block rounded-lg border px-5 py-2.5 text-sm font-semibold transition hover:opacity-85"
         style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}
       >
-        ← Back to the maker
+        ← Back to designing
       </Link>
 
       {error && <div className="mono text-sm" style={{ color: "var(--accent)" }}>{error}</div>}
@@ -59,7 +59,7 @@ export default function HousePage() {
         <div className="card p-8 text-center">
           <p style={{ color: "var(--muted)" }}>No pets yet — the house is empty.</p>
           <Link
-            href="/"
+            href="/make"
             className="mono mt-4 inline-block rounded-lg border px-5 py-3 text-sm font-semibold"
             style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}
           >
