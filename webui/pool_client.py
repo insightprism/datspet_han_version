@@ -64,9 +64,19 @@ def _req(method: str, path: str, *, body: Optional[dict] = None, timeout: int = 
         raise PoolError(f"pool {method} {path} unreachable: {e.reason}") from e
 
 
-def submit(task: str, params: dict) -> str:
-    """Submit {task, params} to the pool; return the pool job id."""
-    resp = json.load(_req("POST", "/api/jobs", body={"task": task, "params": params}))
+def submit(task: str, params: dict, *, labels: Optional[dict] = None) -> str:
+    """Submit {task, params} to the pool; return the pool job id.
+
+    `labels` is an OPTIONAL flat string→string dict of advisory attribution
+    metadata (e.g. {"user": ..., "device": ...}) for the pool's "requested by"
+    dashboard column. It's additive: sent only when non-empty, and its absence
+    changes nothing (a submit without labels behaves exactly as before). The
+    values are display metadata, never secrets. This adapter forwards them
+    verbatim — building/classifying them is the web tier's job."""
+    body: dict = {"task": task, "params": params}
+    if labels:
+        body["labels"] = labels
+    resp = json.load(_req("POST", "/api/jobs", body=body))
     job_id = resp.get("job_id")
     if not job_id:
         raise PoolError(f"pool accepted the job but returned no job_id: {resp!r}")
@@ -101,6 +111,7 @@ def run_to_result(
     task: str,
     params: dict,
     *,
+    labels: Optional[dict] = None,
     on_progress: Optional[Callable[[str, float], None]] = None,
     poll_interval: float = 4.0,
     timeout_s: float = 900.0,
@@ -112,11 +123,12 @@ def run_to_result(
     straight into the same code the local make_pet_zip callback feeds (R5-1).
     Raises PoolError on error/dead/timeout — the caller turns that into a failed Job.
 
+    `labels`: optional attribution metadata forwarded to submit() (see submit()).
     poll_interval: 4 s suits ~3-min builds; the preview path passes ~1 s (§A.3).
     timeout_s: a client-side ceiling; the pool's own watchdog is authoritative,
     this just stops an unbounded wait if the dispatcher goes away.
     """
-    return drive_to_result(submit(task, params), on_progress=on_progress,
+    return drive_to_result(submit(task, params, labels=labels), on_progress=on_progress,
                            poll_interval=poll_interval, timeout_s=timeout_s)
 
 

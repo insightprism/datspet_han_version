@@ -73,9 +73,10 @@ def test_pool_submit_carries_reference_image_and_params(pool_app, tmp_path, monk
     # Mock at the submit/drive seam (the app records the pool job id between
     # the two for Opt-1 reattach) — mocking run_to_result would let a REAL
     # submit through to the live pool.
-    def fake_submit(task, params):
+    def fake_submit(task, params, *, labels=None):
         captured["task"] = task
         captured["params"] = params
+        captured["labels"] = labels
         return "pool-jid-test1"
 
     def fake_drive(pool_job_id, **kw):
@@ -92,13 +93,16 @@ def test_pool_submit_carries_reference_image_and_params(pool_app, tmp_path, monk
     from PIL import Image
     Image.new("RGB", (32, 32), (200, 40, 40)).save(ref)
 
-    job = pool_app.Job(id="job000000001", name="A Red Panda", dir=tmp_path)
+    job = pool_app.Job(id="job000000001", name="A Red Panda", dir=tmp_path,
+                       pool_labels={"user": "u-42", "device": "desktop"})
     pool_app.run_pet_job(
         job, description="red panda", reference_image=ref,
         remix_strength=0.85, display_name="A Red Panda")
 
     assert job.status == "done", job.error
     assert captured["task"] == "pet_factory"
+    # The attribution labels captured on the Job travel through to the submit body.
+    assert captured["labels"] == {"user": "u-42", "device": "desktop"}
     p = captured["params"]
     assert p["animal"] == "red panda"
     assert p["display_name"] == "A Red Panda"
@@ -114,7 +118,7 @@ def test_pool_submit_carries_reference_image_and_params(pool_app, tmp_path, monk
 def test_pool_submit_omits_reference_when_none(pool_app, tmp_path, monkeypatch):
     captured = {}
     monkeypatch.setattr(pool_app.pool_client, "submit",
-                        lambda task, params: (captured.update(params=params) or "pool-jid-test2"))
+                        lambda task, params, *, labels=None: (captured.update(params=params, labels=labels) or "pool-jid-test2"))
     monkeypatch.setattr(pool_app.pool_client, "drive_to_result",
                         lambda pool_job_id, **kw: _fake_bundle())
 
@@ -125,6 +129,9 @@ def test_pool_submit_omits_reference_when_none(pool_app, tmp_path, monkeypatch):
     assert "reference_image_b64" not in captured["params"]
     assert "remix_strength" not in captured["params"]  # None → omitted
     assert captured["params"]["animal"] == "a green turtle"
+    # A Job with no attribution labels submits labels=None (additive/optional) —
+    # the submit body carries no `labels` key, exactly as before this feature.
+    assert captured["labels"] is None
 
 
 # (b) the v2 handler decodes b64 and forwards to make_pet_zip --------------------
@@ -236,7 +243,7 @@ def test_adapter_hands_fraction_not_pct(monkeypatch):
         def __init__(self, obj): self._b = json.dumps(obj).encode()
         def read(self): return self._b
 
-    monkeypatch.setattr(pool_client, "submit", lambda task, params: "jid")
+    monkeypatch.setattr(pool_client, "submit", lambda task, params, *, labels=None: "jid")
     monkeypatch.setattr(pool_client, "poll", lambda jid: next(seq))
     monkeypatch.setattr(pool_client, "result_bytes", lambda jid: b"RESULT")
     monkeypatch.setattr(pool_client.time, "sleep", lambda *_: None)
@@ -267,7 +274,7 @@ def test_adapter_beats_on_pct_change_with_same_msg(monkeypatch):
         {"status": "running", "pct": 60.0, "msg": "rendering"},  # same msg, new pct
         {"status": "done", "pct": 100.0, "msg": "done"},
     ])
-    monkeypatch.setattr(pool_client, "submit", lambda task, params: "jid")
+    monkeypatch.setattr(pool_client, "submit", lambda task, params, *, labels=None: "jid")
     monkeypatch.setattr(pool_client, "poll", lambda jid: next(seq))
     monkeypatch.setattr(pool_client, "result_bytes", lambda jid: b"RESULT")
     monkeypatch.setattr(pool_client.time, "sleep", lambda *_: None)

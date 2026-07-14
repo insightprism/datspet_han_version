@@ -143,6 +143,10 @@ class Job:
     created_at: float = field(default_factory=time.time)
     finished_at: Optional[float] = None
     external_user_id: Optional[str] = None  # NULL = standalone; set when DatsMe-launched
+    # Advisory pool "requested by" labels ({user, device}), captured from the
+    # request AT SUBMIT-HANDLER TIME — generation runs on a background thread
+    # where the request (and its User-Agent) is gone, so it must be carried here.
+    pool_labels: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -276,7 +280,7 @@ def _generate_via_pool(job: Job, *, description: str, reference_image: Optional[
     # Persist the linkage BEFORE driving (Opt-1, §A.6): if this process dies
     # mid-generation, startup reattaches to the still-running pool job instead
     # of orphaning it. The row is deleted at either terminal state.
-    pool_job_id = pool_client.submit("pet_factory", params)
+    pool_job_id = pool_client.submit("pet_factory", params, labels=job.pool_labels or None)
     db.record_pool_job(
         job_id=job.id, pool_job_id=pool_job_id, description=description,
         display_name=display_name, created_at=job.created_at,
@@ -501,6 +505,7 @@ def preview_design(
                 "pet_preview",
                 {"reference_image_b64": _encode_reference_image(base_frame),
                  "description": description, "strength": strength},
+                labels=datsme_integration.pool_labels(request, owner) or None,
                 poll_interval=1.0, timeout_s=180.0)
         except pool_client.PoolError as e:
             # Surface the real cause in the server log — a missing app key or a
@@ -890,7 +895,10 @@ async def start_job(
         reference_image.write_bytes(body)
 
     job = Job(id=job_id, name=display_name or description, dir=job_dir,
-              external_user_id=owner)
+              external_user_id=owner,
+              # Capture attribution NOW, in the request context — the generation
+              # thread below can't see the request's User-Agent.
+              pool_labels=datsme_integration.pool_labels(request, owner))
     with JOBS_LOCK:
         JOBS[job_id] = job
 

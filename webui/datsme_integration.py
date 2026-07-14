@@ -344,6 +344,56 @@ def resolve_launch_capabilities(request: Request) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# Pool attribution labels — advisory "requested by" metadata sent with each
+# pool job so the pool dashboard can show who/what asked for it. This is the
+# ONE place the incoming request is turned into {user, device}; the pool client
+# just forwards the flat string→string dict it's handed (never sees the browser).
+# ---------------------------------------------------------------------------
+
+def classify_device(user_agent: Optional[str]) -> str:
+    """Classify an HTTP User-Agent into a coarse device bucket for the pool's
+    "requested by" column. Substring checks only (no UA-parsing dependency):
+
+      iPhone/iPad/iPod/iOS → "ios"; Android → "android"; a known desktop OS
+      with a browser token → "desktop"; anything else → "unknown".
+
+    The Android check precedes the desktop-OS check because Android UAs also
+    carry "Linux". No request/UA at all (a background/server context) is the
+    caller's concern — it passes None here only if it wants the "unknown"
+    bucket; pool_labels omits `device` entirely instead."""
+    if not user_agent:
+        return "unknown"
+    ua = user_agent.lower()
+    if any(t in ua for t in ("iphone", "ipad", "ipod", "ios")):
+        return "ios"
+    if "android" in ua:
+        return "android"
+    if any(os_t in ua for os_t in ("windows", "macintosh", "mac os", "linux", "cros")) \
+            and any(b in ua for b in ("mozilla", "chrome", "safari", "firefox", "edg")):
+        return "desktop"
+    return "unknown"
+
+
+def pool_labels(request: Optional[Request], owner: Optional[str]) -> dict[str, str]:
+    """Build the flat {user, device} label dict for a pool submit from the
+    current request + resolved launch identity.
+
+      user   — the verified DatsMe user_id (`owner`), or "anonymous" when
+               standalone/unauthenticated. It's a stable id, safe to display on
+               an internal dashboard (never a secret/token).
+      device — classify_device() of the request's User-Agent. Omitted (not sent)
+               when there's no request context (background/server submit) — labels
+               are additive, so a missing key is fine.
+
+    Values are clamped to < 64 chars to honor the pool's string→string label
+    contract. Returns a plain dict; the caller merges it into the submit body."""
+    labels: dict[str, str] = {"user": (owner or "anonymous")[:63]}
+    if request is not None:
+        labels["device"] = classify_device(request.headers.get("user-agent"))[:63]
+    return labels
+
+
+# ---------------------------------------------------------------------------
 # Frontend helper — GET /api/datsme/session
 # ---------------------------------------------------------------------------
 def _is_integrated() -> bool:

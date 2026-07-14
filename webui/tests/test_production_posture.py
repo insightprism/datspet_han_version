@@ -106,7 +106,7 @@ def test_pool_row_exists_during_drive_and_clears_on_success(pool_app, tmp_path, 
     import db
     seen = {}
 
-    monkeypatch.setattr(pool_app.pool_client, "submit", lambda task, params: "pool-live")
+    monkeypatch.setattr(pool_app.pool_client, "submit", lambda task, params, *, labels=None: "pool-live")
 
     def fake_drive(pjid, **kw):
         rows = db.list_pool_jobs()
@@ -125,7 +125,7 @@ def test_pool_row_exists_during_drive_and_clears_on_success(pool_app, tmp_path, 
 def test_pool_row_clears_on_error(pool_app, tmp_path, monkeypatch):
     import db
     import pool_client as pc
-    monkeypatch.setattr(pool_app.pool_client, "submit", lambda task, params: "pool-err")
+    monkeypatch.setattr(pool_app.pool_client, "submit", lambda task, params, *, labels=None: "pool-err")
     def boom(pjid, **kw):
         raise pc.PoolError("worker died and was not reclaimed")
     monkeypatch.setattr(pool_app.pool_client, "drive_to_result", boom)
