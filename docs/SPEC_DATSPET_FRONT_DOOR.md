@@ -264,13 +264,14 @@ sign-in UX (§9.4 for the optional signed-in chip).
 ## 6. Dev-mode caveat (two-origin dev vs one-origin prod)
 
 In prod, web + `/api` share one origin (nginx), so the login `next=` hop works. In dev, DatsMe
-web (:19995) does not proxy `/api` (:19994) — no Next rewrites configured — so the *signed-out*
-leg of the bounce would 404 after login. Two options, pick at build time:
-- **(a) Add a dev-only Next rewrite** in `datsme_me/web/next.config` mapping `/api/:path*` →
-  `http://localhost:19994/api/:path*` — makes dev match prod's origin shape (recommended; it
-  also de-risks every future same-origin assumption).
-- **(b) Accept the caveat:** in dev, sign in on DatsMe first, then use the button (the
-  signed-in leg works because localhost cookies ignore ports).
+web (:19995) does not proxy `/api` (:19994), so the *signed-out* leg of the bounce would 404
+after login.
+
+**RESOLVED (Rev.2) — option (a) implemented:** `datsme_me/web/next.config.mjs` now has a
+**dev-only** `rewrites()` mapping `/api/:path*` → `http://localhost:19994/api/:path*` (override with
+`DEV_API_ORIGIN`). It is skipped when `NODE_ENV=production` (nginx owns `/api` there), so dev matches
+prod's one-origin shape and every same-origin assumption in this flow holds in both. The DatsMe dev
+web server must be **restarted** to pick up the config change.
 
 ---
 

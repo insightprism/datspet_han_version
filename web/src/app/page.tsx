@@ -1,15 +1,14 @@
 "use client";
 
 /**
- * App home — the "Design a pet" landing (SPEC_PET_DESIGNER_PLATFORM §2). This is
- * the front door: opening the app (standalone) lands here. The same landing also
- * renders at /design (the DPP launch deep-link target), so a DatsMe "Design your
- * pet" launch arrives at the identical page with no host change. "Describe a pet
- * instead" → /make (the free-text Make-your-own flow).
+ * App home — the public front door (SPEC_DATSPET_FRONT_DOOR §4). Explains DatsPet
+ * + its DatsMe relationship, and offers Sign in with DatsMe / Create account
+ * (integrated) or Start designing (standalone). The Design landing (the tiles)
+ * still lives at /design — the DPP launch deep-link target, unchanged.
  */
 
-import DesignLanding from "@/components/DesignLanding";
+import PublicLanding from "@/components/PublicLanding";
 
 export default function HomePage() {
-  return <DesignLanding />;
+  return <PublicLanding />;
 }

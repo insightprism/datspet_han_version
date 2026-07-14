@@ -217,6 +217,11 @@ export interface DatsmeSession {
   user_id?: string;
   capabilities?: string[];
   cost?: number | null;
+  // Front-door fields (SPEC_DATSPET_FRONT_DOOR §3.2). Present on every response.
+  integrated?: boolean;         // wired to a DatsMe host? false = standalone (no DatsMe buttons)
+  signin_url?: string | null;   // where "Sign in with DatsMe" points (host login-launch bounce)
+  signup_url?: string | null;   // where "Create a DatsMe account" points (host /signup)
+  admin?: boolean;              // a valid admin session is present (show the Admin toolbar link)
 }
 
 export async function getDatsmeSession(): Promise<DatsmeSession> {
@@ -227,6 +232,15 @@ export async function getDatsmeSession(): Promise<DatsmeSession> {
   });
   if (!r.ok) return { launched: false };
   return r.json();
+}
+
+// End the DatsPet session (clears the launch + admin cookies host-side). The
+// DatsMe session itself is managed on DatsMe (front-door §3.3).
+export async function datsmeLogout(): Promise<void> {
+  await fetch(`${API_URL}/api/datsme/logout`, {
+    method: "POST",
+    credentials: "include",
+  }).catch(() => {});
 }
 
 export interface AcceptResult {

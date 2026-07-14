@@ -27,13 +27,14 @@ import hashlib
 import json
 import logging
 import os
+import re
 import secrets
 import time
 from pathlib import Path
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.concurrency import run_in_threadpool
 from starlette.background import BackgroundTask
@@ -80,6 +81,26 @@ LAUNCH_COOKIE_TTL_SEC = 60 * 60  # 60 min — matches host LAUNCH_TOKEN_TTL
 # DATSPET_COOKIE_SAMESITE=lax to drop the Secure requirement.
 LAUNCH_COOKIE_SAMESITE = os.environ.get("DATSPET_COOKIE_SAMESITE", "none").lower()
 LAUNCH_COOKIE_SECURE = LAUNCH_COOKIE_SAMESITE == "none"
+
+# Admin cookie (SPEC_MOTION_PROFILE_ADMIN §2.3). Set ONLY when a launch token
+# carries adm=true (an admin-launch bounce, minted for a system_admin). Same
+# attributes + TTL as the launch cookie; holds the same verified token so admin
+# endpoints re-verify (never parse) it. A normal "Design a pet" launch never sets it.
+ADMIN_COOKIE = "datspet_admin"
+
+
+def _safe_return_path(return_path: Optional[str]) -> Optional[str]:
+    """Validate a `return` query param as a same-origin path before redirecting to
+    it (open-redirect guard, front-door §3.1 / §5). Accepts only a path that starts
+    with a single '/' and contains a conservative charset; rejects '//' (protocol-
+    relative → off-origin) and anything with a scheme. Returns the path or None."""
+    if not return_path:
+        return None
+    if not return_path.startswith("/") or return_path.startswith("//"):
+        return None
+    if not re.fullmatch(r"/[A-Za-z0-9/_\-?=&.]*", return_path):
+        return None
+    return return_path
 
 # Bundle tokens must outlive the SDK retry window (backoff ceiling 24 h) so a
 # queued writeback's server-to-server fetch still resolves (spec §5.3 / §7).
@@ -194,8 +215,13 @@ def serve_manifest(request: Request):
 # Inbound: DatsMe → /launch
 # ---------------------------------------------------------------------------
 @router.get("/launch")
-def launch(token: str | None = None):
-    """Verify a DatsMe launch JWT → set the launch cookie → 303 to /design.
+def launch(token: str | None = None, return_path: str | None = Query(None, alias="return")):
+    """Verify a DatsMe launch JWT → set the launch cookie → 303 to the frontend.
+
+    Lands on /design?from=datsme by default, or on a validated `return` path when
+    the bounce supplies one (front-door §3.1: sign-in uses return=/design, the
+    admin bounce uses return=/admin/motions). An admin launch (token carries
+    adm=true) additionally sets the datspet_admin cookie (admin spec §2.3).
 
     Resync (rsx claim): re-post an already-accepted pet's writeback without
     involving the user, then redirect (spec §5.1).
@@ -232,7 +258,10 @@ def launch(token: str | None = None):
         "jti": ctx.jti,
         "capabilities": list(ctx.capabilities),
     }
-    redirect = RedirectResponse(url=f"{_frontend_url()}/design?from=datsme", status_code=303)
+    # Where to land: a validated same-origin `return` path, else today's default.
+    safe_return = _safe_return_path(return_path)
+    target = f"{_frontend_url()}{safe_return}" if safe_return else f"{_frontend_url()}/design?from=datsme"
+    redirect = RedirectResponse(url=target, status_code=303)
     redirect.set_cookie(
         key=LAUNCH_COOKIE,
         value=json.dumps(launch_ctx),
@@ -241,6 +270,17 @@ def launch(token: str | None = None):
         samesite=LAUNCH_COOKIE_SAMESITE,
         secure=LAUNCH_COOKIE_SECURE,
     )
+    # Admin bounce (admin spec §2.3): an adm=true launch also gets the admin cookie
+    # (same verified token; admin endpoints re-verify it). A normal launch does not.
+    if ctx.raw_claims.get("adm") is True:
+        redirect.set_cookie(
+            key=ADMIN_COOKIE,
+            value=ctx.token,
+            max_age=LAUNCH_COOKIE_TTL_SEC,
+            httponly=True,
+            samesite=LAUNCH_COOKIE_SAMESITE,
+            secure=LAUNCH_COOKIE_SECURE,
+        )
     return redirect
 
 
@@ -302,19 +342,88 @@ def resolve_launch_capabilities(request: Request) -> list[str]:
 # ---------------------------------------------------------------------------
 # Frontend helper — GET /api/datsme/session
 # ---------------------------------------------------------------------------
+def _is_integrated() -> bool:
+    """True when this DatsPet instance is wired to a DatsMe host (a launch secret
+    is configured). False = standalone/local mode, where the front door hides all
+    DatsMe sign-in buttons (front-door §0.4)."""
+    try:
+        _hmac_secret()
+        return True
+    except RuntimeError:
+        return False
+
+
+def _has_valid_admin_cookie(request: Request) -> bool:
+    """True iff the request carries a datspet_admin cookie whose token verifies AND
+    carries adm=true (admin spec §2.3). Verify, never parse — a forged cookie is
+    not admin. Used by the session endpoint (to show the toolbar link) and by
+    require_admin_launch (to gate the admin API)."""
+    raw = request.cookies.get(ADMIN_COOKIE)
+    if not raw:
+        return False
+    try:
+        ctx = verify_launch_token(raw, _hmac_secret())
+    except (LaunchError, RuntimeError):
+        return False
+    return ctx.raw_claims.get("adm") is True
+
+
 @router.get("/api/datsme/session")
 def datsme_session(request: Request):
-    """Tell the frontend whether it was launched from DatsMe (so it can show
-    the banner + Accept button) and the credit cost to show up front."""
+    """Tell the frontend whether it was launched from DatsMe (so it can show the
+    banner + Accept button), the credit cost to show up front, and the front-door
+    fields (integrated mode + the sign-in/sign-up URLs the landing renders)."""
+    integrated = _is_integrated()
+    # The DatsMe web origin the sign-in/up flows live on (front-door §3.2). The
+    # frontend never hardcodes a DatsMe origin — it renders what we hand it.
+    signin_url = signup_url = None
+    if integrated:
+        public = _datsme_public_url()
+        signin_url = f"{public}/api/integrations/login-launch?activity={ACTIVITY_DESIGN_A_PET}&return=/design"
+        signup_url = f"{public}/signup"
     ctx = _read_launch_cookie(request)
+    base = {
+        "integrated": integrated,
+        "signin_url": signin_url,
+        "signup_url": signup_url,
+        "admin": integrated and _has_valid_admin_cookie(request),
+    }
     if ctx is None:
-        return {"launched": False}
+        return {**base, "launched": False}
     return {
+        **base,
         "launched": True,
         "user_id": ctx.get("user_id"),
         "capabilities": ctx.get("capabilities", []),
         "cost": pet_design_cost(),
     }
+
+
+@router.post("/api/datsme/logout")
+def datsme_logout():
+    """End the DatsPet session: clear the launch cookie AND the admin cookie
+    (front-door §3.3). This ends the DatsPet session only — the DatsMe session is
+    managed on DatsMe. Clearing datspet_admin here (even though the front door
+    doesn't set it — the admin flow does) is deliberate: logout owns 'end the
+    DatsPet session', so it clears every DatsPet-issued cookie. Harmless if absent."""
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"ok": True})
+    for cookie in (LAUNCH_COOKIE, ADMIN_COOKIE):
+        resp.delete_cookie(
+            key=cookie,
+            samesite=LAUNCH_COOKIE_SAMESITE,
+            secure=LAUNCH_COOKIE_SECURE,
+        )
+    return resp
+
+
+def require_admin_launch(request: Request) -> None:
+    """Gate for the admin API (admin spec §2.3). Raises 401 unless the request
+    carries a valid datspet_admin cookie (verified adm=true). Import this as a
+    dependency on every admin endpoint. Server-authoritative on every request —
+    the cookie is re-verified, never trusted as a parsed blob."""
+    if not _has_valid_admin_cookie(request):
+        raise HTTPException(status_code=401, detail="admin access required")
 
 
 def pet_design_cost() -> Optional[int]:
