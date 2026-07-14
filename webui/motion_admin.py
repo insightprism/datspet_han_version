@@ -1,0 +1,188 @@
+"""motion_admin — the DatsPet admin API for motion-profile CRUD.
+
+SPEC_MOTION_PROFILE_ADMIN §4. An APIRouter, every endpoint gated by
+require_admin_launch (the adm-claim cookie). Thin over the pure-data write path
+(pet_factory.motion_profiles.admin); this layer only does HTTP shaping, the
+catalog-pin delete guard, the writability gate, and the audit line.
+
+The validator (motion_profiles.admin.validate_profile) is the single definition
+of "valid" — shared with the guard test — so the admin can never write a profile
+the build would reject.
+"""
+from __future__ import annotations
+
+import json
+import os
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from pydantic import BaseModel
+
+import datsme_integration
+from pet_factory import animal_catalog as animal_catalog_mod
+from pet_factory import motion_profiles as mp
+from pet_factory.motion_profiles import admin as mp_admin
+
+router = APIRouter(
+    prefix="/api/admin/motions",
+    dependencies=[Depends(datsme_integration.require_admin_launch)],
+)
+
+
+# ---------------------------------------------------------------------------
+# Writability (§7.1). Writes are allowed on a writable/dev instance; on the
+# deployed prod web tier (read-only --no-deps install) they refuse unless the
+# operator opts in with MOTION_ADMIN_WRITABLE=1. Reads/list always work.
+# ---------------------------------------------------------------------------
+def _writable() -> bool:
+    if os.environ.get("MOTION_ADMIN_WRITABLE", "").strip() == "1":
+        return True
+    # Default: writable only when the profiles dir is actually writable on disk
+    # AND we're not in pool (prod) mode. Local/dev instances author freely.
+    if os.environ.get("PET_GEN_BACKEND", "local").strip().lower() == "pool":
+        return False
+    return os.access(mp._DIR, os.W_OK)
+
+
+def _require_writable() -> None:
+    if not _writable():
+        raise HTTPException(
+            status_code=409,
+            detail=("this instance is read-only for motion profiles — author on a "
+                    "writable/dev instance and deploy (set MOTION_ADMIN_WRITABLE=1 "
+                    "to override)"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Catalog-pin delete guard (§6). A profile still pinned by a catalog entry can't
+# be deleted (it would orphan the pin + red the catalog guard test).
+# ---------------------------------------------------------------------------
+def _catalog_pins_for(key: str) -> list[str]:
+    """Catalog references (animal or animal/breed) that pin this profile key."""
+    refs: list[str] = []
+    for a in animal_catalog_mod.list_animals():
+        if a.get("motion_profile") == key:
+            refs.append(a["key"])
+        for b in a.get("breeds", []):
+            if animal_catalog_mod.resolved_motion_profile(a["key"], b["key"]) == key:
+                refs.append(f"{a['key']}/{b['key']}")
+    return sorted(set(refs))
+
+
+def _audit(request: Request, op: str, key: str) -> None:
+    who = datsme_integration.admin_user_id(request) or "unknown"
+    print(f"[motion-admin] {who} {op} profile {key!r}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Request bodies
+# ---------------------------------------------------------------------------
+class ProfileBody(BaseModel):
+    profile: dict         # the full <key>.json content
+    label: str            # the registry label
+
+
+class DuplicateBody(BaseModel):
+    new_key: str
+    new_label: str
+
+
+def _summary(entry: dict, prof) -> dict:
+    """List-pane summary for one profile."""
+    return {
+        "key": entry["key"],
+        "label": entry.get("label", entry["key"]),
+        "level": entry.get("level"),
+        "movement_class": prof.movement_class,
+        "enabled_poses": prof.enabled_poses(),
+        "keyword_count": len(prof.keywords),
+        "is_default": entry["key"] == mp_admin.load_registry().get("default"),
+        "pinned_by": _catalog_pins_for(entry["key"]),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Read endpoints (always allowed — even on a read-only prod tier)
+# ---------------------------------------------------------------------------
+@router.get("")
+def list_profiles():
+    """Registry + a summary of every profile (drives the list pane)."""
+    registry = mp_admin.load_registry()
+    profiles = []
+    for entry in registry.get("profiles", []):
+        prof = mp.load_motion_profile(entry["key"])
+        profiles.append(_summary(entry, prof))
+    return {
+        "default": registry.get("default"),
+        "writable": _writable(),
+        "profiles": sorted(profiles, key=lambda p: p["key"]),
+    }
+
+
+@router.get("/{key}")
+def get_profile(key: str):
+    """One profile's full JSON (the edit form's source)."""
+    if not mp_admin._KEY_RE.match(key):
+        raise HTTPException(404, "profile not found")
+    registry = mp_admin.load_registry()
+    entry = next((e for e in registry["profiles"] if e["key"] == key), None)
+    if entry is None:
+        raise HTTPException(404, "profile not found")
+    raw = json.loads((mp._DIR / entry["file"]).read_text())
+    return {"profile": raw, "label": entry.get("label", key),
+            "is_default": key == registry.get("default"),
+            "pinned_by": _catalog_pins_for(key), "writable": _writable()}
+
+
+# ---------------------------------------------------------------------------
+# Write endpoints (gated by _require_writable)
+# ---------------------------------------------------------------------------
+@router.post("")
+def create_profile(body: ProfileBody, request: Request):
+    _require_writable()
+    try:
+        entry = mp_admin.write_profile(body.profile, label=body.label, existing_key=None)
+    except mp_admin.ProfileWriteError as e:
+        raise HTTPException(422, {"error": "validation_failed", "errors": e.errors})
+    _audit(request, "create", entry["key"])
+    return {"created": entry}
+
+
+@router.put("/{key}")
+def update_profile(key: str, body: ProfileBody, request: Request):
+    _require_writable()
+    if not mp_admin._KEY_RE.match(key):
+        raise HTTPException(404, "profile not found")
+    try:
+        entry = mp_admin.write_profile(body.profile, label=body.label, existing_key=key)
+    except mp_admin.ProfileWriteError as e:
+        raise HTTPException(422, {"error": "validation_failed", "errors": e.errors})
+    _audit(request, "update", key)
+    return {"updated": entry}
+
+
+@router.delete("/{key}")
+def delete_profile(key: str, request: Request):
+    _require_writable()
+    if not mp_admin._KEY_RE.match(key):
+        raise HTTPException(404, "profile not found")
+    try:
+        mp_admin.delete_profile(key, pinned_by=_catalog_pins_for(key))
+    except mp_admin.ProfileWriteError as e:
+        # default / pinned / absent → 409 (a content-policy refusal, not bad input)
+        raise HTTPException(409, str(e))
+    _audit(request, "delete", key)
+    return {"deleted": key}
+
+
+@router.post("/{key}/duplicate")
+def duplicate_profile(key: str, body: DuplicateBody, request: Request):
+    _require_writable()
+    if not mp_admin._KEY_RE.match(key):
+        raise HTTPException(404, "source profile not found")
+    try:
+        clone = mp_admin.duplicate_profile(key, new_key=body.new_key, new_label=body.new_label)
+    except mp_admin.ProfileWriteError as e:
+        raise HTTPException(409, str(e))
+    _audit(request, "duplicate", body.new_key)
+    return {"created": {"key": body.new_key}, "profile": clone}

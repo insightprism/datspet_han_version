@@ -94,6 +94,18 @@ def _registry() -> dict:
     return _REGISTRY
 
 
+def reload() -> None:
+    """Drop the in-memory registry + profile caches so the next read re-reads disk.
+    Called by the admin write path (motion_profiles.admin) after every successful
+    file mutation so /api/motions, the pose menu, and the next generation reflect
+    the change with no restart (SPEC_MOTION_PROFILE_ADMIN §3). Safe to call any time;
+    the caches simply re-warm lazily on the next access."""
+    global _REGISTRY
+    with _LOCK:
+        _REGISTRY = None
+        _PROFILE_CACHE.clear()
+
+
 def _entry_for(key: str) -> Optional[dict]:
     return next((e for e in _registry()["profiles"] if e["key"] == key), None)
 

@@ -168,6 +168,94 @@ export async function fetchEntitlement(): Promise<Entitlement> {
   return r.json();
 }
 
+// ---------------------------------------------------------------------------
+// Motion-profile admin (SPEC_MOTION_PROFILE_ADMIN §4). Every call is credentialed
+// (the datspet_admin cookie rides); a 401 means "not an admin" → bounce to the
+// host admin-launch. The one adapter owns these URLs like every other endpoint.
+// ---------------------------------------------------------------------------
+export const CANONICAL_POSES = [
+  "walk", "idle", "run", "sleep", "sit", "eat", "jump", "play", "swim", "fly",
+] as const;
+export const REQUIRED_POSES = ["walk", "idle"] as const;
+export const POSE_ROLES = ["rest", "active", "timed", "triggered"] as const;
+
+export interface MotionPoseSpec {
+  enabled: boolean;
+  runtime_role?: string | null;
+  action?: string | null;
+  suffix?: string;
+}
+export interface MotionProfileFile {
+  key: string;
+  level: number;
+  movement_class: string;
+  keywords: string[];
+  poses: Record<string, MotionPoseSpec>;
+}
+export interface MotionProfileSummary {
+  key: string;
+  label: string;
+  level: number;
+  movement_class: string;
+  enabled_poses: string[];
+  keyword_count: number;
+  is_default: boolean;
+  pinned_by: string[];
+}
+export interface MotionAdminList {
+  default: string;
+  writable: boolean;
+  profiles: MotionProfileSummary[];
+}
+export interface MotionProfileDetail {
+  profile: MotionProfileFile;
+  label: string;
+  is_default: boolean;
+  pinned_by: string[];
+  writable: boolean;
+}
+
+// Thrown by the admin calls; carries the server's validation error list on a 422.
+export class MotionAdminError extends Error {
+  status: number;
+  errors: string[];
+  constructor(message: string, status: number, errors: string[] = []) {
+    super(message);
+    this.status = status;
+    this.errors = errors;
+  }
+}
+
+async function adminFetch(path: string, init?: RequestInit) {
+  const r = await fetch(`${API_URL}/api/admin/motions${path}`, {
+    credentials: "include",
+    cache: "no-store",
+    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+    ...init,
+  });
+  if (r.ok) return r.json().catch(() => ({}));
+  const data = await r.json().catch(() => ({}));
+  // 422 detail = {error, errors[]}; other errors carry a string/detail.
+  const detail = data.detail;
+  const errors = detail && typeof detail === "object" ? detail.errors ?? [] : [];
+  const msg = detail && typeof detail === "object" ? (detail.error ?? "request failed")
+    : (detail ?? "request failed");
+  throw new MotionAdminError(String(msg), r.status, errors);
+}
+
+export const motionAdmin = {
+  list: (): Promise<MotionAdminList> => adminFetch(""),
+  get: (key: string): Promise<MotionProfileDetail> => adminFetch(`/${encodeURIComponent(key)}`),
+  create: (profile: MotionProfileFile, label: string) =>
+    adminFetch("", { method: "POST", body: JSON.stringify({ profile, label }) }),
+  update: (key: string, profile: MotionProfileFile, label: string) =>
+    adminFetch(`/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ profile, label }) }),
+  remove: (key: string) =>
+    adminFetch(`/${encodeURIComponent(key)}`, { method: "DELETE" }),
+  duplicate: (key: string, new_key: string, new_label: string): Promise<{ profile: MotionProfileFile }> =>
+    adminFetch(`/${encodeURIComponent(key)}/duplicate`, { method: "POST", body: JSON.stringify({ new_key, new_label }) }),
+};
+
 export async function previewDesign(form: FormData): Promise<{ preview_id: string }> {
   const r = await fetch(`${API_URL}/api/preview`, { method: "POST", body: form });
   const data = await r.json();

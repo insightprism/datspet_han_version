@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { getDatsmeSession, datsmeLogout, type DatsmeSession } from "@/lib/api";
 
 export default function NavAuth() {
@@ -24,6 +25,12 @@ export default function NavAuth() {
     const name = session.display_name || "your DatsMe";
     return (
       <span className="flex items-center gap-3 text-sm">
+        {/* Admin link — only for a verified admin session (SPEC_MOTION_PROFILE_ADMIN §2.4). */}
+        {session.admin && (
+          <Link href="/admin/motions" className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
+            Admin
+          </Link>
+        )}
         <span className="flex items-center gap-1.5" style={{ color: "var(--muted)" }}>
           <span aria-hidden>👤</span>
           <span className="font-medium" style={{ color: "var(--heading)" }}>{name}</span>

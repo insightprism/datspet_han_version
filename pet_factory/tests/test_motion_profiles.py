@@ -18,6 +18,49 @@ def _all_entries():
     return json.loads((_DIR / "registry.json").read_text())["profiles"]
 
 
+# --- the shared validator is the single source of truth (§3) ---------------
+# Every shipped profile must pass motion_profiles.admin.validate_profile — the
+# SAME function the admin write endpoint calls before writing. This ties the
+# guard test and the editor to one definition of "valid": a profile the admin
+# can write is exactly a profile that ships, and vice-versa. The granular tests
+# below still document each individual rule.
+def test_every_shipped_profile_passes_the_shared_validator():
+    from pet_factory.motion_profiles import admin
+    registry = json.loads((_DIR / "registry.json").read_text())
+    for entry in _all_entries():
+        raw = json.loads((_DIR / entry["file"]).read_text())
+        errors = admin.validate_profile(raw, registry=registry, existing_key=entry["key"])
+        assert errors == [], f"{entry['key']}: validate_profile reported {errors}"
+
+
+def test_validator_rejects_each_contract_violation():
+    # A few pointed negatives so the validator's rejections are pinned, not just
+    # its acceptances. Uses a valid base profile and breaks one rule at a time.
+    from pet_factory.motion_profiles import admin
+    registry = json.loads((_DIR / "registry.json").read_text())
+    base = json.loads((_DIR / "quadruped.json").read_text())
+
+    def broken(mutate):
+        # Start from a VALID candidate (fresh key, no keywords) and break one rule.
+        import copy
+        p = copy.deepcopy(base)
+        p["key"] = "tmpnewprofile"
+        p["keywords"] = []
+        mutate(p)   # the mutation is applied LAST so it isn't clobbered
+        return admin.validate_profile(p, registry=registry, existing_key=None)
+
+    assert broken(lambda p: p.update(key="Bad-Key!"))          # non-slug key
+    assert broken(lambda p: p.update(level=9))                 # level out of range
+    assert broken(lambda p: p.update(movement_class=""))       # empty movement_class
+    assert broken(lambda p: p["poses"].pop("run"))             # missing a canonical pose
+    assert broken(lambda p: p["poses"].update(extrapose={"enabled": False}))  # extra pose
+    assert broken(lambda p: p["poses"]["walk"].update(enabled=False))  # walk disabled
+    assert broken(lambda p: p["poses"]["run"].update(runtime_role="bogus"))  # bad role
+    assert broken(lambda p: p["poses"]["sit"].update(action=""))  # enabled, no action
+    # keyword clash: claim a keyword an existing profile owns
+    assert broken(lambda p: p.update(keywords=["dog"]))        # 'dog' is quadruped's
+
+
 # --- registry + files ------------------------------------------------------
 def test_registry_parses_and_default_resolves():
     reg = json.loads((_DIR / "registry.json").read_text())

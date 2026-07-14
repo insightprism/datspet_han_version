@@ -106,6 +106,11 @@ db.init_db()  # create tables + one-time-migrate any legacy pet.json folders
 import datsme_integration
 app.include_router(datsme_integration.router)
 
+# Motion-profile admin API (SPEC_MOTION_PROFILE_ADMIN §4). Every endpoint is gated
+# by the adm-claim cookie; inert until an admin-launch sets it.
+import motion_admin
+app.include_router(motion_admin.router)
+
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 ALLOWED_IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 

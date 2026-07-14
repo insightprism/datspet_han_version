@@ -440,6 +440,20 @@ def require_admin_launch(request: Request) -> None:
         raise HTTPException(status_code=401, detail="admin access required")
 
 
+def admin_user_id(request: Request) -> Optional[str]:
+    """The verified admin's DatsMe user_id (for the audit line), or None. Reads the
+    datspet_admin cookie and re-verifies the token — same trust discipline as
+    require_admin_launch. Call only after require_admin_launch has passed."""
+    raw = request.cookies.get(ADMIN_COOKIE)
+    if not raw:
+        return None
+    try:
+        ctx = verify_launch_token(raw, _hmac_secret())
+    except (LaunchError, RuntimeError):
+        return None
+    return ctx.user_id
+
+
 def pet_design_cost() -> Optional[int]:
     """Best-effort fetch of the base credit cost the host will charge, so the
     Accept button + the designer's price hint can show it before committing.
