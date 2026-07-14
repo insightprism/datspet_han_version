@@ -98,7 +98,7 @@ def test_require_admin_launch_rejects_without_cookie(dpp_env):
 
 
 # --- /launch return-redirect + adm-cookie branches, end to end (Item 5) ---
-def _launch_token(secret, *, adm=False, ttl=1800):
+def _launch_token(secret, *, adm=False, nm=None, ttl=1800):
     """A signed launch token in DatsMe's shape; optionally adm=true. The SDK
     testkit has no adm param, so add the claim and re-sign with the same secret.
     Uses python-jose (the SDK's JWT lib), not PyJWT."""
@@ -107,10 +107,13 @@ def _launch_token(secret, *, adm=False, ttl=1800):
     tok = make_test_launch_token(
         hmac_secret=secret, user_id="user-A", activity_id="design_a_pet",
         partner_slug="datspet", capabilities=["pets.write"], ttl_seconds=ttl)
-    if not adm:
+    if not adm and nm is None:
         return tok
     claims = jwt.decode(tok, secret, algorithms=["HS256"])
-    claims["adm"] = True
+    if adm:
+        claims["adm"] = True
+    if nm is not None:
+        claims["nm"] = nm
     return jwt.encode(claims, secret, algorithm="HS256")
 
 
@@ -150,3 +153,41 @@ def test_launch_rejects_offorigin_return_falls_back_to_default(client, dpp_env):
     assert r.status_code == 303
     assert "evil.com" not in r.headers["location"]
     assert r.headers["location"].endswith("/design?from=datsme")
+
+
+def _launch_cookie(secret, *, nm=None):
+    """The datsme_launch cookie blob /launch would set for a token — built directly
+    (the TestClient won't store the Secure cookie over the non-HTTPS test transport,
+    same pattern as test_scoping)."""
+    import json
+    tok = _launch_token(secret, nm=nm)
+    return json.dumps({"token": tok, "user_id": "user-A", "activity_id": "design_a_pet",
+                       "jti": "t", "capabilities": ["pets.write"], "display_name": nm})
+
+
+def test_session_exposes_display_name_from_nm_claim(client, dpp_env):
+    # A launched user's session carries the display name from the token's nm claim,
+    # re-read from the VERIFIED token (not the cookie blob) so it can't be spoofed.
+    cookie = _launch_cookie(dpp_env["secret"], nm="Mark")
+    body = client.get("/api/datsme/session", cookies={"datsme_launch": cookie}).json()
+    assert body["launched"] is True
+    assert body["display_name"] == "Mark"
+
+
+def test_session_display_name_none_when_token_has_no_nm(client, dpp_env):
+    # A token minted by an older host (no nm claim) → display_name is None, not an error.
+    cookie = _launch_cookie(dpp_env["secret"], nm=None)
+    body = client.get("/api/datsme/session", cookies={"datsme_launch": cookie}).json()
+    assert body["launched"] is True
+    assert body.get("display_name") is None
+
+
+def test_session_display_name_from_verified_token_not_cookie_blob(client, dpp_env):
+    # Security: a tampered cookie blob claiming a different name must NOT spoof the
+    # greeting — display_name comes from the VERIFIED token's nm claim.
+    import json
+    tok = _launch_token(dpp_env["secret"], nm="RealName")
+    tampered = json.dumps({"token": tok, "user_id": "user-A", "activity_id": "design_a_pet",
+                           "jti": "t", "capabilities": [], "display_name": "SpoofedName"})
+    body = client.get("/api/datsme/session", cookies={"datsme_launch": tampered}).json()
+    assert body["display_name"] == "RealName"    # from the token, not the blob

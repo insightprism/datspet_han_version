@@ -257,6 +257,10 @@ def launch(token: str | None = None, return_path: str | None = Query(None, alias
         "activity_id": ctx.activity_id,
         "jti": ctx.jti,
         "capabilities": list(ctx.capabilities),
+        # The user's DatsMe display name (nm claim), so the nav can greet them
+        # without a profile round-trip. Cosmetic — the session endpoint re-reads
+        # it from the VERIFIED token, so a tampered cookie can't spoof a name.
+        "display_name": ctx.raw_claims.get("nm"),
     }
     # Where to land: a validated same-origin `return` path, else today's default.
     safe_return = _safe_return_path(return_path)
@@ -390,10 +394,20 @@ def datsme_session(request: Request):
     }
     if ctx is None:
         return {**base, "launched": False}
+    # Re-read the display name from the VERIFIED token (nm claim), not the cookie
+    # blob — so a tampered cookie can't spoof the greeting name. None if the token
+    # predates the nm claim (older host) or fails verification.
+    display_name = None
+    try:
+        verified = verify_launch_token(ctx["token"], _hmac_secret())
+        display_name = verified.raw_claims.get("nm")
+    except (LaunchError, RuntimeError, KeyError):
+        display_name = None
     return {
         **base,
         "launched": True,
         "user_id": ctx.get("user_id"),
+        "display_name": display_name,
         "capabilities": ctx.get("capabilities", []),
         "cost": pet_design_cost(),
     }

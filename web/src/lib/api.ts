@@ -215,6 +215,7 @@ export function petZipUrl(petId: string): string {
 export interface DatsmeSession {
   launched: boolean;
   user_id?: string;
+  display_name?: string | null;  // the signed-in user's DatsMe name (nm claim), for the nav
   capabilities?: string[];
   cost?: number | null;
   // Front-door fields (SPEC_DATSPET_FRONT_DOOR §3.2). Present on every response.

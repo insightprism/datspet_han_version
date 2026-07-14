@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import FloatingEmojis from "@/components/FloatingEmojis";
+import NavAuth from "@/components/NavAuth";
 import "./globals.css";
 
 // DatsMe pages scatter faint interest glyphs in the background
@@ -29,20 +30,23 @@ export default function RootLayout({
             Dats<span style={{ color: "var(--accent)" }}>Me</span>{" "}
             <span className="font-normal" style={{ color: "var(--muted)" }}>Pet Maker</span>
           </span>
-          <nav className="flex gap-5 text-sm font-medium">
-            <Link href="/" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
-              Home
-            </Link>
-            <Link href="/design" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
-              Design
-            </Link>
-            <Link href="/make" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
-              Describe
-            </Link>
-            <Link href="/house" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
-              Pet house
-            </Link>
-          </nav>
+          <div className="flex items-center gap-6">
+            <nav className="flex gap-5 text-sm font-medium">
+              <Link href="/" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
+                Home
+              </Link>
+              <Link href="/design" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
+                Design
+              </Link>
+              <Link href="/make" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
+                Describe
+              </Link>
+              <Link href="/house" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
+                Pet house
+              </Link>
+            </nav>
+            <NavAuth />
+          </div>
         </div>
         <div className="relative z-10 mx-auto max-w-4xl px-6 pb-40 pt-8">{children}</div>
       </body>
