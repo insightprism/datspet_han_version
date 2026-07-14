@@ -13,6 +13,7 @@ import {
   petZipUrl,
   getDatsmeSession,
   acceptPetToDatsme,
+  AcceptError,
   type JobStatus,
   type DatsmeSession,
 } from "@/lib/api";
@@ -37,13 +38,32 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
   // primary action becomes "Accept — send to my DatsMe" (costs credits);
   // Save-to-house stays as a free/local secondary action.
   const [datsme, setDatsme] = useState<DatsmeSession | null>(null);
+  // The full session (kept even when not launched) so a re-launch button has the
+  // signin_url. `datsme` above stays the "launched" gate for the Accept button.
+  const [session, setSession] = useState<DatsmeSession | null>(null);
   const [accepting, setAccepting] = useState(false);
   const [acceptMsg, setAcceptMsg] = useState("");
+  // Set when Accept fails with a 401 (launch token expired) — offer a re-launch.
+  const [needsRelaunch, setNeedsRelaunch] = useState(false);
 
   useEffect(() => setSaved(false), [job.id]);
   useEffect(() => {
-    getDatsmeSession().then((s) => setDatsme(s.launched ? s : null)).catch(() => setDatsme(null));
+    getDatsmeSession()
+      .then((s) => { setSession(s); setDatsme(s.launched ? s : null); })
+      .catch(() => { setSession(null); setDatsme(null); });
   }, []);
+
+  // Bounce through the front-door sign-in to refresh the launch token, returning
+  // to the design page (launched). The pet is a saved draft, so nothing is lost —
+  // the user Accepts once they're back with a fresh token.
+  function relaunch() {
+    if (!session?.signin_url) return;
+    // Save the draft first so it's definitely persisted before we navigate away.
+    keepPet(job.id).catch(() => {});
+    const origin = new URL(session.signin_url).origin;
+    window.location.href =
+      `${origin}/api/integrations/login-launch?activity=design_a_pet&return=/design`;
+  }
 
   async function save() {
     setSaveError("");
@@ -58,6 +78,7 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
   async function accept() {
     setSaveError("");
     setAcceptMsg("");
+    setNeedsRelaunch(false);
     setAccepting(true);
     try {
       const res = await acceptPetToDatsme(job.id);
@@ -68,8 +89,14 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
       // Transient failure — pet is queued and will arrive automatically.
       setAcceptMsg(res.message || "Your pet will arrive in DatsMe automatically.");
     } catch (e) {
-      // 402 credits / 409 house full / 401 relaunch — the design is preserved.
-      setSaveError(e instanceof Error ? e.message : "Could not send to DatsMe");
+      // 401 = the launch token expired → offer a one-click re-launch instead of a
+      // dead-end error. 402 credits / 409 house full surface their message.
+      if (e instanceof AcceptError && e.status === 401) {
+        setNeedsRelaunch(true);
+        setSaveError("Your DatsMe session expired — re-launch to send this pet.");
+      } else {
+        setSaveError(e instanceof Error ? e.message : "Could not send to DatsMe");
+      }
     } finally {
       setAccepting(false);
     }
@@ -176,6 +203,15 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
             </button>
           </div>
           {saveError && <div className="mono mt-2 text-sm" style={{ color: "var(--accent)" }}>{saveError}</div>}
+          {needsRelaunch && session?.signin_url && (
+            <button
+              onClick={relaunch}
+              className="mono mt-2 rounded-lg border px-4 py-2.5 text-sm font-bold"
+              style={{ background: "linear-gradient(135deg, #a78bfa, #7c3aed)", color: "var(--heading)", borderColor: "transparent" }}
+            >
+              🔄 Re-launch to Accept →
+            </button>
+          )}
           {acceptMsg && <div className="mono mt-2 text-sm" style={{ color: "var(--green)" }}>{acceptMsg}</div>}
           {/* The freshly generated pet, alive on this page via the engine. */}
           <PetStage pets={[{ id: job.id, display_name: job.name }]} />

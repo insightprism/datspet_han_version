@@ -342,6 +342,16 @@ export interface AcceptResult {
   message?: string;
 }
 
+// Carries the HTTP status so the UI can act on it — notably 401, which means the
+// launch token expired and the user needs to re-launch before Accept can authorize.
+export class AcceptError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 export async function acceptPetToDatsme(petId: string): Promise<AcceptResult> {
   const r = await fetch(`${API_URL}/api/datsme/accept`, {
     method: "POST",
@@ -358,7 +368,7 @@ export async function acceptPetToDatsme(petId: string): Promise<AcceptResult> {
     const msg = typeof d === "string" ? d
       : d && typeof d === "object" ? (d.detail || d.error || JSON.stringify(d))
       : "Could not send this pet to DatsMe";
-    throw new Error(msg);
+    throw new AcceptError(msg, r.status);
   }
   return data;
 }
