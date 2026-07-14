@@ -1,25 +1,37 @@
 "use client";
 
 /**
- * General designer — the power-user / long-tail path (SPEC_PET_DESIGNER_PLATFORM
- * §3.3): redesign ANY house pet with color/accessories/strength/poses, no theming,
- * everything exposed. This is today's `/design` page, unchanged in behavior — the
- * form/preview/pose machinery moved verbatim into the shared <PetDesigner> (§8.1);
- * this page owns only its header + nav chrome and drops the designer in.
+ * General designer (SPEC_PET_DESIGNER_PLATFORM §3.3) — redesign from a CURATED
+ * BASE, in one flat list across every animal. A base pet is a purposely-chosen,
+ * clean starting point (from pet_factory/animal_catalog), NOT whatever has piled
+ * up in your house — so the "Pet to redesign" list is the curated base set, not
+ * /api/pets. The themed pages (Cat/Dog World) show one animal's bases; General
+ * shows them all together.
  */
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import PetDesigner from "@/components/PetDesigner";
+import PetDesigner, { type CatalogBaseOption } from "@/components/PetDesigner";
+import { fetchCatalog, catalogBaseOptions } from "@/lib/api";
 
 export default function GeneralDesignPage() {
+  const [options, setOptions] = useState<CatalogBaseOption[] | null>(null);
+  const [loadError, setLoadError] = useState("");
+
+  useEffect(() => {
+    fetchCatalog()
+      .then((animals) => setOptions(catalogBaseOptions(animals)))
+      .catch(() => setLoadError("Could not load the base pets."));
+  }, []);
+
   return (
     <main>
       <h1 className="mb-1 text-3xl" style={{ color: "var(--heading)" }}>
         Design your own
       </h1>
       <p className="mb-4 max-w-2xl text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
-        Start from a pet in the house, pick a new color and some accessories, and it gets
-        redrawn to your design — same pet, new look. The prompt is composed for you.
+        Pick a base pet, choose a new color and some accessories, and it gets redrawn to your
+        design — same shape, new look. The prompt is composed for you.
       </p>
 
       <div className="mb-6 flex flex-wrap gap-3">
@@ -46,7 +58,20 @@ export default function GeneralDesignPage() {
         </Link>
       </div>
 
-      <PetDesigner />
+      {loadError && <div className="mono mb-4 text-sm" style={{ color: "var(--orange)" }}>{loadError}</div>}
+
+      {options && options.length > 0 ? (
+        <PetDesigner base={{ kind: "catalog", options }} />
+      ) : options && options.length === 0 ? (
+        <div className="card p-5">
+          <p className="text-sm" style={{ color: "var(--muted)" }}>
+            No curated base pets yet. Add some to the catalog (pet_factory/animal_catalog), or
+            {" "}<Link href="/make" className="underline" style={{ color: "var(--accent)" }}>describe a pet from scratch</Link>.
+          </p>
+        </div>
+      ) : (
+        !loadError && <div className="mono text-sm" style={{ color: "var(--faint)" }}>Loading base pets…</div>
+      )}
     </main>
   );
 }

@@ -73,8 +73,7 @@ export default function CatWorldPage() {
           <PetDesigner
             base={{
               kind: "catalog",
-              animal: animal.key,
-              breeds: animal.breeds,
+              options: animal.breeds.map((b) => ({ ...b, animal: animal.key, animalLabel: animal.label })),
               motionProfile: animal.motion_profile,
             }}
           />

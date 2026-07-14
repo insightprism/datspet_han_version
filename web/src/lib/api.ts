@@ -124,6 +124,27 @@ export function catalogBaseImageUrl(animal: string, breed: string): string {
   return `${API_URL}/api/catalog/${encodeURIComponent(animal)}/${encodeURIComponent(breed)}/base.png`;
 }
 
+// A flat list of every curated base across animals — each breed carries its
+// animal (key + label). Drives the General designer's "Pet to redesign" list
+// (all curated bases, no house-pet clutter) and, for one animal, a themed page.
+export interface CatalogBaseOptionData extends CatalogBreed {
+  animal: string;
+  animalLabel: string;
+}
+export function catalogBaseOptions(
+  animals: CatalogAnimal[],
+  onlyAnimal?: string,
+): CatalogBaseOptionData[] {
+  const out: CatalogBaseOptionData[] = [];
+  for (const a of animals) {
+    if (onlyAnimal && a.key !== onlyAnimal) continue;
+    for (const b of a.breeds) {
+      out.push({ ...b, animal: a.key, animalLabel: a.label });
+    }
+  }
+  return out;
+}
+
 // The portrait for an adoptable sample (§4.4). The catalog returns a relative
 // preview_url; this prefixes it with the API host.
 export function catalogSamplePreviewUrl(previewUrl: string): string {

@@ -96,11 +96,21 @@ function priceHint(totalPoses: number, ent: Entitlement | null): string | null {
   return `${credits} credits`;
 }
 
-// The base source (§3.1). "house" = redesign a house pet (General); "catalog" =
-// a curated catalog breed as the img2img source (themed pages).
+// A catalog base option: a breed plus which animal it belongs to (so a flat
+// cross-animal list on the General page carries the animal per entry, and a
+// themed page's single-animal list just repeats its own animal).
+export interface CatalogBaseOption extends CatalogBreed {
+  animal: string;         // the animal key this breed belongs to
+  animalLabel?: string;   // for grouping/labeling in a flat list
+}
+
+// The base source (§3.1). "house" = redesign a house pet; "catalog" = curated
+// catalog bases as the img2img source. Themed pages pass one animal's breeds;
+// the General page passes ALL animals' bases flattened (each option carries its
+// own animal). Either way the SELECTED option's animal drives the build.
 export type DesignerBase =
   | { kind: "house" }
-  | { kind: "catalog"; animal: string; breeds: CatalogBreed[]; motionProfile: string | null };
+  | { kind: "catalog"; options: CatalogBaseOption[]; motionProfile?: string | null };
 
 interface Props {
   base?: DesignerBase;
@@ -110,11 +120,14 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
   // --- house base state (General) ---
   const [housePets, setHousePets] = useState<PetSummary[]>([]);
   const [basePetId, setBasePetId] = useState<string>("");
-  // --- catalog base state (themed) ---
-  const catalogBreeds = base.kind === "catalog" ? base.breeds : [];
+  // --- catalog base state (themed page: one animal's breeds; General: all
+  //     animals' bases flattened). The selected option carries its own animal. ---
+  const catalogOptions = base.kind === "catalog" ? base.options : [];
   const [breedKey, setBreedKey] = useState<string>(
-    base.kind === "catalog" ? (base.breeds[0]?.key ?? "") : "",
+    base.kind === "catalog" ? (base.options[0]?.key ?? "") : "",
   );
+  const currentOption = catalogOptions.find((o) => o.key === breedKey) ?? null;
+  const currentAnimal = currentOption?.animal ?? "";
   // --- shared design controls ---
   const [color, setColor] = useState<string>("");          // "" = keep natural
   const [accessories, setAccessories] = useState<string[]>([]);
@@ -146,7 +159,7 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
   const basePetName = housePets.find((p) => p.id === basePetId)?.display_name;
   const catalogProfile =
     base.kind === "catalog"
-      ? (catalogBreeds.find((b) => b.key === breedKey)?.motion_profile ?? base.motionProfile)
+      ? (currentOption?.motion_profile ?? base.motionProfile ?? null)
       : null;
   useEffect(() => {
     const menuKey = base.kind === "catalog" ? catalogProfile : basePetName;
@@ -223,7 +236,7 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
   // catalog diverges in what the request carries. Everything else is shared.
   function appendBaseFields(fd: FormData) {
     if (base.kind === "catalog") {
-      fd.append("catalog_animal", base.animal);
+      fd.append("catalog_animal", currentAnimal);
       fd.append("catalog_breed", breedKey);
     } else {
       fd.append("base_pet_id", basePetId);
@@ -316,10 +329,10 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
   // The base thumbnail to show as "original" — a house pet's stored sprite, or
   // the catalog breed's curated base.png.
   const baseThumb =
-    base.kind === "catalog" && breedKey ? (
+    base.kind === "catalog" && breedKey && currentAnimal ? (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={catalogBaseImageUrl(base.animal, breedKey)}
+        src={catalogBaseImageUrl(currentAnimal, breedKey)}
         alt={`${breedKey} base`}
         style={{ width: 160, height: 160, objectFit: "contain" }}
       />
@@ -347,28 +360,37 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
                   </label>
                   <div className="mb-5 flex items-center gap-4">
                     <div className="flex flex-wrap gap-2">
-                      {catalogBreeds.map((b) => (
-                        <button
-                          key={b.key}
-                          type="button"
-                          onClick={() => setBreedKey(b.key)}
-                          disabled={busy}
-                          className="rounded-lg border px-3 py-1.5 text-sm font-medium transition disabled:opacity-45"
-                          style={
-                            breedKey === b.key
-                              ? { background: "rgba(99,102,241,0.15)", color: "var(--heading)", borderColor: "var(--accent)" }
-                              : { background: "#151515", color: "var(--muted)", borderColor: "var(--line)" }
-                          }
-                        >
-                          {b.label}
-                        </button>
-                      ))}
+                      {catalogOptions.map((o) => {
+                        // Show the animal in the label only when the list spans
+                        // multiple animals (the General "all bases" case).
+                        const multiAnimal =
+                          new Set(catalogOptions.map((x) => x.animal)).size > 1;
+                        const label = multiAnimal && o.animalLabel
+                          ? `${o.animalLabel} · ${o.label}`
+                          : o.label;
+                        return (
+                          <button
+                            key={`${o.animal}/${o.key}`}
+                            type="button"
+                            onClick={() => setBreedKey(o.key)}
+                            disabled={busy}
+                            className="rounded-lg border px-3 py-1.5 text-sm font-medium transition disabled:opacity-45"
+                            style={
+                              breedKey === o.key
+                                ? { background: "rgba(99,102,241,0.15)", color: "var(--heading)", borderColor: "var(--accent)" }
+                                : { background: "#151515", color: "var(--muted)", borderColor: "var(--line)" }
+                            }
+                          >
+                            {label}
+                          </button>
+                        );
+                      })}
                     </div>
-                    {breedKey && (
+                    {breedKey && currentAnimal && (
                       <div className="card shrink-0 p-2">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={catalogBaseImageUrl(base.animal, breedKey)}
+                          src={catalogBaseImageUrl(currentAnimal, breedKey)}
                           alt={`${breedKey} base`}
                           style={{ width: 64, height: 64, objectFit: "contain" }}
                         />
