@@ -15,8 +15,12 @@
 // dropped, and getDatsmeSession() would return launched:false (no Accept
 // button). Keep this in sync with .env.local, DATSPET_FRONTEND_URL, and
 // DATSPET_PUBLIC_URL — all must use the same hostname.
-export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:19954";
+// Empty (or unset-in-dev) → relative same-origin calls (`/api/...`), which the
+// next.config dev proxy forwards to the backend. This keeps the launch cookie
+// first-party so Firefox stores it (a cross-origin Secure cookie over plain
+// http://localhost is dropped by Firefox). In prod the static export sets
+// NEXT_PUBLIC_API_URL to the same-origin public host (nginx serves /api there).
+export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
 
 export interface JobStatus {
   id: string;
