@@ -41,16 +41,22 @@ export interface PetSummary {
 
 export async function generatePet(form: FormData): Promise<{ job_id: string }> {
   const r = await fetch(`${API_URL}/api/generate`, { method: "POST", body: form });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.detail || data.error || "Server error");
-  return data;
+  // Check status before parsing: a non-JSON error body (proxy HTML, empty 502)
+  // must surface the real failure, not an opaque JSON.parse error.
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.detail || data.error || "Server error");
+  }
+  return r.json();
 }
 
 export async function getJob(jobId: string): Promise<JobStatus> {
   const r = await fetch(`${API_URL}/api/job/${encodeURIComponent(jobId)}`);
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.detail || "Job not found");
-  return data;
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.detail || "Job not found");
+  }
+  return r.json();
 }
 
 export async function listPets(): Promise<PetSummary[]> {
@@ -124,20 +130,20 @@ export function catalogBaseImageUrl(animal: string, breed: string): string {
   return `${API_URL}/api/catalog/${encodeURIComponent(animal)}/${encodeURIComponent(breed)}/base.png`;
 }
 
+// A curated base option: one breed carrying the animal (key + label) it belongs
+// to, so a flat cross-animal list stays self-describing. The single definition
+// consumed by both the API helper below and the PetDesigner component.
+export interface CatalogBaseOption extends CatalogBreed {
+  animal: string;         // the animal key this breed belongs to
+  animalLabel?: string;   // for grouping/labeling in a flat list
+}
+
 // A flat list of every curated base across animals — each breed carries its
 // animal (key + label). Drives the General designer's "Pet to redesign" list
-// (all curated bases, no house-pet clutter) and, for one animal, a themed page.
-export interface CatalogBaseOptionData extends CatalogBreed {
-  animal: string;
-  animalLabel: string;
-}
-export function catalogBaseOptions(
-  animals: CatalogAnimal[],
-  onlyAnimal?: string,
-): CatalogBaseOptionData[] {
-  const out: CatalogBaseOptionData[] = [];
+// (all curated bases, no house-pet clutter).
+export function catalogBaseOptions(animals: CatalogAnimal[]): CatalogBaseOption[] {
+  const out: CatalogBaseOption[] = [];
   for (const a of animals) {
-    if (onlyAnimal && a.key !== onlyAnimal) continue;
     for (const b of a.breeds) {
       out.push({ ...b, animal: a.key, animalLabel: a.label });
     }
@@ -279,9 +285,15 @@ export const motionAdmin = {
 
 export async function previewDesign(form: FormData): Promise<{ preview_id: string }> {
   const r = await fetch(`${API_URL}/api/preview`, { method: "POST", body: form });
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.detail || "Preview failed");
-  return data;
+  // Read the body defensively: a non-JSON response (an HTML error page from a
+  // proxy, an empty body, a gateway 502) must surface as the real failure, not
+  // as an opaque "JSON.parse: unexpected character" from parsing before we've
+  // checked the status. Mirrors the adminFetch/keepPet pattern elsewhere here.
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.detail || `Preview failed (${r.status})`);
+  }
+  return r.json();
 }
 
 export function previewImageUrl(previewId: string): string {

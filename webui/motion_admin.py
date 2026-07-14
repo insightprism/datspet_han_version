@@ -57,16 +57,27 @@ def _require_writable() -> None:
 # Catalog-pin delete guard (§6). A profile still pinned by a catalog entry can't
 # be deleted (it would orphan the pin + red the catalog guard test).
 # ---------------------------------------------------------------------------
-def _catalog_pins_for(key: str) -> list[str]:
-    """Catalog references (animal or animal/breed) that pin this profile key."""
-    refs: list[str] = []
+def _catalog_pin_map() -> dict[str, list[str]]:
+    """Map every pinned motion-profile key → the catalog references (animal or
+    animal/breed) that pin it, in ONE catalog walk. The list endpoint uses this so
+    it doesn't re-walk the whole catalog once per profile (§6)."""
+    pins: dict[str, set[str]] = {}
     for a in animal_catalog_mod.list_animals():
-        if a.get("motion_profile") == key:
-            refs.append(a["key"])
+        akey = a["key"]
+        amp = a.get("motion_profile")
+        if amp:
+            pins.setdefault(amp, set()).add(akey)
         for b in a.get("breeds", []):
-            if animal_catalog_mod.resolved_motion_profile(a["key"], b["key"]) == key:
-                refs.append(f"{a['key']}/{b['key']}")
-    return sorted(set(refs))
+            resolved = animal_catalog_mod.resolved_motion_profile(akey, b["key"])
+            if resolved:
+                pins.setdefault(resolved, set()).add(f"{akey}/{b['key']}")
+    return {k: sorted(v) for k, v in pins.items()}
+
+
+def _catalog_pins_for(key: str) -> list[str]:
+    """Catalog references that pin a single profile key (the delete-guard path,
+    which needs just one key). The list endpoint uses _catalog_pin_map instead."""
+    return _catalog_pin_map().get(key, [])
 
 
 def _audit(request: Request, op: str, key: str) -> None:
@@ -87,8 +98,9 @@ class DuplicateBody(BaseModel):
     new_label: str
 
 
-def _summary(entry: dict, prof) -> dict:
-    """List-pane summary for one profile."""
+def _summary(entry: dict, prof, *, default_key: str, pinned_by: list[str]) -> dict:
+    """List-pane summary for one profile. `default_key` and `pinned_by` are passed
+    in (computed once by the caller) so the list endpoint stays O(N), not O(N²)."""
     return {
         "key": entry["key"],
         "label": entry.get("label", entry["key"]),
@@ -96,8 +108,8 @@ def _summary(entry: dict, prof) -> dict:
         "movement_class": prof.movement_class,
         "enabled_poses": prof.enabled_poses(),
         "keyword_count": len(prof.keywords),
-        "is_default": entry["key"] == mp_admin.load_registry().get("default"),
-        "pinned_by": _catalog_pins_for(entry["key"]),
+        "is_default": entry["key"] == default_key,
+        "pinned_by": pinned_by,
     }
 
 
@@ -108,12 +120,18 @@ def _summary(entry: dict, prof) -> dict:
 def list_profiles():
     """Registry + a summary of every profile (drives the list pane)."""
     registry = mp_admin.load_registry()
+    default_key = registry.get("default")
+    pin_map = _catalog_pin_map()          # one catalog walk for the whole list
     profiles = []
     for entry in registry.get("profiles", []):
         prof = mp.load_motion_profile(entry["key"])
-        profiles.append(_summary(entry, prof))
+        profiles.append(_summary(
+            entry, prof,
+            default_key=default_key,
+            pinned_by=pin_map.get(entry["key"], []),
+        ))
     return {
-        "default": registry.get("default"),
+        "default": default_key,
         "writable": _writable(),
         "profiles": sorted(profiles, key=lambda p: p["key"]),
     }

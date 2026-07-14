@@ -11,11 +11,12 @@
  * theme/chrome. A page renders its own header/background and drops <PetDesigner>
  * in. The one seam a themed page needs is the BASE SOURCE:
  *
- *   - base={{ kind: "house" }}   (default) — General: redesign any house pet,
- *     species + pose menu keyed off the selected pet (today's behavior, verbatim).
- *   - base={{ kind: "catalog", animal, breeds, motionProfile }} — themed: a
- *     curated catalog breed is the img2img source (§4.3); the base image shows
- *     instantly and the pinned motion_profile drives the pose menu + build (§4.2).
+ *   - base={{ kind: "house" }}   (default) — redesign a house pet; species +
+ *     pose menu keyed off the selected pet (today's behavior, verbatim).
+ *   - base={{ kind: "catalog", options, motionProfile }} — a curated catalog
+ *     breed is the img2img source (§4.3); the base image shows instantly and the
+ *     pinned motion_profile drives the pose menu + build (§4.2). Themed pages pass
+ *     one animal's options; the General page passes all animals' bases flattened.
  *
  * Everything downstream of the base pick (color/accessory/strength/pose/preview/
  * submit) is identical for both sources — that identity is the whole point.
@@ -26,7 +27,7 @@ import Link from "next/link";
 import {
   listPets, previewDesign, previewImageUrl, fetchMotions,
   catalogBaseImageUrl, fetchEntitlement,
-  type PetSummary, type MotionMenu, type CatalogBreed, type Entitlement,
+  type PetSummary, type MotionMenu, type CatalogBaseOption, type Entitlement,
 } from "@/lib/api";
 import { usePetJob } from "@/hooks/usePetJob";
 import PetJobResult from "@/components/PetJobResult";
@@ -96,16 +97,8 @@ function priceHint(totalPoses: number, ent: Entitlement | null): string | null {
   return `${credits} credits`;
 }
 
-// A catalog base option: a breed plus which animal it belongs to (so a flat
-// cross-animal list on the General page carries the animal per entry, and a
-// themed page's single-animal list just repeats its own animal).
-export interface CatalogBaseOption extends CatalogBreed {
-  animal: string;         // the animal key this breed belongs to
-  animalLabel?: string;   // for grouping/labeling in a flat list
-}
-
 // The base source (§3.1). "house" = redesign a house pet; "catalog" = curated
-// catalog bases as the img2img source. Themed pages pass one animal's breeds;
+// catalog bases as the img2img source. Themed pages pass one animal's options;
 // the General page passes ALL animals' bases flattened (each option carries its
 // own animal). Either way the SELECTED option's animal drives the build.
 export type DesignerBase =
@@ -134,7 +127,6 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
   // Breeds available for the chosen species.
   const breedsForSpecies = catalogOptions.filter((o) => o.animal === speciesKey);
   const [breedKey, setBreedKey] = useState<string>(catalogOptions[0]?.key ?? "");
-  const currentAnimal = speciesKey;
   const currentOption = breedsForSpecies.find((o) => o.key === breedKey) ?? null;
 
   // Selecting a species resets the breed to that species' first breed (so the
@@ -252,7 +244,7 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
   // catalog diverges in what the request carries. Everything else is shared.
   function appendBaseFields(fd: FormData) {
     if (base.kind === "catalog") {
-      fd.append("catalog_animal", currentAnimal);
+      fd.append("catalog_animal", speciesKey);
       fd.append("catalog_breed", breedKey);
     } else {
       fd.append("base_pet_id", basePetId);
@@ -345,10 +337,10 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
   // The base thumbnail to show as "original" — a house pet's stored sprite, or
   // the catalog breed's curated base.png.
   const baseThumb =
-    base.kind === "catalog" && breedKey && currentAnimal ? (
+    base.kind === "catalog" && breedKey && speciesKey ? (
       // eslint-disable-next-line @next/next/no-img-element
       <img
-        src={catalogBaseImageUrl(currentAnimal, breedKey)}
+        src={catalogBaseImageUrl(speciesKey, breedKey)}
         alt={`${breedKey} base`}
         style={{ width: 160, height: 160, objectFit: "contain" }}
       />
@@ -404,11 +396,11 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
                         ))}
                       </select>
                     </div>
-                    {breedKey && currentAnimal && (
+                    {breedKey && speciesKey && (
                       <div className="card shrink-0 p-2">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
-                          src={catalogBaseImageUrl(currentAnimal, breedKey)}
+                          src={catalogBaseImageUrl(speciesKey, breedKey)}
                           alt={`${breedKey} base`}
                           style={{ width: 64, height: 64, objectFit: "contain" }}
                         />

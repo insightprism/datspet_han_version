@@ -11,8 +11,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import PetDesigner, { type CatalogBaseOption } from "@/components/PetDesigner";
-import { fetchCatalog, catalogBaseOptions } from "@/lib/api";
+import PetDesigner from "@/components/PetDesigner";
+import { fetchCatalog, catalogBaseOptions, type CatalogBaseOption } from "@/lib/api";
 
 export default function GeneralDesignPage() {
   const [options, setOptions] = useState<CatalogBaseOption[] | null>(null);
