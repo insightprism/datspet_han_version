@@ -343,6 +343,27 @@ def resolve_launch_capabilities(request: Request) -> list[str]:
     return list(ctx.capabilities)
 
 
+def resolve_launch_display_name(request: Request) -> Optional[str]:
+    """The launched user's human-readable name (the verified `nm` claim), or
+    None for standalone / no-name tokens. This is the SAME source the session
+    endpoint hands the frontend as "who is logged in" (see the session route's
+    display_name), so the pool dashboard shows the name a human recognizes.
+
+    Re-verifies the JWT like the other resolve_launch_* helpers rather than
+    trusting the cookie blob — a display name shown on an internal dashboard is
+    low-stakes, but resolving it the one trusted way keeps this consistent with
+    identity/capability resolution and avoids reading an unverified claim."""
+    cookie = _read_launch_cookie(request)
+    if cookie is None:
+        return None
+    try:
+        ctx = verify_launch_token(cookie["token"], _hmac_secret())
+    except (LaunchError, RuntimeError):
+        return None
+    nm = ctx.raw_claims.get("nm")
+    return nm if isinstance(nm, str) and nm.strip() else None
+
+
 # ---------------------------------------------------------------------------
 # Pool attribution labels — advisory "requested by" metadata sent with each
 # pool job so the pool dashboard can show who/what asked for it. This is the
@@ -375,19 +396,31 @@ def classify_device(user_agent: Optional[str]) -> str:
 
 
 def pool_labels(request: Optional[Request], owner: Optional[str]) -> dict[str, str]:
-    """Build the flat {user, device} label dict for a pool submit from the
-    current request + resolved launch identity.
+    """Build the flat {user, user_id, device} label dict for a pool submit from
+    the current request + resolved launch identity.
 
-      user   — the verified DatsMe user_id (`owner`), or "anonymous" when
-               standalone/unauthenticated. It's a stable id, safe to display on
-               an internal dashboard (never a secret/token).
-      device — classify_device() of the request's User-Agent. Omitted (not sent)
-               when there's no request context (background/server submit) — labels
-               are additive, so a missing key is fine.
+      user    — the HUMAN-READABLE name a person recognizes on the dashboard: the
+                verified `nm` display-name claim (same source the session endpoint
+                reports as "who is logged in"), falling back to the user_id when no
+                name is on the token, and to "anonymous" when standalone. Never
+                empty.
+      user_id — the verified DatsMe user_id, kept alongside for unambiguous lookup
+                (the readable name isn't guaranteed unique). Sent only when there
+                actually is a launched id — omitted for standalone/anonymous.
+      device  — classify_device() of the request's User-Agent. Omitted (not sent)
+                when there's no request context (background/server submit) — labels
+                are additive, so a missing key is fine.
 
     Values are clamped to < 64 chars to honor the pool's string→string label
     contract. Returns a plain dict; the caller merges it into the submit body."""
-    labels: dict[str, str] = {"user": (owner or "anonymous")[:63]}
+    display_name = resolve_launch_display_name(request) if request is not None else None
+    # user = readable name > user_id > "anonymous"; never blank.
+    user = display_name or owner or "anonymous"
+    labels: dict[str, str] = {"user": user[:63]}
+    # Keep the id for unambiguous lookup, but only when it adds signal — i.e. a
+    # real launched id that differs from what we already put in `user`.
+    if owner and owner != user:
+        labels["user_id"] = owner[:63]
     if request is not None:
         labels["device"] = classify_device(request.headers.get("user-agent"))[:63]
     return labels
