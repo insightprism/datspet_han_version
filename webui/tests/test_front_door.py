@@ -95,3 +95,58 @@ def test_require_admin_launch_rejects_without_cookie(dpp_env):
     with pytest.raises(HTTPException) as ei:
         di.require_admin_launch(req)
     assert ei.value.status_code == 401
+
+
+# --- /launch return-redirect + adm-cookie branches, end to end (Item 5) ---
+def _launch_token(secret, *, adm=False, ttl=1800):
+    """A signed launch token in DatsMe's shape; optionally adm=true. The SDK
+    testkit has no adm param, so add the claim and re-sign with the same secret.
+    Uses python-jose (the SDK's JWT lib), not PyJWT."""
+    from jose import jwt  # same lib the SDK signs/verifies with
+    from datsme_partner_sdk.testkit import make_test_launch_token
+    tok = make_test_launch_token(
+        hmac_secret=secret, user_id="user-A", activity_id="design_a_pet",
+        partner_slug="datspet", capabilities=["pets.write"], ttl_seconds=ttl)
+    if not adm:
+        return tok
+    claims = jwt.decode(tok, secret, algorithms=["HS256"])
+    claims["adm"] = True
+    return jwt.encode(claims, secret, algorithm="HS256")
+
+
+def test_launch_honors_return_and_no_admin_cookie_for_normal_token(client, dpp_env):
+    # A normal launch with ?return=/house lands on {frontend}/house and does NOT
+    # set the admin cookie (only an adm=true token does).
+    tok = _launch_token(dpp_env["secret"])
+    r = client.get(f"/launch?token={tok}&return=/house", follow_redirects=False)
+    assert r.status_code == 303, r.text
+    assert r.headers["location"].endswith("/house")
+    cookies = " ".join(
+        r.headers.get_list("set-cookie") if hasattr(r.headers, "get_list")
+        else [r.headers.get("set-cookie", "")])
+    assert "datsme_launch=" in cookies
+    assert "datspet_admin=" not in cookies
+
+
+def test_launch_adm_token_sets_admin_cookie_and_honors_return(client, dpp_env):
+    # An adm=true token with ?return=/admin/motions sets BOTH cookies and lands
+    # on the admin path.
+    tok = _launch_token(dpp_env["secret"], adm=True)
+    r = client.get(f"/launch?token={tok}&return=/admin/motions", follow_redirects=False)
+    assert r.status_code == 303, r.text
+    assert r.headers["location"].endswith("/admin/motions")
+    cookies = " ".join(
+        r.headers.get_list("set-cookie") if hasattr(r.headers, "get_list")
+        else [r.headers.get("set-cookie", "")])
+    assert "datsme_launch=" in cookies
+    assert "datspet_admin=" in cookies
+
+
+def test_launch_rejects_offorigin_return_falls_back_to_default(client, dpp_env):
+    # A malicious return is ignored → the default /design?from=datsme, not the
+    # attacker path.
+    tok = _launch_token(dpp_env["secret"])
+    r = client.get(f"/launch?token={tok}&return=//evil.com", follow_redirects=False)
+    assert r.status_code == 303
+    assert "evil.com" not in r.headers["location"]
+    assert r.headers["location"].endswith("/design?from=datsme")

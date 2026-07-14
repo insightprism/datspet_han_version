@@ -170,6 +170,15 @@ GET /api/integrations/admin-launch?return=<path>
   partner-catalog registration; avoid it.)
 - The endpoint mints an admin launch **only** for a live `system_admin` session — the trust root is
   DatsMe's own login + role, unchanged.
+- **Consent gate — RESOLVED (Rev.2): admin-launch SKIPS the consent gate.** Because it reuses the
+  `design_a_pet` activity, a `system_admin` who never granted `pets.write` to DatsPet would
+  otherwise be detoured through the "Add a pet to your house" consent page en route to the *motion*
+  admin — a confusing, semantically-wrong prompt (the admin edits profile JSON; it never exercises
+  `pets.write`). So the admin wrapper passes **`skip_consent_gate=True`** to the shared helper
+  (`resolve_and_mint_launch` → `mint_launch_token`, both gained this param), which suppresses the
+  `consent_required` raise for the admin path only. The minted admin token simply doesn't carry
+  `pets.write` in its `cap` claim — correct, since the admin API doesn't use it. The user-facing
+  sign-in path (`login-launch`) never sets this and keeps the normal consent flow.
 
 ### 2.3 DatsPet verification (server-authoritative, every request)
 - `/launch` already honors a validated `return` path (SPEC_DATSPET_FRONT_DOOR §3.1) — the admin

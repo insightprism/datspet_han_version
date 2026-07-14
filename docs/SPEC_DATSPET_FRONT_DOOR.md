@@ -304,17 +304,23 @@ web server must be **restarted** to pick up the config change.
 5. **Host deploy + end-to-end** (§1.1–1.4 walked on staging, incl. a brand-new account
    through signup → verify → sign-in).
 
-Until 3–5 ship, the landing's Sign-in button targets an endpoint that 404s — ship 0–2 behind
-the existing pattern of "the button renders only when `signin_url` is non-null", and have the
-session endpoint return `signin_url: null` until a `DATSME_LOGIN_LAUNCH_READY=1` env (or
-simply deploy host-first; pick one — §9.1).
+**DEPLOY ORDERING IS A HARD CONSTRAINT (resolved — deploy the HOST first).** `signin_url` is
+non-null whenever DatsPet is integrated; there is **no host-readiness gate**. So if DatsPet's
+front door ships before `datsme_me`'s `login-launch` endpoint, the Sign-in button targets a URL
+that 404s. **Deploy `datsme_me` (host) first, then DatsPet.** The "button renders only when
+`signin_url` is non-null" guard protects the *standalone* case (no DatsMe host at all) — it does
+**not** protect against a *missing host endpoint* on an integrated instance. A
+`DATSME_LOGIN_LAUNCH_READY` flag was considered and rejected as needless: host-first ordering is
+simpler and has no failure window (§9.1).
 
 ---
 
 ## 9. Open questions for review
 
-1. **Rollout coupling** — deploy host-first (simplest: the button just works when it appears),
-   or gate `signin_url` behind an env flag so DatsPet can ship UI early?
+1. ~~**Rollout coupling**~~ — **RESOLVED (Rev.3): deploy the HOST first, no readiness flag.**
+   `signin_url` is always non-null when integrated (no host-readiness gate), so an integrated
+   DatsPet whose host lacks `login-launch` would 404 the Sign-in button. Host-first ordering is
+   simpler than an env flag and has no failure window. See §8.
 2. **Signup threading** — thread `?next=` through signup → verify-email so a brand-new user
    lands back on DatsPet automatically? (Contained DatsMe-web change; Rev.1 defers.)
 3. **Anonymous design on the public host** — the landing now gives a clear signed-in path;

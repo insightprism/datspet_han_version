@@ -85,8 +85,10 @@ export default function PublicLanding() {
         </p>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* State-driven hero actions. The sign-in button only renders when the
-              server handed us a signin_url (so it never targets a dead endpoint). */}
+          {/* State-driven hero actions. The sign-in button renders only when the
+              server handed us a signin_url — which gates the STANDALONE case (no
+              DatsMe host at all). It does NOT protect against a host that lacks the
+              login-launch endpoint: deploy the host FIRST (front-door §8). */}
           {integrated && launched ? (
             <>
               <Link href="/design" className={HERO_BTN} style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "var(--heading)" }}>
