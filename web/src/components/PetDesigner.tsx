@@ -120,14 +120,30 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
   // --- house base state (General) ---
   const [housePets, setHousePets] = useState<PetSummary[]>([]);
   const [basePetId, setBasePetId] = useState<string>("");
-  // --- catalog base state (themed page: one animal's breeds; General: all
-  //     animals' bases flattened). The selected option carries its own animal. ---
+  // --- catalog base state. Two cascading selectors: species (animal) then breed.
+  //     A themed page passes one animal; General passes all. Tracking the species
+  //     explicitly (not deriving it from the breed) keeps two species that share a
+  //     breed key distinct. ---
   const catalogOptions = base.kind === "catalog" ? base.options : [];
-  const [breedKey, setBreedKey] = useState<string>(
-    base.kind === "catalog" ? (base.options[0]?.key ?? "") : "",
-  );
-  const currentOption = catalogOptions.find((o) => o.key === breedKey) ?? null;
-  const currentAnimal = currentOption?.animal ?? "";
+  // Distinct species in the option list, in first-seen order (for the species dropdown).
+  const speciesList = catalogOptions.reduce<{ key: string; label: string }[]>((acc, o) => {
+    if (!acc.some((s) => s.key === o.animal)) acc.push({ key: o.animal, label: o.animalLabel ?? o.animal });
+    return acc;
+  }, []);
+  const [speciesKey, setSpeciesKey] = useState<string>(catalogOptions[0]?.animal ?? "");
+  // Breeds available for the chosen species.
+  const breedsForSpecies = catalogOptions.filter((o) => o.animal === speciesKey);
+  const [breedKey, setBreedKey] = useState<string>(catalogOptions[0]?.key ?? "");
+  const currentAnimal = speciesKey;
+  const currentOption = breedsForSpecies.find((o) => o.key === breedKey) ?? null;
+
+  // Selecting a species resets the breed to that species' first breed (so the
+  // breed dropdown never shows a breed from the wrong species).
+  function selectSpecies(sp: string) {
+    setSpeciesKey(sp);
+    const first = catalogOptions.find((o) => o.animal === sp);
+    if (first) setBreedKey(first.key);
+  }
   // --- shared design controls ---
   const [color, setColor] = useState<string>("");          // "" = keep natural
   const [accessories, setAccessories] = useState<string[]>([]);
@@ -356,35 +372,37 @@ export default function PetDesigner({ base = { kind: "house" } }: Props) {
               {base.kind === "catalog" ? (
                 <>
                   <label className="mono mb-1 block text-xs tracking-wide" style={{ color: "var(--muted)" }}>
-                    1. Breed
+                    1. Species &amp; breed
                   </label>
-                  <div className="mb-5 flex items-center gap-4">
+                  <div className="mb-5 flex flex-wrap items-center gap-4">
                     <div className="flex flex-wrap gap-2">
-                      {catalogOptions.map((o) => {
-                        // Show the animal in the label only when the list spans
-                        // multiple animals (the General "all bases" case).
-                        const multiAnimal =
-                          new Set(catalogOptions.map((x) => x.animal)).size > 1;
-                        const label = multiAnimal && o.animalLabel
-                          ? `${o.animalLabel} · ${o.label}`
-                          : o.label;
-                        return (
-                          <button
-                            key={`${o.animal}/${o.key}`}
-                            type="button"
-                            onClick={() => setBreedKey(o.key)}
-                            disabled={busy}
-                            className="rounded-lg border px-3 py-1.5 text-sm font-medium transition disabled:opacity-45"
-                            style={
-                              breedKey === o.key
-                                ? { background: "rgba(99,102,241,0.15)", color: "var(--heading)", borderColor: "var(--accent)" }
-                                : { background: "#151515", color: "var(--muted)", borderColor: "var(--line)" }
-                            }
-                          >
-                            {label}
-                          </button>
-                        );
-                      })}
+                      {/* Species dropdown — shown when the list spans >1 animal (General).
+                          A themed page has one species, so it's hidden there. */}
+                      {speciesList.length > 1 && (
+                        <select
+                          value={speciesKey}
+                          onChange={(e) => selectSpecies(e.target.value)}
+                          disabled={busy}
+                          className="rounded-lg px-3 py-2.5 text-[15px] outline-none"
+                          style={{ background: "#1c1c1c", border: "1px solid var(--line)", color: "var(--heading)" }}
+                        >
+                          {speciesList.map((s) => (
+                            <option key={s.key} value={s.key}>{s.label}</option>
+                          ))}
+                        </select>
+                      )}
+                      {/* Breed dropdown — the breeds for the chosen species. */}
+                      <select
+                        value={breedKey}
+                        onChange={(e) => setBreedKey(e.target.value)}
+                        disabled={busy}
+                        className="rounded-lg px-3 py-2.5 text-[15px] outline-none"
+                        style={{ background: "#1c1c1c", border: "1px solid var(--line)", color: "var(--heading)" }}
+                      >
+                        {breedsForSpecies.map((o) => (
+                          <option key={o.key} value={o.key}>{o.label}</option>
+                        ))}
+                      </select>
                     </div>
                     {breedKey && currentAnimal && (
                       <div className="card shrink-0 p-2">
