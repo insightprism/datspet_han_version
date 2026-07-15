@@ -32,11 +32,7 @@ def test_base_and_plus_defaults():
     assert base["max_poses"] == 2 and base["extra_pose_slots"] == 0
     assert base["price_per_extra_pose"] == 0
     plus = tiers.entitlement("plus")
-    # ⚠️ TESTING (2026-07-15): 10, not the launch value of 5 — the designer redesign
-    # needs every offerable pose reachable. REVERT BOTH this and tiers.json before
-    # launch; default_tier is "plus", so this is what every user gets, and at 50
-    # credits an extra pose a 10-pose pet charges 100 + 8x50 = 500.
-    assert plus["max_poses"] == 10 and plus["extra_pose_slots"] == 8
+    assert plus["max_poses"] == 5 and plus["extra_pose_slots"] == 3
     assert plus["price_per_extra_pose"] == 50
 
 
@@ -49,7 +45,7 @@ def test_launch_posture_default_is_plus():
     # THIS test, not an accidental regression.
     assert tiers.default_tier_key() == "plus"
     ent = tiers.resolve_entitlement([])           # standalone caller
-    assert ent["tier"] == "plus" and ent["max_poses"] == 10   # ⚠️ 5 at launch
+    assert ent["tier"] == "plus" and ent["max_poses"] == 5
     assert ent["price_per_extra_pose"] == 50
 
 

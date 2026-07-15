@@ -250,10 +250,11 @@ def test_server_clips_poses_over_cap(app_mod, monkeypatch):
     #
     # The cap is STUBBED to 5 rather than read from the launch default, the way the
     # base-cap test below already does. This test is about the clipping MECHANISM, and
-    # tying it to `default_tier`'s current number made it hostage to a config knob: when
-    # plus.max_poses moved to 10 for testing, a quadruped's 6 poses all fit and there
-    # was nothing left to clip — the test would have passed vacuously while proving
-    # nothing. A guard that goes quiet when the config moves is not a guard.
+    # tying it to `default_tier`'s current number made it hostage to a config knob: while
+    # plus.max_poses was temporarily 10 (2026-07-15 designer testing, since reverted), a
+    # quadruped's 6 poses all fit and there was nothing left to clip — the test would have
+    # passed vacuously while proving nothing. A guard that goes quiet when the config
+    # moves is not a guard, so it stays stubbed even now that the cap is back to 5.
     client, captured = _client_capturing_run(app_mod, monkeypatch)
     ref = _reference(client, app_mod, monkeypatch)
     monkeypatch.setattr(app_mod.tiers_mod, "resolve_entitlement",
