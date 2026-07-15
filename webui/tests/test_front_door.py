@@ -191,3 +191,49 @@ def test_session_display_name_from_verified_token_not_cookie_blob(client, dpp_en
                            "jti": "t", "capabilities": [], "display_name": "SpoofedName"})
     body = client.get("/api/datsme/session", cookies={"datsme_launch": tampered}).json()
     assert body["display_name"] == "RealName"    # from the token, not the blob
+
+
+# --- /design must survive the trip to prod (SPEC_PET_DESIGNER_FLOW §11) ---------
+# The tests above prove the BACKEND sends a launch to /design. Nothing proved anything
+# serves it — which is exactly why the gap below stayed green while /design became a
+# blank page in prod.
+#
+# The designer moved to /design/general and /design redirects. Under `next dev` that
+# redirect is server-side; in the STATIC EXPORT it is not. Verified by building it:
+# out/design.html is emitted, but its body is empty and the hop rides a
+# NEXT_REDIRECT flight payload with no meta-refresh — nginx serves a 200 blank page
+# and the redirect happens in JS, after a paint.
+#
+# So prod's redirect is an nginx exact-match location. These tests pin it, because it
+# is the only thing standing between a DPP launch and a blank screen, and it lives in
+# a file no other test reads.
+def _nginx_conf() -> str:
+    import pathlib
+    return (pathlib.Path(REPO) / "deploy" / "nginx-default.conf").read_text()
+
+
+def test_nginx_redirects_design_to_the_designer():
+    conf = _nginx_conf()
+    assert "location = /design {" in conf, \
+        "the DPP deep-link target has no nginx redirect — /design would serve a blank page"
+    # EXACT match, not a prefix: `location /design` would also swallow /design/general
+    # and loop. The `=` is the whole thing working.
+    assert "return 307 /design/general" in conf
+
+
+def test_nginx_design_redirect_keeps_the_query():
+    # ?from=datsme rides the launch. Nothing reads it today, but a redirect that
+    # quietly eats its query is a trap for whoever adds the first thing that does.
+    conf = _nginx_conf()
+    i = conf.index("location = /design {")
+    assert "$is_args$args" in conf[i:i + 200]
+
+
+def test_design_route_and_nginx_agree_on_the_target():
+    # Dev redirects in the Next route, prod redirects in nginx. Two halves of one
+    # behaviour, in two files — so they can drift, and dev would look fine while prod
+    # sent launches somewhere else. Pin that they name the same destination.
+    import pathlib
+    route = (pathlib.Path(REPO) / "web" / "src" / "app" / "design" / "page.tsx").read_text()
+    assert 'redirect("/design/general")' in route
+    assert "return 307 /design/general" in _nginx_conf()

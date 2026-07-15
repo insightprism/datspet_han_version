@@ -11,13 +11,27 @@ import { redirect } from "next/navigation";
  * landing with exactly one tile, and a chooser with one choice is a click that teaches
  * nothing. So it redirects.
  *
- * A SERVER-side redirect, not a client one: a launched user arrives with a cookie and a
- * `?from=datsme` marker, and bouncing them through a rendered page first would flash a
- * screen whose only purpose is to leave. The launch cookie is host-scoped, not
- * path-scoped, so it survives the hop (deploy spec §C.5).
+ * ── THIS FILE ONLY MATTERS IN DEV ──
  *
- * If themed worlds come back, the landing goes here. That is why this stays a route
- * rather than becoming a rewrite in next.config: the seam is worth keeping visible.
+ * An earlier version of this comment claimed it "deliberately chose a SERVER-side
+ * redirect, not a client one" because a rendered hop "would flash a screen whose only
+ * purpose is to leave." That was true under `next dev` and FALSE in prod — the only
+ * place it matters — and the export proves it: `out/design.html` IS emitted (6 KB), but
+ * its body is empty and the hop rides a `NEXT_REDIRECT;replace;/design/general;307`
+ * payload in the RSC flight data, with no meta-refresh. nginx would serve that as a
+ * plain 200: a blank page that redirects in JS, after a paint. Exactly the flash the
+ * comment congratulated itself on avoiding.
+ *
+ * So prod's redirect lives in nginx now — `location = /design { return 307 …; }` in
+ * `deploy/nginx-default.conf`. An exact-match location beats the static `try_files`
+ * prefix, so design.html is never served and the 307 is real, server-side, and works
+ * with JS off.
+ *
+ * This route is the DEV half of the same behaviour (`next dev` has no nginx in front
+ * of it, and serves this redirect server-side for real). Both halves must move
+ * together: if the target ever changes, change it HERE and in the nginx conf, or dev
+ * and prod will disagree about where /design goes — which is the failure mode that
+ * hid this one.
  */
 export default function DesignPage() {
   redirect("/design/general");
