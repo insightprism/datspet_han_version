@@ -81,9 +81,27 @@ def capture_workflow(monkeypatch, tmp_path):
 
 # ── the parity pin — this IS §5.1 ────────────────────────────────────────────
 
-def test_design_still_and_build_base_stage_are_byte_identical(capture_workflow, reference_png):
+@pytest.mark.parametrize("strength", [
+    0.1,      # below the floor  — clamps to 0.3
+    0.85,     # in range         — passes through
+    5.0,      # above the ceiling — clamps to 0.9
+])
+def test_design_still_and_build_base_stage_are_byte_identical(capture_workflow, reference_png,
+                                                              strength):
     """§5.1: for identical args + seed, the still the user approves and the base
-    sprite the build starts from are the SAME workflow, down to the byte."""
+    sprite the build starts from are the SAME workflow, down to the byte.
+
+    PARAMETRIZED OVER THE CLAMP BOUNDARIES, and that is the whole point. §5.1 names
+    `min(0.9, max(0.3, …))` as one of the five duplicated elements this pin guards — but
+    at 0.85 alone the clamp is INVISIBLE: 0.85 is in range for any plausible floor, so
+    both sides agree no matter what the floor says. Proven by mutation: re-fork
+    make_pet_zip's base stage with the floor drifted 0.3 → 0.4 and a single-strength
+    version of this test stays green while the two copies disagree — exactly the drift
+    the pin exists to catch, sailing past it.
+
+    0.1 and 5.0 are what make the clamp observable: they only agree if BOTH sides clamp
+    identically.
+    """
     # Short on purpose: make_pet_zip truncates `animal` at [:60] and
     # render_design_still does not, so parity only holds for the short species
     # phrase §7.3 requires the reference record to carry. A 240-char composed
@@ -91,13 +109,35 @@ def test_design_still_and_build_base_stage_are_byte_identical(capture_workflow, 
     animal = "purple corgi"
 
     still_wf = capture_workflow(
-        lambda: factory.render_design_still(animal, reference_png, 0.85, seed=FIXED_SEED)
+        lambda: factory.render_design_still(animal, reference_png, strength, seed=FIXED_SEED)
     )
     build_wf = capture_workflow(
-        lambda: factory.make_pet_zip(animal, reference_image=reference_png, remix_strength=0.85)
+        lambda: factory.make_pet_zip(animal, reference_image=reference_png,
+                                     remix_strength=strength)
     )
 
     assert still_wf == build_wf
+
+
+@pytest.mark.parametrize("strength,expected", [
+    (0.1, 0.3),
+    (0.85, 0.85),
+    (5.0, 0.9),
+])
+def test_build_base_stage_clamps_strength_too(capture_workflow, reference_png,
+                                              strength, expected):
+    """The clamp, asserted through make_pet_zip in its own right.
+
+    test_strength_is_clamped_to_the_calibrated_range drives render_design_still ONLY, so
+    a make_pet_zip that stopped clamping would have gone unnoticed by it. Parity above
+    would catch a DIVERGENCE between the two, but not both drifting together — this
+    pins the absolute value on the build side.
+    """
+    wf = capture_workflow(
+        lambda: factory.make_pet_zip(animal := "corgi", reference_image=reference_png,
+                                     remix_strength=strength)
+    )
+    assert wf["9"]["inputs"]["denoise"] == expected
 
 
 def test_parity_holds_for_the_text_branch_too(capture_workflow):

@@ -74,6 +74,22 @@ export interface DesignFlowState {
    */
   designConfirmed: boolean;
 
+  /**
+   * The user gave up on the preview and chose to go on without it (§5.2).
+   *
+   * Preview is UNCONDITIONAL, which took away the bypass the old optional preview
+   * gave for free. Without this, a persistently failing preview — the pool down, the
+   * 180 s timeout — hard-blocks the flow at step 2 with no way forward: the exact
+   * dead end §5.2 exists to prevent. Retry alone does not help when retry is what
+   * keeps failing.
+   *
+   * It only appears after a failure (see previewFailed) and is cleared the moment a
+   * preview lands or the design changes — it is an escape hatch, not a mode. Building
+   * on it animates the ARCHETYPE, so the user gets an UNDESIGNED pet; the UI has to
+   * say that plainly rather than quietly ship something they did not ask for.
+   */
+  previewFailureDismissed: boolean;
+
   /** Step 4. */
   selectedPoses: string[];
   poseMenu: string[];
@@ -104,6 +120,7 @@ export function initialState(strength: number): DesignFlowState {
     reference: null, referenceBusy: false, referenceError: null, baseConfirmed: false,
     color: "", accessories: [], bodyShape: "", extra: "", strength,
     preview: null, previewBusy: false, previewError: null, designConfirmed: false,
+    previewFailureDismissed: false,
     selectedPoses: [], poseMenu: [], poseNotice: null,
     name: "", expandedOverride: null, seq: 0,
   };
@@ -126,6 +143,7 @@ export type DesignFlowAction =
   | { type: "previewRequested" }
   | { type: "previewFailed"; seq: number; message: string }
   | { type: "previewLanded"; seq: number; preview: PetReference }
+  | { type: "previewFailureDismissed" }
   | { type: "poseMenuLoaded"; menu: string[]; maxPoses: number }
   | { type: "poseToggled"; pose: string; maxPoses: number }
   | { type: "poseNoticeDismissed" }
@@ -149,7 +167,11 @@ export function frontier(s: DesignFlowState, shapes: BodyShape[]): StepId {
   // can WORK — try, look, try again — instead of a menu that fires you onward the
   // instant you touch it.
   if (!s.reference || !s.baseConfirmed) return 1;
-  if (!hasDesign(s, shapes) || !s.preview || !s.designConfirmed) return 2;
+  // §5.2: the gate is "seen a preview OR explicitly dismissed a failure" — never
+  // "a preview exists". `!s.preview` alone is what dead-ends a user whose preview
+  // keeps failing, and the spec names that as the thing not to do.
+  const previewSettled = Boolean(s.preview) || s.previewFailureDismissed;
+  if (!hasDesign(s, shapes) || !previewSettled || !s.designConfirmed) return 2;
   return 3;
 }
 
@@ -248,24 +270,24 @@ export function designFlowReducer(
                expandedOverride: null, seq: state.seq + 1 };
 
     case "colorPicked":
-      return { ...state, seq: state.seq + 1, color: action.color, preview: null, designConfirmed: false };
+      return { ...state, seq: state.seq + 1, color: action.color, preview: null, designConfirmed: false, previewFailureDismissed: false };
 
     case "accessoryToggled": {
       const has = state.accessories.includes(action.accessory);
       const next = has
         ? state.accessories.filter((a) => a !== action.accessory)
         : [...state.accessories, action.accessory].slice(0, MAX_ACCESSORIES);
-      return { ...state, seq: state.seq + 1, accessories: next, preview: null, designConfirmed: false };
+      return { ...state, seq: state.seq + 1, accessories: next, preview: null, designConfirmed: false, previewFailureDismissed: false };
     }
 
     case "bodyShapePicked":
-      return { ...state, seq: state.seq + 1, bodyShape: action.key, preview: null, designConfirmed: false };
+      return { ...state, seq: state.seq + 1, bodyShape: action.key, preview: null, designConfirmed: false, previewFailureDismissed: false };
 
     case "extraChanged":
-      return { ...state, seq: state.seq + 1, extra: action.text, preview: null, designConfirmed: false };
+      return { ...state, seq: state.seq + 1, extra: action.text, preview: null, designConfirmed: false, previewFailureDismissed: false };
 
     case "strengthPicked":
-      return { ...state, seq: state.seq + 1, strength: action.strength, preview: null, designConfirmed: false };
+      return { ...state, seq: state.seq + 1, strength: action.strength, preview: null, designConfirmed: false, previewFailureDismissed: false };
 
     case "nameChanged":
       // The name is a label, not a design input — it never invalidates the preview.
@@ -286,8 +308,11 @@ export function designFlowReducer(
       // and re-sets previewId — from a still drawn off the OLD archetype. Dropping a
       // stale seq is the whole fix.
       if (action.seq !== state.seq) return state;
+      // A landed preview retires the escape hatch: the thing it was an escape FROM no
+      // longer exists, and leaving it set would let a later failure inherit a
+      // dismissal the user never gave for it.
       return { ...state, previewBusy: false, previewError: null, preview: action.preview,
-               expandedOverride: null };
+               previewFailureDismissed: false, expandedOverride: null };
     }
 
     case "poseMenuLoaded": {
@@ -313,6 +338,13 @@ export function designFlowReducer(
       if (state.selectedPoses.length >= slots) return state;   // at cap; the UI disables it too
       return { ...state, selectedPoses: [...state.selectedPoses, action.pose] };
     }
+
+    case "previewFailureDismissed":
+      // Only reachable from a failure — the UI offers it nowhere else (§5.2). Clearing
+      // the error too, because the user has answered it; leaving it would keep shouting
+      // about a thing they have decided to live with.
+      return { ...state, previewFailureDismissed: true, previewError: null,
+               expandedOverride: null };
 
     case "poseNoticeDismissed":
       return { ...state, poseNotice: null };

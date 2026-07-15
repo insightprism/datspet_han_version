@@ -169,13 +169,25 @@ export default function Designer() {
     state.extra.trim(),
   ].filter(Boolean).join(" · ");
 
+  /**
+   * What the build animates: the previewed pet, or — when the preview kept failing and
+   * the user dismissed it (§5.2) — the archetype itself.
+   *
+   * The fallback is the whole point of the escape hatch: `state.preview` alone hard-
+   * blocks a user whose preview will not render, which is the dead end §5.2 forbids.
+   * It is deliberately NOT silent — the button carries a warning that this builds the
+   * undesigned animal (below). Both are references, so `reference_id` is all the build
+   * ever needs either way (§6.1); that is the layer earning its keep.
+   */
+  const buildBase = state.preview ?? state.reference;
+
   function createPet() {
-    if (!state.preview) return;
+    if (!buildBase) return;
     const fd = new FormData();
     // The ONLY base field. Everything the build needs — the still, the description,
     // the display name, the pinned motion profile — was resolved at FILL time and
     // rides the record (§7.3).
-    fd.append("reference_id", state.preview.reference_id);
+    fd.append("reference_id", buildBase.reference_id);
     if (state.name.trim()) fd.append("name", state.name.trim());
     const pkg: Record<string, boolean> = { walk: true, idle: true };
     for (const p of state.selectedPoses) pkg[p] = true;
@@ -411,18 +423,50 @@ export default function Designer() {
             <button
               type="button"
               className="btn"
-              disabled={!state.preview || state.previewBusy}
+              // `buildBase`, not `state.preview`: a user who dismissed a failing preview
+              // (§5.2) has settled step 2 and must be able to leave it. Gating this on
+              // the preview alone would keep the dead end open while the frontier said
+              // it was closed — the escape hatch would exist and be unreachable.
+              disabled={!buildBase || state.previewBusy}
               onClick={() => dispatch({ type: "designAccepted" })}
             >
               Use this as my pet →
             </button>
           </div>
 
-          {/* §5.2 — a preview failure MUST offer a way forward. Preview is no longer
-              optional, so without a retry the flow would simply dead-end. */}
+          {/* §5.2 — a preview failure MUST offer a way FORWARD, not just a retry.
+              Preview is unconditional now, which took away the bypass the old optional
+              preview gave for free: when the pool is down or the 180 s times out,
+              "try again" is not a way forward, it is the thing that keeps failing. The
+              gate is "seen a preview OR dismissed a failure", so this is the only place
+              the dismissal is offered — it is an escape hatch, not a mode. */}
           {state.previewError && (
-            <div className="mono text-xs" style={{ color: "#f87171" }}>
-              {state.previewError} — try again
+            <div className="flex flex-col gap-2">
+              <div className="mono text-xs" style={{ color: "#f87171" }}>
+                {state.previewError}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" className="btn text-xs" disabled={state.previewBusy}
+                        onClick={makePreview}>
+                  Try again
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost text-xs"
+                  onClick={() => dispatch({ type: "previewFailureDismissed" })}
+                >
+                  Skip the preview →
+                </button>
+              </div>
+              {/* Say the price of the hatch BEFORE they take it. Skipping means the
+                  build animates the archetype, so the design is lost — the user asked
+                  for purple and would get a plain tabby. Shipping that quietly would be
+                  worse than the dead end. */}
+              <div className="mono text-xs" style={{ color: "var(--faint)" }}>
+                skipping builds{" "}
+                <strong>a plain {state.reference?.display_name.toLowerCase() ?? "animal"}</strong>{" "}
+                — without your design
+              </div>
             </div>
           )}
         </div>
@@ -435,7 +479,15 @@ export default function Designer() {
           and 2 vanished the moment the pet finished, and the thing you had just spent
           three minutes and two decisions on appeared somewhere with no memory of them.
           The result is step 3's ARTIFACT, exactly as the base is step 1's and the
-          preview is step 2's. Every step answers in its own card. */}
+          preview is step 2's. Every step answers in its own card.
+
+          It is passed as `artifact`, and that is load-bearing, not tidiness: <Step>
+          renders `artifact` unconditionally and `children` only when
+          `expanded && reachable`. Passed as children — as it was — reopening step 2's
+          lock dropped the frontier to 2, made step 3 unreachable, and UNMOUNTED the
+          finished pet: its download link, its Accept-to-DatsMe button, and mid-build
+          its progress bar. The comment above claimed "artifact" while the code said
+          "children", and the disagreement was the bug. */}
       <Step
         index={3}
         title="Its moves"
@@ -446,12 +498,13 @@ export default function Designer() {
         expanded={showsControls(state, shapes, 3)}
         reachable={isReachable(state, shapes, 3)}
         onExpand={() => dispatch({ type: "expand", step: 3 })}
-      >
-        {job ? (
+        artifact={job ? (
           // `bare`: <Step> already IS the card. PetJobResult carries the progress bar
           // too, so this covers the whole 3-minute build, not just its end.
           <PetJobResult job={job} onReset={reset} bare resetLabel="Design another" />
-        ) : (
+        ) : null}
+      >
+        {!job && (
         <div className="flex flex-col gap-4">
           <PoseStep
             menu={state.poseMenu}
@@ -466,14 +519,26 @@ export default function Designer() {
             <span className="mono text-xs" style={{ color: "var(--muted)" }}>name (optional)</span>
             <input
               className="input"
-              placeholder={state.preview?.display_name ?? ""}
+              placeholder={state.preview?.display_name ?? state.reference?.display_name ?? ""}
               value={state.name}
               onChange={(e) => dispatch({ type: "nameChanged", name: e.target.value })}
             />
           </label>
-          <button type="button" className="btn" disabled={busy || !state.preview} onClick={createPet}>
+          {/* Buildable from the preview, or — when the preview kept failing and the user
+              dismissed it — from the archetype (§5.2). `buildBase` is whichever it is. */}
+          <button type="button" className="btn" disabled={busy || !buildBase} onClick={createPet}>
             {busy ? "Building…" : "Bring it to life · ~3 min"}
           </button>
+          {/* Never let this ship silently: a dismissed-failure build animates the
+              UNDESIGNED animal. The user asked for purple and is about to get a plain
+              tabby, and the only honest thing is to say so before they spend 3 minutes. */}
+          {!state.preview && state.reference && (
+            <div className="mono text-xs" style={{ color: "var(--orange)" }}>
+              Heads up — we never managed to draw your design, so this builds{" "}
+              <strong>a plain {state.reference.display_name.toLowerCase()}</strong> without
+              it. Reopen step 2 to try the preview again.
+            </div>
+          )}
           {jobError && <div className="mono text-xs" style={{ color: "#f87171" }}>{jobError}</div>}
         </div>
         )}
