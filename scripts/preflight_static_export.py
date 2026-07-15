@@ -62,12 +62,16 @@ REPO = Path(__file__).resolve().parent.parent
 WEB = REPO / "web"
 NGINX_CONF = REPO / "deploy" / "nginx-default.conf"
 
-# Built into its OWN dist dir so this can run while a dev server is live: the
-# dev/build hazard is a shared .next/, so a different one cannot collide.
-# next.config.mjs maps DATSPET_DIST_DIR -> distDir and web/scripts/guard-build-vs-dev.js
-# stands down for it. NOTE: with distDir set, `output: "export"` writes the static site
-# INTO that directory instead of to web/out — so this dir IS the export, and a normal
-# deploy build (no DATSPET_DIST_DIR) still lands in web/out, untouched by preflight runs.
+# Built into its own dist dir (next.config.mjs maps DATSPET_DIST_DIR -> distDir) so a
+# preflight run does not clobber web/out, the artifact a deploy builds. With distDir
+# set, `output: "export"` writes the static site INTO that directory, so this dir IS
+# the export.
+#
+# This does NOT make the build safe to run beside a live dev server, and it must not be
+# sold as if it does. Measured 2026-07-15: a build with DATSPET_DIST_DIR set STILL
+# perturbs .next (BUILD_ID re-stamped, 189 -> 170 files) and left a live dev server
+# 500ing on its own layout.css. web/scripts/guard-build-vs-dev.js is therefore
+# authoritative — this script does not exempt itself from it. Stop the dev server first.
 PREFLIGHT_DIST = ".next-preflight"
 
 # Ground truth, verified against a real 2026-07-15 export of this app. The shell is
@@ -118,6 +122,12 @@ def build_export(api_url):
     )
     if proc.returncode != 0:
         log(proc.stdout)
+        if "guard-build-vs-dev" in (proc.stdout or ""):
+            log("[preflight] BLOCKED: a dev server is live and this build would poison its .next/.")
+            log("  That is correct — it is not a false positive. Stop the dev server, then re-run.")
+            log("  (Do NOT set ALLOW_BUILD_WITH_DEV=1 to get past this: the collision is real and")
+            log("   measured — it left a dev server 500ing on its own layout.css on 2026-07-15.)")
+            sys.exit(1)
         log("[preflight] FAIL: the export did not build.")
         log("  If this names a missing module, the box's node_modules has drifted:")
         log("    cd web && npm install")

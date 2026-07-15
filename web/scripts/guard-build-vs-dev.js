@@ -24,18 +24,23 @@
  *   2. Dev, not start. Only `next dev` continuously writes .next/cache/webpack
  *      and is what gets poisoned. `next start` merely reads the built .next, so
  *      even a same-directory `next start` is not the hazard this guard targets.
- *   3. Same .next, not merely same directory. A build with DATSPET_DIST_DIR set
- *      writes somewhere else entirely (next.config.mjs maps it to `distDir`), so
- *      it cannot overwrite a dev server's chunks no matter whose cwd it shares.
- *      This is what lets scripts/preflight_static_export.py build a throwaway
- *      export while dev is live, WITHOUT ALLOW_BUILD_WITH_DEV=1 — that override
- *      would suppress the check on a build that genuinely does collide, which is
- *      a lie this guard should not have to accept to stay usable.
+ * REJECTED REFINEMENT — do not re-add (2026-07-15). A `DATSPET_DIST_DIR` exemption
+ * was added here on the theory that a build writing to its own distDir "cannot
+ * collide" with the dev server's .next. It was WRONG, and it broke a live dev
+ * server within the hour: with `output: "export"` set, a build run with
+ * DATSPET_DIST_DIR=.next-preflight still wrote .next (BUILD_ID re-stamped, file
+ * count 189 -> 170), leaving .next/static holding BOTH `development/` and a real
+ * build's hashed output. The dev server then 500'd on its own layout.css.
+ *
+ * Measured, not theorised: fingerprint .next, run the build, diff. Whether the
+ * writer is the build itself or the dev server reacting to directory churn under
+ * web/ does not matter — the two provably interfere, which is the only thing this
+ * guard is asserting. Anything wanting to build while dev is live must prove
+ * non-interference by that same measurement first, not by reading the config.
  *
  * Result: no dev server → no-op (CI, deploy boxes). A `next start` on the dev
- * port → no-op (the shared-host prod case). A build into its own distDir → no-op.
- * Only a `next dev` bound to THIS project's directory AND sharing its .next
- * blocks the build. Last-resort override: ALLOW_BUILD_WITH_DEV=1.
+ * port → no-op (the shared-host prod case). Only a `next dev` bound to THIS
+ * project's directory blocks the build. Override with ALLOW_BUILD_WITH_DEV=1.
  */
 
 const { execSync } = require("node:child_process");
@@ -52,18 +57,6 @@ const BUILD_ROOT = fs.realpathSync(process.cwd());
 if (process.env.ALLOW_BUILD_WITH_DEV === "1") {
   console.log(
     `[guard-build-vs-dev] ALLOW_BUILD_WITH_DEV=1 set — skipping the dev-server check.`
-  );
-  process.exit(0);
-}
-
-// A build into its own distDir shares no state with the dev server (see #3
-// above), so there is nothing to guard. Kept honest by next.config.mjs, which is
-// the only reader of this variable: if that mapping is ever dropped, this branch
-// must go with it or the guard starts waving through real collisions.
-const DIST_DIR = process.env.DATSPET_DIST_DIR;
-if (DIST_DIR && DIST_DIR !== ".next") {
-  console.log(
-    `[guard-build-vs-dev] Building into ${DIST_DIR}, not .next — no dev-server collision is possible.`
   );
   process.exit(0);
 }
