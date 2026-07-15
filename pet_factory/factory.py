@@ -378,17 +378,76 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
     return buf.getvalue()
 
 
-def render_design_still(description: str, reference_image, strength) -> bytes:
-    """One img2img redraw of `reference_image` toward `description` — the
-    design page's ~10 s preview (the same redraw the full remix pipeline
-    would run first). Returns the redrawn still as PNG bytes. Save it and
-    hand it back to make_pet_zip(reference_image=...) WITHOUT remix_strength
-    to animate exactly what was previewed."""
-    seed = random.randint(1, 2**31)
-    prepped = _prep_reference_image(reference_image)
-    denoise = min(0.9, max(0.3, float(strength)))
-    out = COMFY_OUTPUT_DIR / _run(_img2img_wf(_remix_prompt(description), str(prepped), seed, denoise))
-    _wait_stable(out)
+def _base_sprite(animal, reference_image=None, remix_strength=None,
+                 seed=None, on_stage=None) -> Path:
+    """THE base-sprite selector — the one place the pipeline's starting image is
+    decided (SPEC_PET_DESIGNER_FLOW §7.1).
+
+    Three branches, keyed on CAPABILITY (which inputs the caller has), never on
+    provenance (§6 — the engine never asks where a record came from):
+
+        remix   reference_image + remix_strength  → img2img redraw toward `animal`
+        as-is   reference_image alone             → the reference, normalized, unchanged
+        text    neither                           → txt2img a fresh base from `animal`
+
+    Both entry points (`render_design_still`, `make_pet_zip`) call this, so the
+    parity contract (§5.1 — "the previewed still IS the base sprite make_pet_zip
+    would have produced") holds structurally instead of by duplication.
+
+    seed:     None → a fresh random seed. Pass one to make the workflow
+              reproducible; the parity pin (§10.2) needs that seam.
+    on_stage: optional callback(msg) naming the branch that ran, for callers
+              that report progress.
+    """
+    def stage(msg):
+        if on_stage:
+            on_stage(msg)
+
+    if seed is None:
+        seed = random.randint(1, 2**31)
+
+    if reference_image and remix_strength:
+        stage("Redrawing your design…")
+        prepped = _prep_reference_image(reference_image)
+        denoise = min(0.9, max(0.3, float(remix_strength)))
+        base = COMFY_OUTPUT_DIR / _run(_img2img_wf(_remix_prompt(animal), str(prepped), seed, denoise))
+        _wait_stable(base)
+        return base
+
+    if reference_image:
+        stage("Preparing the reference image…")
+        return _prep_reference_image(reference_image)
+
+    stage("Drawing the base sprite…")
+    base = COMFY_OUTPUT_DIR / _run(_static_image_wf(_base_prompt(animal), seed))
+    _wait_stable(base)
+    return base
+
+
+def render_design_still(description: str, reference_image=None, strength=None,
+                        seed=None) -> bytes:
+    """Render one still and return it as PNG bytes — the design page's ~10 s step
+    (SPEC_PET_DESIGNER_FLOW §2). Two shapes, both delegating to `_base_sprite`:
+
+      - reference_image + strength → an img2img redraw toward `description`.
+        This is step 3 ("see it"): the archetype redrawn toward the user's design.
+      - neither                    → txt2img a fresh base from `description`.
+        This is step 1's long-tail branch (§3.3): "what does a blue jay look like"
+        when no curated base.png is cached for it.
+
+    Save the result and hand it back to make_pet_zip(reference_image=...) WITHOUT
+    remix_strength to animate exactly what was previewed.
+
+    Raises ValueError for reference_image without strength: as-is is meaningless
+    for a *still* renderer — the caller already holds those bytes (§7.1).
+    """
+    if reference_image is not None and strength is None:
+        raise ValueError(
+            "render_design_still(reference_image=…) requires a strength — "
+            "rendering a reference as-is would just return the caller's own bytes."
+        )
+    out = _base_sprite(description, reference_image=reference_image,
+                       remix_strength=strength, seed=seed)
     return out.read_bytes()
 
 
@@ -465,19 +524,12 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
         profile = mp.resolve_motion_profile(animal)
     pose_names = _effective_poses(profile, poses)
 
-    if reference_image and remix_strength:
-        prog("Redrawing your design…", 0.10)
-        prepped = _prep_reference_image(reference_image)
-        denoise = min(0.9, max(0.3, float(remix_strength)))
-        base = COMFY_OUTPUT_DIR / _run(_img2img_wf(_remix_prompt(animal), str(prepped), seed, denoise))
-        _wait_stable(base)
-    elif reference_image:
-        prog("Preparing the reference image…", 0.10)
-        base = _prep_reference_image(reference_image)
-    else:
-        prog("Drawing the base sprite…", 0.10)
-        base = COMFY_OUTPUT_DIR / _run(_static_image_wf(_base_prompt(animal), seed))
-        _wait_stable(base)
+    # The base image is chosen in exactly one place (§7.1) — this call and
+    # render_design_still's are the same code, which is what makes the previewed
+    # still and this build's base sprite provably identical (§5.1).
+    base = _base_sprite(animal, reference_image=reference_image,
+                        remix_strength=remix_strength, seed=seed,
+                        on_stage=lambda msg: prog(msg, 0.10))
 
     # Loop the selected poses — each a Wan I2V generation from the same base sprite.
     # Progress is distributed across the N poses over the [0.10, 0.85] band (the
