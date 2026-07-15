@@ -47,7 +47,9 @@ proxy times out while the backend works locally:
 ```bash
 # 0. PREFLIGHT — before bundling, if web/ changed. Catches the export-only defects
 #    that `next dev` is structurally incapable of showing you (see below). ~15 s.
-#    Safe to run with a dev server live; builds into its own distDir.
+#    STOP THE DEV SERVER FIRST — it runs a real `next build`, which poisons a live
+#    dev server's .next/ (measured; an earlier "it's isolated by distDir" claim was
+#    wrong and cost one dev server). The build guard blocks it and is correct to.
 scripts/preflight_static_export.py
 
 git bundle create /tmp/datspet.bundle main && scp /tmp/datspet.bundle root@5.161.70.13:/tmp/
