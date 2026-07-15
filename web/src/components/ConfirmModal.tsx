@@ -3,7 +3,14 @@
 /**
  * ConfirmModal — the shared confirm dialog for destructive actions
  * (never window.confirm). Renders nothing when closed.
+ *
+ * The overlay SHELL is <ModalOverlay>, not this file's business. This used to
+ * hand-roll its own `fixed inset-0 … flex`, which meant no body scroll-lock, no
+ * safe-area insets, no height cap and no inner scroller — the four things hand-rolled
+ * overlays always miss. Composing the primitive fixed all four here for free, and it
+ * is what makes that primitive genuinely shared rather than a second copy of this one.
  */
+import ModalOverlay from "./ModalOverlay";
 
 interface Props {
   open: boolean;
@@ -17,25 +24,15 @@ interface Props {
 export default function ConfirmModal({
   open, title, body, confirmLabel = "Delete", onConfirm, onCancel,
 }: Props) {
-  if (!open) return null;
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-6"
-      style={{ background: "rgba(0,0,0,0.6)" }}
-      onClick={onCancel}
-    >
-      <div
-        className="card w-full max-w-sm p-6"
-        role="dialog"
-        aria-modal="true"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="mb-2 text-lg font-semibold" style={{ color: "var(--heading)" }}>
-          {title}
-        </h2>
-        <p className="mb-5 text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
-          {body}
-        </p>
+    <ModalOverlay open={open} onClose={onCancel} labelledBy="confirm-title" maxWidth="max-w-sm">
+      <h2 id="confirm-title" className="mb-2 text-lg font-semibold"
+          style={{ color: "var(--heading)" }}>
+        {title}
+      </h2>
+      <p className="mb-5 text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
+        {body}
+      </p>
         <div className="flex gap-3">
           <button
             onClick={onCancel}
@@ -52,7 +49,6 @@ export default function ConfirmModal({
             {confirmLabel}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalOverlay>
   );
 }

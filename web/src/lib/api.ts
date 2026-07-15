@@ -300,6 +300,81 @@ export function previewImageUrl(previewId: string): string {
   return `${API_URL}/api/preview/${encodeURIComponent(previewId)}`;
 }
 
+// ── The reference layer (SPEC_PET_DESIGNER_FLOW §7.4) ────────────────────────
+//
+// ONE record shape, three endpoints. Every way of starting a pet ends in the same
+// artifact — a reference still — so nothing downstream branches on where it came
+// from (§6). `previewReference` takes a reference and returns a reference (§6.1):
+// two handle types would force every caller to branch on which kind it holds.
+//
+// All of these are credentialed: references are owner-scoped (§7.3), so the DPP
+// launch cookie must ride or a launched user cannot read their own box.
+
+export interface PetReference {
+  reference_id: string;
+  image_url: string;              // path under API_URL — use referenceImageUrl()
+  description: string;            // the SHORT species phrase ("purple corgi"), §7.3
+  display_name: string;
+  motion_profile: string | null;  // pinned at fill time; null → keyword-resolved
+  // Recorded for support/telemetry ONLY. Do NOT branch on it: "the engine reads
+  // the record and acts; it never asks where the record came from" (§6). Rev.1 of
+  // the spec relaxed a design guard on source === "txt2img" and broke its own rule.
+  source: "catalog" | "txt2img" | "upload" | "design";
+  min_strength: number | null;    // the clamp that was applied, so the UI can say so
+  generated: boolean;             // false = a curated cache hit, free and instant
+}
+
+export interface BodyShape {
+  key: string;
+  label: string;
+  is_default: boolean;
+}
+
+async function referenceCall(path: string, form: FormData): Promise<PetReference> {
+  const r = await fetch(`${API_URL}${path}`, {
+    method: "POST",
+    body: form,
+    credentials: "include",
+  });
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    // FastAPI answers an UNMATCHED ROUTE with exactly {"detail":"Not Found"}, which
+    // is indistinguishable from "that resource is missing" if you just surface
+    // `detail`. In practice it means the backend predates this endpoint — a dev
+    // server that hasn't been restarted — and a bare "Not Found" under a button
+    // reads as "the button is broken". Name the real cause.
+    if (r.status === 404 && data.detail === "Not Found") {
+      throw new Error(
+        `The backend doesn't have ${path} — it probably needs a restart to pick up new endpoints.`,
+      );
+    }
+    throw new Error(data.detail || `That didn't work (${r.status})`);
+  }
+  return r.json();
+}
+
+// Step 1 — fill the box. Exactly one of: a curated breed, a free-text animal, or
+// an uploaded photo. The server decides the mechanism (copy a curated base.png vs
+// draw one); the client never chooses it, and `generated` reports what happened.
+export function createReference(form: FormData): Promise<PetReference> {
+  return referenceCall("/api/reference", form);
+}
+
+// Step 3 — redraw a reference toward a design. Returns a NEW reference.
+export function previewReference(form: FormData): Promise<PetReference> {
+  return referenceCall("/api/preview", form);
+}
+
+export function referenceImageUrl(referenceId: string): string {
+  return `${API_URL}/api/reference/${encodeURIComponent(referenceId)}.png`;
+}
+
+export async function fetchBodyShapes(): Promise<{ shapes: BodyShape[]; default: string }> {
+  const r = await fetch(`${API_URL}/api/body-shapes`, { cache: "no-store" });
+  if (!r.ok) throw new Error("Could not load body shapes");
+  return r.json();
+}
+
 export async function keepPet(petId: string): Promise<void> {
   const r = await fetch(`${API_URL}/api/pets/${encodeURIComponent(petId)}/keep`, {
     method: "POST",

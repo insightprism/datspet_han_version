@@ -53,6 +53,58 @@ body {
   font-family: "Fira Code", "JetBrains Mono", monospace;
 }
 
+/*
+ * Form + action primitives (SPEC_PET_DESIGNER_FLOW §7.6). They live here, beside
+ * .card/.mono, because that is where this app's shared primitives already live —
+ * and because the designer alone has five call sites for them, well past the
+ * "three instances before consolidating" bar (CLAUDE.md). components/PetDesigner.tsx
+ * still inlines its own Tailwind + style={{…}} at every call site; that was
+ * reasonable for one file and does not scale to five.
+ *
+ * `color-scheme: dark` is LOAD-BEARING, not decoration. Without an explicit
+ * background/color, a <select> and an <input> fall back to the OS's LIGHT form
+ * defaults — a white box with near-white text on this near-black page, i.e.
+ * invisible. Setting the palette explicitly is what makes them readable; the
+ * color-scheme hint is what makes the <select>'s POPUP and the caret follow.
+ */
+.input {
+  background: #1c1c1c;
+  border: 1px solid var(--line);
+  color: var(--heading);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+  font-size: 15px;
+  outline: none;
+  color-scheme: dark;
+}
+.input::placeholder { color: var(--faint); }
+.input:focus { border-color: var(--accent); }
+.input:disabled { opacity: 0.5; }
+
+.btn {
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid var(--accent);
+  color: var(--heading);
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.btn:hover:not(:disabled) { opacity: 0.85; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.btn-ghost {
+  background: #151515;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  border-radius: 8px;
+  padding: 0.5rem 0.9rem;
+  font-weight: 500;
+  transition: opacity 0.15s, color 0.15s;
+}
+.btn-ghost:hover:not(:disabled) { opacity: 0.85; color: var(--heading); }
+.btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* Running-figure bob shown next to the elapsed timer while a pet generates —
    a small motion cue that reinforces "still working." Decorative only: the
    climbing timer carries the meaning, so it's held still under reduced-motion. */

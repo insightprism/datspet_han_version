@@ -6,7 +6,7 @@
  * Shared by the Describe and Design pages.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   keepPet,
@@ -25,6 +25,15 @@ interface Props {
   job: JobStatus;
   onReset: () => void;
   resetLabel?: string;
+  /**
+   * Drop the `card` wrapper and render the contents bare.
+   *
+   * For a caller that is ALREADY a card — the stepped designer renders this inside its
+   * own step 3 rather than replacing the page — the wrapper would nest a card in a
+   * card: two borders, two accent strips, doubled padding. The panel's contents are
+   * what that caller wants; the chrome is the caller's own business.
+   */
+  bare?: boolean;
 }
 
 // Elapsed seconds → compact human string. Under a minute reads "12s"; past that,
@@ -36,7 +45,7 @@ function formatElapsed(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-export default function PetJobResult({ job, onReset, resetLabel = "Make another" }: Props) {
+export default function PetJobResult({ job, onReset, resetLabel = "Make another", bare = false }: Props) {
   const done = job.status === "done";
   // Live elapsed-time counter while the pet is being built. Anchored to when this
   // component first sees a given job.id (generation start, from the user's view) —
@@ -130,8 +139,9 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
     datsme?.cost != null
       ? `✓ Accept — send to my DatsMe (${datsme.cost} credits)`
       : "✓ Accept — send to my DatsMe";
+  const Shell = bare ? BareShell : CardShell;
   return (
-    <div className="card p-6">
+    <Shell>
       <div className="mono mb-1.5 flex items-center gap-2 text-sm" style={{ color: job.status === "error" ? "var(--accent)" : "var(--gold)" }}>
         {running && (
           // Running figure — the little bob signals "still working" alongside the
@@ -251,6 +261,15 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
           <PetStage pets={[{ id: job.id, display_name: job.name }]} />
         </>
       )}
-    </div>
+    </Shell>
   );
+}
+
+function CardShell({ children }: { children: ReactNode }) {
+  return <div className="card p-6">{children}</div>;
+}
+
+/** `bare`: the caller supplies the chrome (§ Props.bare). */
+function BareShell({ children }: { children: ReactNode }) {
+  return <>{children}</>;
 }
