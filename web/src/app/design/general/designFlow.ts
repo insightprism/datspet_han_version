@@ -162,17 +162,29 @@ export function hasDesign(s: DesignFlowState, shapes: BodyShape[]): boolean {
  * pointer plus state is two sources of truth for "where am I", which is exactly how
  * wizards desync.
  */
+/**
+ * §5.2: step 2 is answered when the user has SEEN a preview **or** explicitly dismissed
+ * a failure — never merely "a preview exists", which is what dead-ends a user whose
+ * preview keeps failing.
+ *
+ * Exported because step 2's lock button must gate on exactly this, and must not
+ * re-derive it. It once gated on `buildBase` (`preview ?? reference`), which is always
+ * truthy at step 2 — `reference` is non-null or frontier() would have returned 1 — so
+ * the button stayed live with no preview: clicking it marked step 2 settled while the
+ * frontier kept step 3 shut. Two places answering "is step 2 done?" is precisely how
+ * that drifts, so there is one.
+ */
+export function previewSettled(s: DesignFlowState): boolean {
+  return Boolean(s.preview) || s.previewFailureDismissed;
+}
+
 export function frontier(s: DesignFlowState, shapes: BodyShape[]): StepId {
   // Both gates read the same: a thing exists AND the user said it is the one they want.
   // Gating on the LOCK rather than on mere existence is what makes each step a place you
   // can WORK — try, look, try again — instead of a menu that fires you onward the
   // instant you touch it.
   if (!s.reference || !s.baseConfirmed) return 1;
-  // §5.2: the gate is "seen a preview OR explicitly dismissed a failure" — never
-  // "a preview exists". `!s.preview` alone is what dead-ends a user whose preview
-  // keeps failing, and the spec names that as the thing not to do.
-  const previewSettled = Boolean(s.preview) || s.previewFailureDismissed;
-  if (!hasDesign(s, shapes) || !previewSettled || !s.designConfirmed) return 2;
+  if (!hasDesign(s, shapes) || !previewSettled(s) || !s.designConfirmed) return 2;
   return 3;
 }
 
@@ -238,6 +250,12 @@ export function designFlowReducer(
         preview: null,
         previewError: null,
         previewBusy: false,
+        // …and so is a dismissal, for the same reason: it was given for a failure to
+        // draw the OLD archetype. Carrying it would satisfy §5.2's gate ("seen a
+        // preview OR dismissed a failure") with a dismissal the user never gave for
+        // THIS base — they would walk to a 3-minute build having never previewed it.
+        // Same argument previewLanded makes: a dismissal must not outlive its subject.
+        previewFailureDismissed: false,
         // Colour/accessories/shape/text are NOT touched: they were never properties
         // of the reference (§0.1). Rev.2 had to reason about this; the archetype rule
         // gives it for free.
@@ -266,9 +284,10 @@ export function designFlowReducer(
       // The lock is a toggle, so unlocking drops the frontier back to 1 and step 2's
       // controls unmount with it. The DESIGN survives — colour and shape were never
       // properties of the base (§0.1) — but the preview cannot: it is a function of
-      // (base × design), and the base is in play again.
+      // (base × design), and the base is in play again. Nor can a dismissal of a
+      // failure to draw it (see referenceFilled).
       return { ...state, baseConfirmed: false, preview: null, designConfirmed: false,
-               expandedOverride: null, seq: state.seq + 1 };
+               previewFailureDismissed: false, expandedOverride: null, seq: state.seq + 1 };
 
     case "colorPicked":
       return { ...state, seq: state.seq + 1, color: action.color, preview: null, designConfirmed: false, previewFailureDismissed: false };

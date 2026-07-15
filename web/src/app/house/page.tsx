@@ -93,7 +93,7 @@ export default function HousePage() {
                     means designing a design, with the modifiers compounding invisibly and
                     no way back to the archetype. Commit 74c1783 removed house pets as a
                     base source deliberately; this button was the last dangling thread of
-                    that decision. §3.5 says how it should arrive if it is ever revived:
+                    that decision. §3.9 says how it should arrive if it is ever revived:
                     pre-resolved, as an explicit deep link, never a door. */}
                 <div className="mt-2 flex flex-wrap justify-center gap-2">
                   <a

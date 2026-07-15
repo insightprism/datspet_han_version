@@ -620,16 +620,26 @@ untouched — same props.
 
 ### 3.9 The house-pet source is not a door
 
-"Redesign a house pet" is backend-complete (`extract_base_frame`, `app.py:210`) but
-unreachable from any UI — `/house`'s Redesign button links to `/design?base=<id>`
-(`house/page.tsx:87`) and the landing never reads `?base`. Commit `74c1783` deliberately
-removed the house roster as the designer's base source.
+**Rev.7 — this source is now GONE, not merely unreachable.** Earlier revisions described it
+as *"backend-complete (`extract_base_frame`, `app.py:210`) but unreachable from any UI"*,
+with `/house`'s Redesign button linking to a `?base=<id>` nobody read. That was true when
+written and is false now: `extract_base_frame` is **deleted**, the Redesign button is
+**deleted**, and `?base` has **zero readers**. `app.py:210` is `compose_design`. Nothing of
+this source survives except the argument for why it should not come back.
 
-That decision stands, **and §2.1 explains why**: a house pet is somebody's finished
-design, not an archetype — step 2 has already run on it, so starting there means designing
-a design and the modifiers compound invisibly. If revived it arrives pre-resolved via
-`?base=<pet_id>` as an explicit deep link, never a fourth choice in the dialog.
-**Deferred to §11.**
+That argument stands, **and §2.1 is it**: a house pet is somebody's finished design, not an
+archetype — step 2 has already run on it, so starting there means designing a design, the
+modifiers compound invisibly, and the user can never get back to the archetype. Commit
+`74c1783` removed the house roster as the designer's base source for exactly this reason;
+the cleanup finished the job.
+
+If it is ever revived it arrives **pre-resolved** via `?base=<pet_id>` as an explicit deep
+link — never a third choice in the dialog — and it arrives with fresh code: there is no
+longer a backend to un-orphan. Note what reviving it costs now that `/design` 307s to
+`/design/general`: the redirect preserves the query (`$is_args$args`, `deploy/nginx-default.conf`),
+so a `?base` would survive the hop in prod — but `design/page.tsx`'s dev-side
+`redirect("/design/general")` drops it. **Both halves would need the query before this works
+in dev**, and dev-vs-prod drift is the failure mode that hid the last `/design` bug.
 
 ## 4. Step 2 — design your pet
 
@@ -1555,10 +1565,11 @@ surface AND that promote — and the surface is now a decision, not a leftover.
   deliberately overrode. Two pages cited it as authority for the opposite of what it says;
   both are deleted now, so nothing misattributes it any more — but the text is still there
   and still wrong. One commit, recorded rather than quietly amended.
-- **The house-pet source** (§3.5). Backend-complete (`extract_base_frame`), never reachable.
-  `/house`'s Redesign button still links to `/design?base=<id>`, which now 307s to the
-  designer and **drops the `?base`** — the same silent drop as before, one hop later. It is a
-  broken link either way; §3.5 says how it should arrive if revived.
+- ~~**The house-pet source**~~ — **RESOLVED, not deferred (Rev.7).** It was listed here as
+  "backend-complete but never reachable, with a Redesign button that still links to
+  `/design?base=<id>`". All of that is now false: `extract_base_frame`, the button, and every
+  `?base` reader are deleted. Reviving it means writing it, not re-wiring it. **§3.9** (not
+  §3.5, which is uploads) keeps the argument for why it should not come back as a door.
 - **⚠️ `plus.max_poses` = 10** (#24) — revert to 5 before launch.
 - **`tabby`** (#18) — a coat pattern, not a breed. Fails the test that removed `cat/black`.
 - **No frontend test runner**, so §10's "prove the state machine with zero backend" gate

@@ -115,8 +115,15 @@ echo "$SESS" | grep -q '"launched": *true\|"launched":true' && ok "session: laun
 # exists. Generate takes ONE base field now, so a round-trip test has to earn it, which
 # is the contract working rather than ceremony. It also means this script now exercises
 # /api/reference and /api/preview, which it never did before.
-say "Step 3/6 — draw the base animal: \"$PET_TEXT\"  (~10 s)"
-REF=$(curl -s -m 60 -H "Cookie: datsme_launch=$COOKIE" -X POST "$DATSPET_BACKEND/api/reference" \
+# -m 200, not 60: a warm redraw is ~10 s, but BOTH of these render server-side through
+# pool_client.run_to_result(timeout_s=180) (app.py) — and a COLD pool worker has to load
+# Z-Image first, which is exactly why nginx allows proxy_read_timeout 300 for /api/preview
+# and why pet_preview's own handler budget is 180 s. A 60 s client ceiling under a 180 s
+# server budget fails the run on the slowest legitimate case and blames the endpoint for
+# the script's own impatience. Stay above the server's budget so a timeout here means the
+# SERVER gave up, which is a real failure worth reporting.
+say "Step 3/6 — draw the base animal: \"$PET_TEXT\"  (~10 s warm, up to ~3 min cold)"
+REF=$(curl -s -m 200 -H "Cookie: datsme_launch=$COOKIE" -X POST "$DATSPET_BACKEND/api/reference" \
         -F "animal=$PET_TEXT" 2>/dev/null \
         | python3 -c 'import sys,json;print(json.load(sys.stdin).get("reference_id",""))' 2>/dev/null)
 [ -n "$REF" ] || die "/api/reference did not return a reference_id"
@@ -125,8 +132,8 @@ ok "archetype drawn: $REF"
 # A design is REQUIRED (§4.1) — designing nothing is what adopt-a-sample is for — so the
 # preview needs at least one modifier. Preview returns a NEW reference (§6.1): the design
 # made visible, and the still the build will animate as-is.
-say "Step 4/6 — preview the design: $PET_COLOR  (~10 s)"
-PREV=$(curl -s -m 60 -H "Cookie: datsme_launch=$COOKIE" -X POST "$DATSPET_BACKEND/api/preview" \
+say "Step 4/6 — preview the design: $PET_COLOR  (~10 s warm)"
+PREV=$(curl -s -m 200 -H "Cookie: datsme_launch=$COOKIE" -X POST "$DATSPET_BACKEND/api/preview" \
         -F "reference_id=$REF" -F "color=$PET_COLOR" 2>/dev/null \
         | python3 -c 'import sys,json;print(json.load(sys.stdin).get("reference_id",""))' 2>/dev/null)
 [ -n "$PREV" ] || die "/api/preview did not return a reference_id"

@@ -469,9 +469,12 @@ and pool deploy conventions already on the box).
   `local` branch, so pet_factory's stack — **rembg / onnxruntime(-CUDA) / numpy and the
   ComfyUI-driving code — is absent** from the Hetzner venv. (torch was never a direct dep;
   checking for it would pass vacuously.) But the web tier still directly needs:
-  - **Pillow** — `extract_base_frame` uses `PIL.Image` (`webui/app.py:165`); today it arrives
-    transitively via the pet_factory env, which is gone on Hetzner. **Declare Pillow explicitly**
-    in `webui/requirements.txt` (Finding 4).
+  - **Pillow** — the web tier uses `PIL.Image` directly; today it arrives transitively via the
+    pet_factory env, which is gone on Hetzner. **Declare Pillow explicitly** in
+    `webui/requirements.txt` (Finding 4). *(Rev.7: this used to name `extract_base_frame`
+    (`webui/app.py:165`) as the consumer. That function is deleted with the house-pet source —
+    SPEC_PET_DESIGNER_FLOW §3.9 — and `_encode_reference_image` is now the only one. The
+    requirement is unchanged; a stale reason is how a still-needed dep gets dropped.)*
   - **The DatsMe partner SDK** — a path dependency (`# pip install -e ../../datsme_me/api/sdk/`,
     `webui/requirements.txt:18`). On Hetzner the `datsme_me` repo is co-located (same box), so
     install it editable from that path; if it is *not* co-located, ship the SDK as a wheel/vendored

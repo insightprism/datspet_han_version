@@ -37,7 +37,7 @@ import {
 import { usePetJob } from "@/hooks/usePetJob";
 import PetJobResult from "@/components/PetJobResult";
 import { useDesignFlow } from "./useDesignFlow";
-import { showsControls, isReachable } from "./designFlow";
+import { showsControls, isReachable, previewSettled } from "./designFlow";
 import Step from "./Step";
 import ReferenceBox from "./ReferenceBox";
 import BaseAnimalDialog from "./BaseAnimalDialog";
@@ -421,11 +421,14 @@ export default function Designer() {
             <button
               type="button"
               className="btn"
-              // `buildBase`, not `state.preview`: a user who dismissed a failing preview
-              // (§5.2) has settled step 2 and must be able to leave it. Gating this on
-              // the preview alone would keep the dead end open while the frontier said
-              // it was closed — the escape hatch would exist and be unreachable.
-              disabled={!buildBase || state.previewBusy}
+              // The SAME predicate the frontier gates on — imported, not re-derived.
+              // A user who dismissed a failing preview (§5.2) has settled step 2 and must
+              // be able to leave it, so this cannot gate on `state.preview` alone. But it
+              // must not gate on `buildBase` either: that is `preview ?? reference`, and
+              // `reference` is always set by the time step 2 renders, so the button went
+              // live with nothing previewed — a click that turned step 2 green while the
+              // frontier held step 3 shut.
+              disabled={!previewSettled(state) || state.previewBusy}
               onClick={() => dispatch({ type: "designAccepted" })}
             >
               Use this as my pet →

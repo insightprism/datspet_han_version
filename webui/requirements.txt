@@ -14,9 +14,13 @@ uvicorn>=0.30
 python-multipart>=0.0.9
 httpx>=0.24
 
-# Pillow — the web tier uses PIL directly (extract_base_frame reads/crops a pet's
-# sprite sheet; _encode_reference_image downscales the reference image before it
-# rides to a pool worker). In the local backend Pillow arrives transitively via
+# Pillow — the web tier uses PIL directly: _encode_reference_image downscales the
+# reference image before it rides to a pool worker. (This used to also cite
+# extract_base_frame, which cropped a pet's sprite sheet for the house-pet base
+# source; that function and that source are deleted — SPEC_PET_DESIGNER_FLOW §3.9 —
+# so _encode_reference_image is now the ONLY web-tier consumer. The dependency is
+# still required; only the second reason for it is gone.)
+# In the local backend Pillow arrives transitively via
 # pet_factory's env, but the GPU-less pool deploy has no pet_factory install, so it
 # must be declared here explicitly (spec Finding 4 / §C.1).
 Pillow>=10
