@@ -226,8 +226,11 @@ Format: date · what broke · what the check said · what now catches it.
 ### Known gaps — not yet automated
 
 - **`deploy/nginx-default.conf` is prod's file in a shared repo.** A5 is a human
-  remembering. datsme_me already solved this with `nginx.production.conf` +
-  `nginx.staging.conf`; DatsPet should follow and delete the hazard.
+  remembering. **Specced: [`docs/SPEC_PER_TARGET_NGINX_CONF.md`](../docs/SPEC_PER_TARGET_NGINX_CONF.md)**
+  (Rev.1, execution-ready, not started) — one template + a 3-value target table, so the
+  port is data and cross-wiring becomes impossible rather than remembered. Also fixes a
+  live drift: staging is **missing the 2026-07-15 cache fix** because the repo conf and
+  staging's conf are unrelated lookalike files.
 - **No `deploy.sh`.** Phase B is hand-typed, and hand-typed heredocs mangled the nginx
   redirect once already. Target should be data (`{path, port, url, unit, container}`), the
   sequence fixed, and C1 the final step.
