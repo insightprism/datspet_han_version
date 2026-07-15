@@ -363,3 +363,57 @@ def test_handler_schemas_admit_composed_design_prompts():
     pv = load("pet_preview_handler.py", "pvh_schema_check")
     assert pf.METADATA["params_schema"]["properties"]["animal"]["maxLength"] >= len(worst)
     assert pv.METADATA["params_schema"]["properties"]["description"]["maxLength"] >= len(worst)
+
+
+def _load_pool_handler(fname, modname):
+    """Exec a handler straight off disk. The pool never imports app code — these files
+    only ever run inside a worker's subprocess — so a metadata test loads them the same
+    way `pool-install-handler` will."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        modname, os.path.join(REPO, "pool_handler", fname))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_pet_preview_handler_is_v2_with_reference_optional():
+    """SPEC_PET_DESIGNER_FLOW §7.5: v2 makes reference_image_b64 optional so the ONE
+    task serves both of the flow's stills — img2img redraw (step 3, "see my design")
+    and txt2img archetype (step 1's long-tail cache miss, "what does a blue jay look
+    like"). These two fields are exactly what the fleet gate (§10.1) probes for."""
+    pv = _load_pool_handler("pet_preview_handler.py", "pvh_v2")
+    assert pv.METADATA["version"] == "2"
+    assert pv.METADATA["params_schema"]["required"] == []
+    assert "reference_image_b64" in pv.METADATA["params_schema"]["properties"]
+
+
+def test_pet_preview_v2_accepts_both_v1_shaped_and_reference_free_params():
+    """The fleet gate's two probes (§10.1), pinned as a unit test.
+
+    v2 ⊇ v1 is what makes ROLLBACK safe: a b64-carrying submit must still validate, so
+    reverting a node to v1 can never strand in-flight traffic. The no-b64 submit is the
+    new shape — it 422s on a v1 node, which is why both nodes must be v2 before the
+    long-tail branch ships (the one place this cutover is NOT self-healing)."""
+    import jsonschema
+
+    pv = _load_pool_handler("pet_preview_handler.py", "pvh_v2_validate")
+    schema = pv.METADATA["params_schema"]
+
+    jsonschema.validate(                       # v1-shaped — must still pass
+        {"reference_image_b64": "YWJj", "description": "purple corgi", "strength": 0.85},
+        schema)
+    jsonschema.validate({"description": "blue jay"}, schema)   # v2-only — the archetype
+
+
+def test_pet_preview_v2_leaves_the_gpu_profile_and_watchdog_alone():
+    """§7.5: txt2img is the same Z-Image model at the same resolution, and the 180 s
+    already exists to cover a cold model load. A version bump that quietly widened
+    `needs` would change which nodes can claim a preview; one that widened the watchdog
+    would let a hung preview hold a GPU slot for 15 minutes instead of 3."""
+    pv = _load_pool_handler("pet_preview_handler.py", "pvh_v2_profile")
+    assert pv.METADATA["needs"] == {"gpu": 1, "vram_gb": 20, "gpu_backend": "cuda",
+                                    "cpu": 2, "ram_gb": 8}
+    assert pv.METADATA["timeout_s"] == 180
+    assert pv.METADATA["preemptible"] == "abort"
+    assert pv.METADATA["result_kind"] == "bytes"
