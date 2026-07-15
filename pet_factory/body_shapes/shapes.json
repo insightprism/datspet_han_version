@@ -1,0 +1,21 @@
+{
+  "_doc": "Body-shape vocabulary as content, not code (SPEC_PET_DESIGNER_FLOW §7.2). A body SHAPE (thin/normal/chubby) is a step-2 DESIGN modifier — 'what should my corgi look like' — and is deliberately NOT 'body type', which is taken repo-wide for the motion taxonomy (quadruped/avian/serpentine, SPEC_MOTION_PROFILES). These two vocabularies must never be conflated. `prompt_fragment` is prepended to the composed DESIGN string by the web tier's compose_design (never to _base_prompt — step 1 takes no design input, §0.1), so the engine never learns the word 'fat'. The default shape's prompt_fragment MUST be exactly \"\" — a default contributes no words — and a guard test pins it. Fragments are prompt-calibrated wording, not labels: they are what reaches Z-Image, and they never reach the browser. Adding a shape (e.g. 'lanky') is an edit to this file and nothing else.",
+  "default": "normal",
+  "shapes": [
+    {
+      "key": "thin",
+      "label": "Thin",
+      "prompt_fragment": "slender and slim"
+    },
+    {
+      "key": "normal",
+      "label": "Normal",
+      "prompt_fragment": ""
+    },
+    {
+      "key": "fat",
+      "label": "Chubby",
+      "prompt_fragment": "chubby and round"
+    }
+  ]
+}
