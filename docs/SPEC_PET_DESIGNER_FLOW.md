@@ -1269,7 +1269,11 @@ renders with the OS's light defaults, i.e. white-on-white on this page).
 is deliberate — "which animal" in the dialog, "anything else" in `DesignStep` (§4.3). Same
 widget, two different questions; conflating them was Rev.1's mistake and remains one.*
 
-**Rewritten:** `PetDesigner2.tsx`, 659 → ~280 lines (it is a verbatim fork of the live 649-line
+**Rewritten:** `Designer.tsx`, 659 → **551** lines — ~400 of code and ~120 of comment.
+Not the "~280" earlier revisions of this line claimed: it is the page component for three
+steps, and it holds the catalog fetch, the pre-fill, the pending-source state, the dialog
+wiring and three `<Step>` blocks. The DELETION is still real (see below); the number was
+just never measured. (It began as a verbatim fork of the 649-line
 `components/PetDesigner.tsx`). With `reference_id` as the spine, **`appendBaseFields` (`:245-252`) and
 the `base` prop disappear entirely**, taking the dead `kind:"house"` branch with them (`housePets`
 `:114`, `basePetId` `:115`, `listPets()` `:280`, the house `<select>` `:417-427`, `houseEmpty` `:352`,
