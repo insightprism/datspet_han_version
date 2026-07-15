@@ -64,6 +64,7 @@ Runtime code never branches on species/variant; variants are data files + regist
 - `pet_factory/motion_profiles/` — one JSON per body type + `registry.json`. Every profile declares the **full canonical pose key set** (disabled poses are `{"enabled": false}`); there is **no inheritance**. Resolution never raises — unknown animals/keys fall back to `registry.default` (`quadruped`). Two entry points: `resolve_motion_profile(animal)` (keyword) and `load_motion_profile(key)` (pinned).
 - `pet_factory/animal_catalog/` — `catalog.json` + one `base.png` per breed. Returns motion-profile *key strings*; cross-layer validity is enforced by guard tests, not runtime imports.
 - `pet_factory/tiers/` — entitlement table (pose caps, extra-pose price). Capability→tier mapping is data (`capability_tiers`); `default_tier` is the one-line launch lever. The browser only ever sees its own resolved entitlement.
+- `pet_factory/body_shapes/` — the body vocabulary (thin/normal/chubby) as content (`SPEC_PET_DESIGNER_FLOW` §7.2). A body **shape** is a step-2 *design* modifier — never confuse it with **body type**, which is taken repo-wide for the motion taxonomy (quadruped/avian/serpentine). `prompt_fragment` feeds the web tier's `compose_design` and never reaches the browser (same posture as the tier table); the default's fragment is `""` and a guard test pins it. Adding "lanky" is one JSON edit.
 - `web/src/pet/behaviorRegistry.ts` and `web/src/pet/locomotion/registry.ts` — the same plugin-registry pattern in the frontend pet runtime.
 
 ### Backend (`webui/`, FastAPI on :19954)
@@ -79,6 +80,7 @@ Runtime code never branches on species/variant; variants are data files + regist
 
 - `src/lib/api.ts` is the one adapter to the backend — every endpoint URL lives there. Use `localhost`, never `127.0.0.1`: the DPP launch cookie is host-scoped, and a hostname mismatch silently drops it (Accept button disappears). In dev, an empty `NEXT_PUBLIC_API_URL` means same-origin calls proxied by next.config; prod is a static export (`DATSPET_STATIC_EXPORT=1 NEXT_PUBLIC_API_URL=https://pet.datsme.me npm run build`).
 - `src/pet/` is the client-side pet runtime (canvas engine, behavior/locomotion registries, personality). Pages under `src/app/design/*` are the themed designer surfaces.
+- **Two designers exist right now, and that is transitional.** `src/app/design/general/` is the three-step flow of `SPEC_PET_DESIGNER_FLOW` (archetype → design → animation), built on the `reference_id` contract — this is where the DPP launch lands users. `src/components/PetDesigner.tsx` is the OLD single-form designer, still used by `/design/cat` and `/design/dog` and still posting the legacy `/api/generate` params, which `webui/app.py` keeps alive in `_legacy_resolve_base` / `_legacy_preview` (both marked **DELETE IN BUILD STEP 7**). Retiring the legacy contract is blocked on deciding what the themed pages become (`SPEC_PET_DESIGNER_FLOW` §11) — until then, do not add callers to either legacy path.
 
 ### Pool handlers (`pool_handler/`)
 

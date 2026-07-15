@@ -5,9 +5,10 @@ three-step designer, rewritten from it after many rounds of review against a run
 §6, §7 and §9–§13 are design, reconciled to them.
 
 **Implementation:** build steps 1, 2, 3, 5 and 6 are **done and green** — 213 tests, `tsc`
-clean. Step 4 is a fleet deploy (§10.1). Step 7 is **blocked on step 8** (§10). Decision #5
-— does img2img at 0.9 actually move a silhouette — is the one open gate, and body shape
-does not ship until it is answered.
+clean. Step 4 is a fleet deploy (§10.1). Step 7 is **blocked on step 8** (§10). **Decision #5 —
+the silhouette calibration — was RUN and PASSED (§4.4), so body shape ships.** The
+remaining opens are content calls, not gates: §9 #18 (`tabby` is a coat pattern, not a
+breed) and the ⚠️ pose-cap revert (#24).
 
 A UX consolidation of the designer surface. Sits under
 **`docs/SPEC_PET_DESIGNER_PLATFORM.md`** (the umbrella — landing, themed pages, base
@@ -722,12 +723,35 @@ Three reasons this is the right risk to take:
    **non-default shape → `min_strength = 0.9`.** One more condition in a function that already does
    this.
 
-**Gate (§9, decision #5):** one GPU session — redraw `dog/corgi/base.png` at 0.9 toward
-`"chubby and round corgi"` and at 0.9 toward `"slender and slim corgi"`. If the silhouette moves
-recognisably while identity holds, ship. If it doesn't, the fallback is **prompt wording first**, and
-only if that fails does body shape leave this spec for its own (where the cost of curating
-`<breed>/<shape>/base.png` can be decided by whoever pays it). **Body shape does not ship on a
-hypothesis.**
+**Gate (§9, decision #5) — RUN, and it PASSES (Rev.6, 2026-07-15).**
+
+`render_design_still("<fragment> corgi", dog/corgi/base.png, 0.9, seed=777)` against the
+live pipeline, all three at an identical seed so only the prompt varies:
+
+| shape | prompt | result |
+|---|---|---|
+| normal | `corgi` | the curated corgi, redrawn |
+| **fat** | `chubby and round corgi` | **deeper barrel, rounder body, stubbier legs** |
+| **thin** | `slender and slim corgi` | **slimmer body, longer legs, more upright** |
+
+**The silhouette moves recognisably, and identity holds.** All three are unmistakably the
+same corgi — same face, same markings, same flat-shaded style, same side profile facing
+right on white. Every property the catalog exists to guarantee (view, framing, scale,
+shading) survived; only the one the user asked to change moved. ~18 s warm.
+
+So reason 2 above is not a hope: redrawing from the curated base **does** preserve exactly
+what §4.1 says the animator needs while changing exactly what was asked. Rev.1's objection —
+that "the normal-corgi source would fight it" at 0.85 — was reasonable and is simply not
+what happens at 0.9, which is why the trigger in `compose_design` forces 0.9 rather than
+leaving it to the user's strength pick.
+
+The effect is *moderate*, not extreme: "chubby" is a rounder corgi, not a beach ball. That
+reads as correct for a pet, but it is a taste call and the wording is a one-line JSON edit
+if a stronger push is wanted (`body_shapes/shapes.json`) — no code, by construction.
+
+*Had it failed, the fallback was prompt wording first, and only then body shape leaving this
+spec for its own, where the cost of curating `<breed>/<shape>/base.png` could be decided by
+whoever pays it. Neither was needed.*
 
 ### 4.5 `min_strength` must stop lying
 
@@ -1321,7 +1345,7 @@ unavailable, they are not negotiable.
 | **20** | **Upload redraw strength** | **The user picks** *(new in Rev.5)* | §3.5. faithful (0.4) ↔ sprite (0.85, default). Likeness vs animation quality is a real trade and only the user knows which side they want |
 | **4** | **Does step 2 get a free-text field?** | **YES** *(resolved Rev.3)* | §4.3. It preserves `/make`'s unbounded expressiveness in the right step, decides `/make`'s fate — **and it is the precondition for #15.** Trimming the palette without it is a capability cut |
 | 9 | One button, or draw-then-commit? | **Two: draw, then use** *(superseded Rev.5)* | §3.6. Answered "one button" in Rev.4 and overtaken by §3.2 — once selection began executing immediately, draw and commit stopped being the same act. Drawing is the loop; committing ends it |
-| **5** | **Does img2img at 0.9 actually change silhouette?** | **⚠️ OPEN — one GPU session** | §4.4. Body shape does not ship on a hypothesis. Fallback: **prompt wording, then drop it** *(resolved Rev.3 — no curated-shape-asset fallback; the curation cost is not worth it, and the cache rule stays absolute)* |
+| **5** | **Does img2img at 0.9 actually change silhouette?** | **YES — measured, gate PASSED** *(Rev.6)* | §4.4. Run against the live pipeline at a fixed seed: chubby gives a deeper barrel and stubbier legs, thin a slimmer longer-legged corgi, and all three stay unmistakably the same corgi in the same view and style. Identity holds; only the asked-for property moved. **Body shape ships.** |
 | **15** | **Does the vocabulary get trimmed?** | **YES — ~8 colours, ~12 accessories** *(new in Rev.3)* | §4.6. **The only change in three revisions that makes the page smaller** (29 → ~18 at first paint). Everything else buys legibility. Gated on #4 |
 | **16** | Does the flow redesign reduce buttons? | **No — and stop claiming it does** | §1.1. Rev.2's "29 → 3" was impossible next to its own §3.1. Restructuring buys legibility + correctness; **only #15 buys size** |
 | 6 | Can the user skip the design step? | **No** | Keeps the flow linear; "no changes" is what adopt-a-sample is for (§4.1) |
@@ -1347,7 +1371,7 @@ cd web && npx tsc --noEmit        # NEVER `next build` — it poisons the live d
 
 | # | Step | Ships alone? | Fleet? |
 |---|---|---|---|
-| 0 | 🔬 **Calibration** — decision #5's GPU session (§4.4). Gates step 2 only | — | no |
+| 0 | ✅ 🔬 **Calibration** — decision #5's GPU session. **RUN, PASSED** (§4.4) | — | no |
 | 1 | **Engine** — `_base_sprite`; `render_design_still(reference_image=None, seed=None)`; parity pin. CLI untouched | ✅ | no |
 | 2 | **Data** — `pet_factory/body_shapes/` + guard test. No consumer yet. *Blocked by 0* | ✅ | no |
 | 3 | **Handler** — `pet_preview` v2. File change only; inert until 4 | ✅ | → 4 |
