@@ -1443,6 +1443,31 @@ file I/O, no GPU, no fleet gate); (d) the long-tail txt2img branch last, behind 
 
 ### 10.1 The fleet gate (step 4)
 
+> **⚠️ THE GATE AS SPECIFIED IS INSUFFICIENT — it passed while every job died. Read this
+> before running it.** (Recorded 2026-07-15, from doing it.)
+>
+> **`pet_preview` v2 depends on ENGINE step 1, on every node.** v2's no-b64 path calls
+> `render_design_still(description)` — the optional-args signature §7.1 introduced. A node
+> whose `pet_factory` predates step 1 has `(description, reference_image, strength)`, all
+> required, and the job dies with `TypeError` **at run time**. Nothing below said so, and
+> installing the handler alone is not the rollout.
+>
+> **The gate below cannot see it.** "3–5 repeated no-b64 submits all 201, never 422" tests
+> the DISPATCHER's schema — it proves the params validated, not that the node can run them.
+> It passed 5/5 while `omen-pet` failed 100% of jobs. **Add: watch at least one no-b64 job
+> to `done`.** A 201 is not a gate; a finished pet is.
+>
+> Note the asymmetry that hid it: the two nodes resolve `pet_factory` differently —
+> `dual-nvidia-pet` imports it from the live dev repo (so it is always current), while
+> `omen-pet` imports from its own clone (`WorkingDirectory=/home/flipper/datsme-pet-factory_wu`).
+> So no-b64 worked on one node and died on the other, ~50/50 by scheduler luck.
+>
+> **What the rollout actually is, per node:** back up → install the handler → **copy
+> `pet_factory/factory.py`** → restart the worker → verify the signature reads
+> `reference_image=None` → run a no-b64 job to `done`. Rollback stays one file copy + one
+> restart, for each of the two files.
+
+
 **This blocks *deploying* the long-tail branch, not *building* it.** Dev is `PET_GEN_BACKEND=local`, so
 steps 1–7 are fully buildable and testable without it. Curated animals never need it at all.
 
