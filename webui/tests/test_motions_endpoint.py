@@ -248,26 +248,39 @@ def test_entitlement_standalone_is_launch_default(app_mod):
     from fastapi.testclient import TestClient
     client = TestClient(app_mod.app)
     ent = client.get("/api/entitlement").json()
-    # Launch posture (§5.2): the default tier is 'plus', so a standalone caller
-    # gets 5 poses and the extra-pose price. (Flipping default_tier updates this.)
+    # Launch posture (§5.2): the default tier is 'plus', so a standalone caller gets
+    # the plus cap and the extra-pose price. (Flipping default_tier updates this.)
+    #
+    # ⚠️ TESTING (2026-07-15): the plus cap is 10, not the launch value of 5, so the
+    # redesigned designer can exercise every offerable pose. REVERT tiers.json AND this
+    # before launch — default_tier is "plus", so this is what EVERY user gets, and at
+    # 50 credits an extra pose a 10-pose pet would charge 100 + 8×50 = 500.
     assert ent["tier"] == "plus"
-    assert ent["max_poses"] == 5 and ent["extra_pose_slots"] == 3
+    assert ent["max_poses"] == 10 and ent["extra_pose_slots"] == 8
     assert ent["price_per_extra_pose"] == 50
 
 
 def test_server_clips_poses_over_cap(app_mod, monkeypatch):
     # The server clips an over-cap request to the caller's tier cap, authoritative
-    # (§8.6). At the launch-default plus tier (cap 5), a 6-pose request drops the
-    # lowest-priority optional pose — the UI cap is mirrored here but not trusted.
+    # (§8.6) — the UI cap is mirrored here but never trusted.
+    #
+    # The cap is STUBBED to 5 rather than read from the launch default, the way the
+    # base-cap test below already does. This test is about the clipping MECHANISM, and
+    # tying it to `default_tier`'s current number made it hostage to a config knob: when
+    # plus.max_poses moved to 10 for testing, a quadruped's 6 poses all fit and there
+    # was nothing left to clip — the test would have passed vacuously while proving
+    # nothing. A guard that goes quiet when the config moves is not a guard.
     client, captured = _client_capturing_run(app_mod, monkeypatch)
+    monkeypatch.setattr(app_mod.tiers_mod, "resolve_entitlement",
+                        lambda caps: {"max_poses": 5})
     r = client.post("/api/generate", data={
         "text": "a red fox",
-        # 6 poses requested (walk+idle + 4 optional) — one over the plus cap of 5.
+        # 6 poses requested (walk+idle + 4 optional) — one over the cap of 5.
         "poses": '{"walk": true, "idle": true, "run": true, "sleep": true, "sit": true, "eat": true}',
     })
     assert r.status_code == 200, r.text
     enabled = {k for k, v in captured["poses"].items() if v}
-    assert len(enabled) == 5, f"plus cap 5 must clip 6→5, got {enabled}"
+    assert len(enabled) == 5, f"cap 5 must clip 6→5, got {enabled}"
     assert {"walk", "idle"} <= enabled            # required always kept
 
 
