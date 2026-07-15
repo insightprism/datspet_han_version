@@ -5,8 +5,9 @@
  * (SPEC_PET_DESIGNER_FLOW §7.6).
  *
  * The one job worth naming: EVERY async result is stamped with the `seq` it fired
- * from, and the reducer drops a stale one. That is the fix for a live bug in today's
- * designer (PetDesigner.tsx:254-274) — `makePreview` is a plain async click handler
+ * from, and the reducer drops a stale one. That is the fix for a live bug in the
+ * designer this replaced (components/PetDesigner.tsx, now deleted): `makePreview`
+ * was a plain async click handler
  * with no cancellation, so changing the base during the ~10 s redraw lets the old
  * promise resolve and re-set previewId from a still drawn off the OLD base. That
  * stale id then flows into the build, and the user gets a 3-minute pet from an image

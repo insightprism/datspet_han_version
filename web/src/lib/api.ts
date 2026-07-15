@@ -112,7 +112,6 @@ export interface CatalogAnimal {
   label: string;
   tagline: string;
   motion_profile: string | null;
-  themed_page: string | null;     // /design/<themed_page>, or null = catalog-only
   breeds: CatalogBreed[];
   samples: CatalogSample[];
 }
@@ -158,16 +157,25 @@ export function catalogBaseOptions(animals: CatalogAnimal[]): CatalogBaseOption[
 // kept warm: dead client code that looks live is worse than an absent helper, and the
 // six lines cost nothing to write again.
 //
-// THE CAPABILITY IS NOT GONE. `POST /api/catalog/{animal}/samples/{sample}/adopt` is
-// still live and still tested server-side, and platform §4.4 calls it the zero-GPU
-// business lever — free users steered to adopt, paid users generate. It simply has no
-// UI now. `CatalogSample` / `CatalogAnimal.samples` below stay, because /api/catalog
-// really does return them and the type must model the response, not the consumer.
+// `POST /api/catalog/{animal}/samples/{sample}/adopt` still EXISTS. Platform §4.4 calls
+// it the zero-GPU business lever — free users steered to adopt, paid users generate — so
+// it is kept deliberately rather than lost by attrition. But be clear about what it is:
 //
-// Worth knowing before reviving it: catalog.json defines no samples at all today, so
-// the gallery rendered nothing even when it existed. That was always a CONTENT gap, not
-// a code one — a real dog sample sits staged at _candidates/dog/samples/friendlypup.zip
-// (commit b64dc3c), one `promote_sample.py dog friendlypup` from being real.
+//   no UI       SampleGallery was its only entry point, and it went with the themed
+//               pages (SPEC_PET_DESIGNER_FLOW §11).
+//   no content  catalog.json defines no `samples` at all, so `_samples_dir()` returns
+//               None for every animal and `list_samples()` returns []. It rendered
+//               nothing even when the gallery existed.
+//   NO TESTS    (An earlier version of this comment claimed "still tested server-side".
+//               That was false — grep finds zero. Said plainly now: reviving this means
+//               writing them.)
+//
+// So it is three-quarters dead, and reviving it needs all three: promote the one real
+// sample (staged at _candidates/dog/samples/friendlypup.zip, commit b64dc3c — a path
+// _samples_dir never looks at), build an entry point, and test the endpoint.
+//
+// `CatalogSample` / `CatalogAnimal.samples` below stay: /api/catalog really does return
+// the field, and the type must model the response, not the consumer.
 
 // The caller's OWN resolved tier entitlement (SPEC_PET_DESIGNER_PLATFORM §5.3).
 // The browser never sees the whole tier table — only this slice. The pose

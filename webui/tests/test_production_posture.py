@@ -114,7 +114,7 @@ def test_pool_row_exists_during_drive_and_clears_on_success(pool_app, tmp_path, 
         return _fake_bundle()
     monkeypatch.setattr(pool_app.pool_client, "drive_to_result", fake_drive)
 
-    job = pool_app.Job(id="webjob000003", name="x", dir=tmp_path)
+    job = pool_app.Job(id="webjob000003", name="x")
     pool_app.run_pet_job(job, description="red panda", reference_image=None)
 
     assert job.status == "done", job.error
@@ -130,7 +130,7 @@ def test_pool_row_clears_on_error(pool_app, tmp_path, monkeypatch):
         raise pc.PoolError("worker died and was not reclaimed")
     monkeypatch.setattr(pool_app.pool_client, "drive_to_result", boom)
 
-    job = pool_app.Job(id="webjob000004", name="x", dir=tmp_path)
+    job = pool_app.Job(id="webjob000004", name="x")
     pool_app.run_pet_job(job, description="red panda", reference_image=None)
 
     assert job.status == "error"
@@ -153,7 +153,7 @@ def test_cleanup_transients_sweeps_old_keeps_fresh_and_active(pool_app):
     active_dir.mkdir(); os.utime(active_dir, (old, old))
     with pool_app.JOBS_LOCK:
         pool_app.JOBS["livejob00001"] = pool_app.Job(
-            id="livejob00001", name="live", dir=active_dir, status="running")
+            id="livejob00001", name="live", status="running")
 
     # bundle_tokens FK-references pets(id) — park the expired token on a real pet
     db.insert_pet(pet_id="tokpet000001", breed_id="b", display_name="T",

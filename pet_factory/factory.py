@@ -430,7 +430,7 @@ def render_design_still(description: str, reference_image=None, strength=None,
     (SPEC_PET_DESIGNER_FLOW §2). Two shapes, both delegating to `_base_sprite`:
 
       - reference_image + strength → an img2img redraw toward `description`.
-        This is step 3 ("see it"): the archetype redrawn toward the user's design.
+        This is step 2's answer: the archetype redrawn toward the user's design.
       - neither                    → txt2img a fresh base from `description`.
         This is step 1's long-tail branch (§3.3): "what does a blue jay look like"
         when no curated base.png is cached for it.
@@ -441,9 +441,16 @@ def render_design_still(description: str, reference_image=None, strength=None,
     Raises ValueError for reference_image without strength: as-is is meaningless
     for a *still* renderer — the caller already holds those bytes (§7.1).
     """
-    if reference_image is not None and strength is None:
+    # `not strength`, NOT `strength is None`. The guard and the dispatch have to agree
+    # on what "no strength" means, and _base_sprite branches on TRUTHINESS — so a 0.0
+    # passed the `is None` check, fell into the as-is branch, and handed the caller back
+    # their own bytes with no render and no error. Exactly what the line below says is
+    # impossible. Unreachable from the web tier (it clamps to [0.3, 0.9]) and from the
+    # pool (schema minimum 0.3), but a contract that only holds because every caller
+    # happens to be careful is not a contract.
+    if reference_image is not None and not strength:
         raise ValueError(
-            "render_design_still(reference_image=…) requires a strength — "
+            "render_design_still(reference_image=…) requires a non-zero strength — "
             "rendering a reference as-is would just return the caller's own bytes."
         )
     out = _base_sprite(description, reference_image=reference_image,

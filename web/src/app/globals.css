@@ -57,9 +57,9 @@ body {
  * Form + action primitives (SPEC_PET_DESIGNER_FLOW §7.6). They live here, beside
  * .card/.mono, because that is where this app's shared primitives already live —
  * and because the designer alone has five call sites for them, well past the
- * "three instances before consolidating" bar (CLAUDE.md). components/PetDesigner.tsx
- * still inlines its own Tailwind + style={{…}} at every call site; that was
- * reasonable for one file and does not scale to five.
+ * "three instances before consolidating" bar (CLAUDE.md). The designer this replaced
+ * inlined its own Tailwind + style={{…}} at every call site; that was reasonable for
+ * one file and did not scale to five.
  *
  * `color-scheme: dark` is LOAD-BEARING, not decoration. Without an explicit
  * background/color, a <select> and an <input> fall back to the OS's LIGHT form

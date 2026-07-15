@@ -204,5 +204,25 @@ def test_strength_is_clamped_to_the_calibrated_range(capture_workflow, reference
 def test_still_renderer_refuses_as_is(reference_png):
     """§7.1: as-is is meaningless for a *still* renderer — it would hand the caller
     back the bytes they already have. Only the animator has a use for that branch."""
-    with pytest.raises(ValueError, match="requires a strength"):
+    with pytest.raises(ValueError, match="requires a non-zero strength"):
+        factory.render_design_still("corgi", reference_png)
+
+
+def test_still_renderer_refuses_zero_strength(reference_png, monkeypatch):
+    """§7.1's guard has to mean what it says.
+
+    It read `strength is None` while _base_sprite dispatches on TRUTHINESS, so 0.0
+    slipped through, hit the as-is branch, and returned the caller's own bytes with no
+    render and no error — precisely what the docstring calls impossible. Unreachable
+    from the web tier (clamped to [0.3, 0.9]) and the pool (schema minimum 0.3), but a
+    contract that holds only because every caller happens to be careful is not one.
+    """
+    def explode(*a, **k):
+        raise AssertionError("0.0 must be refused, not rendered or returned as-is")
+
+    monkeypatch.setattr(factory, "_run", explode)
+    with pytest.raises(ValueError, match="non-zero strength"):
+        factory.render_design_still("corgi", reference_png, 0.0)
+    # …and None still raises, the case the guard was already right about.
+    with pytest.raises(ValueError, match="non-zero strength"):
         factory.render_design_still("corgi", reference_png)

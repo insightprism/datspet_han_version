@@ -57,7 +57,11 @@ def _base_prompt(animal: str) -> str:
 
 def _idle_frame_from_bundle(zip_bytes: bytes) -> bytes:
     """Extract the first idle (else walk) frame from a built bundle as a PNG —
-    the candidate base still. Same crop math as app.extract_base_frame."""
+    the candidate base still.
+
+    (This used to say "same crop math as app.extract_base_frame". That function is
+    gone — it served the house-pet base door, which the designer no longer has
+    (SPEC_PET_DESIGNER_FLOW §11). The crop below is now the only copy.)"""
     from PIL import Image
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
         sheet_name = next(n for n in z.namelist() if n.endswith("_sprite.png"))

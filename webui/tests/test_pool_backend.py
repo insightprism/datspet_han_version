@@ -93,7 +93,7 @@ def test_pool_submit_carries_reference_image_and_params(pool_app, tmp_path, monk
     from PIL import Image
     Image.new("RGB", (32, 32), (200, 40, 40)).save(ref)
 
-    job = pool_app.Job(id="job000000001", name="A Red Panda", dir=tmp_path,
+    job = pool_app.Job(id="job000000001", name="A Red Panda",
                        pool_labels={"user": "u-42", "device": "desktop"})
     pool_app.run_pet_job(
         job, description="red panda", reference_image=ref,
@@ -122,7 +122,7 @@ def test_pool_submit_omits_reference_when_none(pool_app, tmp_path, monkeypatch):
     monkeypatch.setattr(pool_app.pool_client, "drive_to_result",
                         lambda pool_job_id, **kw: _fake_bundle())
 
-    job = pool_app.Job(id="job000000002", name="turtle", dir=tmp_path)
+    job = pool_app.Job(id="job000000002", name="turtle")
     pool_app.run_pet_job(job, description="a green turtle", reference_image=None)
 
     assert job.status == "done", job.error

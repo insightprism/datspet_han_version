@@ -140,7 +140,7 @@ app.include_router(motion_admin.router)
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 ALLOWED_IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 
-# How hard to redraw an uploaded photo into a sprite (SPEC_PET_DESIGNER_FLOW §3.4).
+# How hard to redraw an uploaded photo into a sprite (SPEC_PET_DESIGNER_FLOW §3.5).
 # High on purpose: a photograph is far from the side-profile, flat-shaded, white-
 # background still Wan I2V needs, and the gap is what makes today's raw-photo
 # animations unreliable. This is the ONE knob of the upload door, and it is a
@@ -157,7 +157,11 @@ GPU_LOCK = threading.Lock()
 class Job:
     id: str
     name: str
-    dir: Path                       # transient scratch dir (uploads/remix base)
+    # NO `dir`. It carried a per-job scratch dir for the upload/remix-base files the
+    # legacy contract wrote there. The reference layer resolves all of that at FILL
+    # time (§7.3), so nothing has written a job scratch file since — the field was set
+    # twice and read nowhere, and /api/generate was mkdir'ing an empty directory on
+    # every single build for a 24 h sweep to find.
     status: str = "queued"          # queued | running | done | error
     progress: float = 0.0           # 0..1
     message: str = "Waiting for the GPU…"
@@ -260,28 +264,6 @@ def compose_design(species: str, color: str, accessories: list[str],
 
     display_name = (f"{color} {species}" if color else species).title()
     return description, display_name, min_strength
-
-
-def extract_base_frame(pet_id: str, dest: Path) -> Path:
-    """Crop a pet's first resting frame out of its stored sprite sheet — the
-    starting image for the remix pipeline. Works for every pet in the house,
-    however old, because the sheet + manifest are what we persist."""
-    from PIL import Image
-    row = db.get_pet(pet_id)
-    if row is None:
-        raise HTTPException(404, "base pet not found")
-    manifest = json.loads(row["manifest_json"])
-    sheet = Image.open(io.BytesIO(row["sheet_png"]))
-    anims = manifest.get("animations", {})
-    frames = (anims.get("idle") or anims.get("walk") or {}).get("frames") or [0]
-    idx = frames[0]
-    cols = manifest.get("columns", 8)
-    fw = manifest.get("frame_width", 256)
-    fh = manifest.get("frame_height", 256)
-    cell = sheet.crop(((idx % cols) * fw, (idx // cols) * fh,
-                       (idx % cols + 1) * fw, (idx // cols + 1) * fh))
-    cell.save(dest, "PNG")
-    return dest
 
 
 def _encode_reference_image(path: Path, max_px: int = 1024) -> str:
@@ -482,7 +464,6 @@ def _reattach_pool_jobs() -> None:
         job = Job(
             id=row["id"],
             name=row["display_name"] or row["description"] or "pet",
-            dir=SCRATCH_DIR / row["id"],
             status="running",
             message="Reattached after a restart — still generating…",
             created_at=row["created_at"],
@@ -594,7 +575,7 @@ def _render_still(description: str, request: Request, owner: Optional[str],
     decision rather than two:
 
         reference_path=None → txt2img an archetype  (step 1's long-tail door)
-        reference_path set  → img2img redraw        (step 1's upload door, step 3)
+        reference_path set  → img2img redraw        (step 1's upload door, step 2's preview)
 
     Both /api/reference and /api/preview call this. Callers must be sync `def`
     handlers (§5.3) — this blocks ~10 s and FastAPI runs sync paths in a threadpool;
@@ -740,7 +721,7 @@ def create_reference(
             display_name=animal.title(), motion_profile=None,
             source="txt2img", generated=True))
 
-    # door == "upload": redraw it (§3.4). THIS is the change of behaviour — today
+    # door == "upload": redraw it (§3.5). THIS is the change of behaviour — today
     # an uploaded photo reaches Wan I2V raw and animates unreliably, because a
     # photo is not the side-profile flat-shaded sprite make_pet_zip's docstring
     # requires. Redrawing at FILL time is what lets the user see the sprite before
@@ -752,7 +733,7 @@ def create_reference(
         raise HTTPException(413, "Image exceeds 12 MB limit")
 
     subject = animal or "pet"
-    # The user chooses how hard to redraw (§3.4): "faithful" keeps their photo's look
+    # The user chooses how hard to redraw (§3.5): "faithful" keeps their photo's look
     # but preserves the photographic pose/lighting Wan I2V animates badly; "sprite"
     # animates reliably but looks redrawn. Only they know which side of that they
     # want, so the server takes the number and clamps it rather than deciding.
@@ -776,12 +757,17 @@ def reference_image(reference_id: str, request: Request):
     reference can be a user's uploaded photo, so it needs the rule rows get."""
     owner = datsme_integration.resolve_launch_identity(request)
     try:
-        _load_reference(reference_id, owner)
+        ref = _load_reference(reference_id, owner)
     except HTTPException as e:
         # An image endpoint has one honest failure: it isn't there. Collapse the
         # 400-expired case to 404 so a broken <img> is the whole story.
         raise HTTPException(404, "reference not found") from e
-    png_path, _ = _reference_paths(reference_id)
+    # ref["id"], NOT the raw param. _load_reference validates the STRIPPED id, so
+    # "/api/reference/%20abc.png" passed validation and then rebuilt the path from the
+    # padded string — a file that does not exist, and an unhandled 500 on the one
+    # endpoint whose whole contract is "404, and nothing else". Reading the id back off
+    # the record is what preview_design and start_job already do; this was the odd one.
+    png_path, _ = _reference_paths(ref["id"])
     return FileResponse(png_path, media_type="image/png")
 
 
@@ -935,7 +921,7 @@ def motions(animal: str = "", profile: str = ""):
 @app.get("/api/catalog")
 def catalog():
     """The base-animal tree (SPEC_PET_DESIGNER_PLATFORM §4.3): animals, each with
-    its breeds, the pinned motion_profile key, and whether it has a themed page.
+    its breeds and the pinned motion_profile key.
     Drives step 1's gallery — the curated bases, shown as images (§3.3).
     Read-only + cacheable. The browser sees only what it needs to render + route —
     the base_image_url per breed is a stable path it can <img src> directly."""
@@ -963,7 +949,6 @@ def catalog():
             "label": a.get("label", a["key"]),
             "tagline": a.get("tagline", ""),
             "motion_profile": a.get("motion_profile"),
-            "themed_page": a.get("themed_page"),
             "breeds": breeds,
             "samples": samples,
         })
@@ -1141,10 +1126,7 @@ async def start_job(
     _purge_drafts(owner)
 
     job_id = uuid.uuid4().hex[:12]
-    job_dir = SCRATCH_DIR / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-
-    job = Job(id=job_id, name=display_name, dir=job_dir,
+    job = Job(id=job_id, name=display_name,
               external_user_id=owner,
               # Capture attribution NOW, in the request context — the generation
               # thread below can't see the request's User-Agent.
@@ -1296,6 +1278,10 @@ def _cleanup_transients(max_age_s: float = TRANSIENT_MAX_AGE_S) -> int:
                 removed += 1
         except OSError:
             continue
+    # LEGACY DRAIN. Nothing writes job scratch dirs any more — the reference layer
+    # resolves uploads and remix bases at fill time, so /api/generate stopped creating
+    # these. This stays to clear what pre-refactor builds left on a deployed box; it is
+    # a no-op on a fresh install and can go once the boxes have swept themselves.
     for d in SCRATCH_DIR.iterdir():
         with JOBS_LOCK:
             job = JOBS.get(d.name)

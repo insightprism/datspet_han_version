@@ -13,20 +13,30 @@
  * the page was one decision. Restructuring the flow bought legibility and correctness
  * and exactly zero controls; trimming the palette buys the size.
  *
- * The trim is only SAFE because of the free-text field below it (decision #4): 8
+ * The trim is only SAFE because of the free-text field below it (decision #4): 10
  * swatches + "anything else" is MORE expressive than 16 swatches alone — "teal with
- * gold spots" was never in the palette — while costing 8 fewer controls. Without free
+ * gold spots" was never in the palette — while costing 6 fewer controls. Without free
  * text this would be a straight capability cut and must not happen. The two are one
  * change.
+ *
+ * MEASURED, so the numbers here stop drifting from the ones in the spec: the palette is
+ * 11 controls with "natural", the whole step-2 vocabulary is 22, and the page peaks at
+ * 25 with three accessories chosen and step 1 collapsed. §4.6 aspires to ~8 colours;
+ * this is 10, deliberately — see the note on the array below. The spec was updated to
+ * match the code rather than the other way round, because the two extra colours are
+ * black and white and the argument for keeping them is stronger than the round number.
  */
 import type { BodyShape } from "@/lib/api";
 import { MAX_ACCESSORIES } from "./designFlow";
 
-// §4.6: trimmed from 16 to 8. Which 8 is a CONTENT decision (it belongs to whoever
+// §4.6: trimmed from 16 to 10 — NOT the "8" this comment used to claim, and the count
+// matters because it is the only number in the whole redesign that measures the thing
+// the author complained about. Which colours is a CONTENT decision (it belongs to whoever
 // owns the look); the engineering constraints are that each must survive
 // compose_design's "recolored entirely {colour}" clause and read unambiguously at
-// 160 px. The cuts are the chromatic near-duplicates free text genuinely covers
-// (golden, emerald, teal, sky blue, indigo, rose, cream) — the NEUTRALS stay, because
+// 160 px. SIX were cut, all chromatic near-duplicates free text genuinely covers:
+// emerald, teal, sky blue, indigo, rose, cream. (`golden` is not a seventh — it was
+// RENAMED to `yellow`, which is why 16 - 6 = 10 and not 9.) The NEUTRALS stay, because
 // "black cat" and "white dog" are among the most-wanted pets there are, and making
 // someone type for those would be a downgrade from clicking, not a trade.
 const COLORS = [

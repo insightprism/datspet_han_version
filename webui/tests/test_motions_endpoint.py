@@ -167,9 +167,11 @@ def test_catalog_endpoint_returns_animal_tree(app_mod):
     keys = [a["key"] for a in body["animals"]]
     assert "cat" in keys and "dog" in keys
     dog = next(a for a in body["animals"] if a["key"] == "dog")
-    # Real bases have been promoted (§4.5), so the launch gate is lifted and
-    # themed_page is restored — the landing page shows the Dog World tile again.
-    assert dog["themed_page"] == "dog"
+    # NO themed_page. It named the /design/<slug> route for the landing tiles, and the
+    # themed pages are deleted (SPEC_PET_DESIGNER_FLOW §11) — this used to assert
+    # dog["themed_page"] == "dog" and passed, pinning a deleted concept and advertising
+    # a route that 404s.
+    assert "themed_page" not in dog, "the API is publishing a route that no longer exists"
     corgi = next(b for b in dog["breeds"] if b["key"] == "corgi")
     # Every breed pins a motion_profile that resolves (§4.2) and a base image URL.
     assert corgi["motion_profile"]

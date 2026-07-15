@@ -13,7 +13,7 @@ It wraps the reference API unchanged:
 v2 (SPEC_PET_DESIGNER_FLOW §7.5) makes `reference_image_b64` OPTIONAL, which gives this
 one task both of the flow's still-rendering jobs:
 
-    with a reference    → img2img redraw    = step 3, "see my design"      (~10 s)
+    with a reference    → img2img redraw    = step 2's preview            (~10 s)
     without a reference → txt2img archetype = step 1's long-tail cache miss (~10 s)
                                               ("what does a blue jay look like")
 
@@ -79,7 +79,7 @@ def run(params, ctx):
     b64 = params.get("reference_image_b64")
 
     if b64:
-        # Redraw a reference toward the design — step 3, "see my design".
+        # Redraw a reference toward the design — step 2's preview.
         try:
             raw = base64.b64decode(b64, validate=True)
         except (binascii.Error, ValueError) as e:

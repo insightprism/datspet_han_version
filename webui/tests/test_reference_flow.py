@@ -142,7 +142,7 @@ def test_long_tail_animal_draws_an_archetype(client, no_gpu):
 
 
 def test_upload_reference_is_redrawn_not_animated_asis(client, no_gpu):
-    """§3.4 — the whole point of the upload door.
+    """§3.5 — the whole point of the upload door.
 
     Today an uploaded photo reaches Wan I2V raw (remix_strength stays None →
     make_pet_zip's as-is branch), and a photo is not the side-profile flat-shaded
@@ -164,7 +164,7 @@ def test_upload_reference_is_redrawn_not_animated_asis(client, no_gpu):
     (9.0, 0.9),      # clamped to the ceiling
 ])
 def test_upload_redraw_strength_is_the_users_choice(client, no_gpu, sent, expected):
-    """§3.4: likeness vs animation quality is a real trade and only the user knows
+    """§3.5: likeness vs animation quality is a real trade and only the user knows
     which side they want — "faithful" keeps their photo's look but preserves the
     photographic pose Wan I2V animates badly; "sprite" animates reliably but looks
     redrawn. The server takes the number and clamps it; it does not decide."""
@@ -403,3 +403,33 @@ def test_standalone_references_stay_readable(client, no_gpu):
     _can_access. Scoping must not lock the standalone user out of their own box."""
     ref = client.post("/api/reference", data={"animal": "blue jay"}).json()
     assert client.get(ref["image_url"]).status_code == 200
+
+
+def test_padded_reference_id_never_500s(client, no_gpu):
+    """The PNG endpoint's whole contract is "404, and nothing else" (§7.3) — and it was
+    the one endpoint that could 500.
+
+    _load_reference validates the STRIPPED id, but this endpoint rebuilt the path from
+    the RAW param: " abc" passed validation, then FileResponse was handed a path that
+    does not exist → unhandled 500. Not a scoping bypass (the owner check ran on the
+    stripped id), but a 500 on the endpoint that promised it could not produce one.
+
+    Stripping is the ESTABLISHED contract, not a new leniency: /api/preview and
+    /api/generate both accept a padded id and 200 today, because they read the id back
+    off the record (`ref["id"]`) instead of trusting the param. This endpoint was the
+    odd one out; now it agrees. The point of the test is that NOTHING here 500s.
+    """
+    ref = client.post("/api/reference", data={"catalog_animal": "cat",
+                                              "catalog_breed": "tabby"}).json()
+    rid = ref["reference_id"]
+    assert client.get(f"/api/reference/{rid}.png").status_code == 200
+
+    for padded in (f"%20{rid}", f"{rid}%20", f"%09{rid}"):
+        code = client.get(f"/api/reference/{padded}.png").status_code
+        assert code != 500, f"{padded!r} 500s — the raw param reached the path again"
+        assert code == 200, f"{padded!r} gave {code}; strip is the contract (preview/generate agree)"
+
+    # A genuinely absent id is still the honest 404 — stripping must not turn "missing"
+    # into "found".
+    assert client.get("/api/reference/deadbeef0000.png").status_code == 404
+    assert client.get("/api/reference/not-alnum!.png").status_code == 404

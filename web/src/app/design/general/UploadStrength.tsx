@@ -2,7 +2,7 @@
 
 /**
  * The pending base animal, and the one control that only an upload needs
- * (SPEC_PET_DESIGNER_FLOW §3.4).
+ * (SPEC_PET_DESIGNER_FLOW §3.5).
  */
 
 /** What the user has lined up but not yet made their base. */
@@ -13,7 +13,7 @@ export type PendingSource =
 
 /**
  * How hard to redraw an uploaded photo. The USER picks, because the trade is real and
- * only they know which side they want (§3.4):
+ * only they know which side they want (§3.5):
  *
  *   faithful — stays like YOUR dog, but keeps the photographic pose and lighting that
  *              Wan I2V animates badly. That is today's bug, chosen deliberately.

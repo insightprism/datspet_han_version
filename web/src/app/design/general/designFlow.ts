@@ -2,9 +2,10 @@
  * designFlow — the pure state machine behind the designer (SPEC_PET_DESIGNER_FLOW §7.6).
  *
  * No React, no fetch, no DOM: types, a reducer, and selectors. That is deliberate —
- * the invalidation rules ARE the product, and today they live implicitly across 12
- * useState + 5 useEffects in PetDesigner.tsx, order-dependent and firing as separate
- * renders. Here each transition is one atomic case you can read and test.
+ * the invalidation rules ARE the product. In the designer this replaced they lived
+ * implicitly across 12 useState + 5 useEffects, order-dependent and firing as
+ * separate renders. Here each transition is one atomic case you can read and test.
+ * (That file — components/PetDesigner.tsx — is deleted; this is the only designer.)
  *
  * Two ideas do the work:
  *
@@ -90,7 +91,7 @@ export interface DesignFlowState {
    */
   previewFailureDismissed: boolean;
 
-  /** Step 4. */
+  /** Step 3: what it can do, and what that costs. */
   selectedPoses: string[];
   poseMenu: string[];
   poseNotice: string | null;
@@ -188,7 +189,7 @@ export function expandedStep(s: DesignFlowState, shapes: BodyShape[]): StepId {
 /**
  * The disclosure rule (§7.6): every step always renders its ARTIFACT; a step renders
  * its CONTROLS only when expanded. Only the picture ever needed to stay co-visible —
- * 17 swatches never did. This is what makes first paint 18 and peak 21.
+ * 17 swatches never did. Measured: first paint 2, peak 25 (see Step.tsx).
  */
 export function showsControls(s: DesignFlowState, shapes: BodyShape[], step: StepId): boolean {
   return expandedStep(s, shapes) === step;

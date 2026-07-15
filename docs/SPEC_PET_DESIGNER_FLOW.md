@@ -311,9 +311,9 @@ Measured on "yellow chubby blue jay, wizard hat, +run pose":
 | | Today | Rev.2 (flow only) | Rev.3 (flow + §4.6) | **Rev.6 (as built)** |
 |---|---|---|---|---|
 | Actions to a finished pet | ~7 | ~6 | ~6 | **~8** |
-| Controls on screen **at first paint** | **29** (verified) | ~26 | ~18 | **3** |
-| **Peak** controls on screen at once | **32** (verified) | ~30 | ~21 | **~21** |
-| Total controls that exist | 29 | ~30 | ~21 | **~21** |
+| Controls on screen **at first paint** | **29** (verified) | ~26 | ~18 | **2** (measured) |
+| **Peak** controls on screen at once | **32** (verified) | ~30 | ~21 | **25** (measured) |
+| Total controls that exist | 29 | ~30 | ~21 | **~27** |
 | Decisions to make | ~8 | ~8 | ~8 | ~8 |
 
 *Rev.6 actions, counted honestly: `Use this animal →` · colour · `Preview my pet` ·
@@ -321,11 +321,18 @@ Measured on "yellow chubby blue jay, wizard hat, +run pose":
 default is not wanted. **Two of those eight are the locks**, which no auto-advancing flow
 would charge.*
 
-**Rev.6 reaches "3 controls at first paint" — the number Rev.1 and Rev.2 claimed and could
-not deliver.** Not by disclosure: by the LOCKS (§3.7, §4.7). Steps 2 and 3 are not mounted
-until the base is committed, so the opening screen is a picture, a draw button and a use
-button. Rev.2 promised this while its own §3.1 opened step 2 immediately, which is why the
-claim was arithmetically impossible (§12).
+**Rev.6 reaches TWO controls at first paint — it beats the "3" Rev.1 and Rev.2 claimed and
+could not deliver.** Not by disclosure: by the LOCKS (§3.7, §4.7). Steps 2 and 3 are not
+mounted until the base is committed, so the opening screen is the box and one button — the
+draw button is not rendered at all, because the pre-filled base is a curated FILE and there
+is nothing to draw. Rev.2 promised 3 while its own §3.1 opened step 2 immediately, which is
+why the claim was arithmetically impossible (§12).
+
+**Peak is 25, not the ~21 this spec estimated** — measured, not projected: the vocabulary is
+22 (an 11-control palette with "natural", 3 body, 1 accessory select + up to 3 remove-chips,
+1 free text, 3 strength), plus preview and use, plus step 1's collapsed header. §4.6's ~8
+colours became 10 deliberately (see there); the number moved, the reasoning held. **The code
+is right and this table was wrong — it is corrected to the code, not the reverse.**
 
 **It costs two actions** — ~6 → ~8, one per lock, and worse than today's ~7 on that count.
 State it plainly rather than hide it: **the flow got longer and better.** A step that
@@ -793,12 +800,21 @@ the highest-leverage change in this document and the only one the author would f
 than 16 swatches alone** — "teal with gold spots" was never in the palette — while costing 8 fewer
 controls. Without it, trimming is a straight capability cut and must not happen.
 
-> **Rev.3 resolution:** trim the palette to **~8** high-contrast, prompt-legible colours + "natural".
+> **Rev.6 — AS BUILT: 10, not ~8.** Six were cut (emerald, teal, sky blue, indigo, rose,
+> cream), all chromatic near-duplicates free text covers; `golden` was renamed `yellow`, not
+> removed, which is why 16 − 6 = 10. **Black and white were KEPT against this section's own
+> illustrative set**, and that is the whole disagreement: "black cat" and "white dog" are
+> among the most-wanted pets there are, and making someone type for them is a downgrade from
+> clicking, not a trade. Two extra swatches is the right price. The palette is 11 controls
+> with "natural"; §1.1's peak of 25 follows from it.
+>
+> *(Rev.3's original text, kept because the reasoning is still right even though the number
+> moved:)* trim the palette to **~8** high-contrast, prompt-legible colours + "natural".
 > Keep the accessory `<select>` **as a control** (it is already 1) but trim its *list* to the ~12 that
 > read clearly at sprite scale — that is scan-load, not control-count, and worth doing for the same
 > reason. Free text (#4 = **yes**) covers everything cut, in both vocabularies.
 
-**Which 8 is a content decision, not an architectural one**, and it belongs to whoever owns the look.
+**Which colours is a content decision, not an architectural one**, and it belongs to whoever owns the look.
 The engine's constraint: each must survive `compose_design`'s `"recolored entirely {colour}"` clause and
 read unambiguously at 160 px. A reasonable starting set — red, orange, yellow, green, blue, purple,
 pink, brown — plus "natural" is **9 controls against today's 17**.

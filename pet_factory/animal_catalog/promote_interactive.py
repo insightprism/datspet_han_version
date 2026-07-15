@@ -11,7 +11,7 @@ For each catalog breed with staged candidates it prints the candidate numbers +
 their file paths (open them in any image viewer, or use the contact-sheet
 artifact), then asks which to promote. Enter a number to promote, or press Enter
 to skip that breed. At the end it offers to restore each fully-curated animal's
-`themed_page` (so the landing tiles light up) and to run the guard test.
+and to run the guard test.
 """
 from __future__ import annotations
 
@@ -89,23 +89,10 @@ def main() -> None:
         print("nothing promoted.")
         return
 
-    # Offer to restore themed_page for animals whose every breed now has a base.
-    to_restore = [a for a in catalog["animals"]
-                  if curated.get(a["key"]) and a.get("themed_page") is None
-                  and a.get("_themed_page_when_curated")]
-    if to_restore:
-        names = ", ".join(a.get("label", a["key"]) for a in to_restore)
-        ans = _prompt(f"restore themed_page (landing tiles) for {names}? (y/N): ")
-        if ans.lower() == "y":
-            for a in to_restore:
-                a["themed_page"] = a.pop("_themed_page_when_curated")
-            # Drop the now-stale launch-gate note if every animal is curated.
-            if all(curated.get(a["key"]) for a in catalog["animals"]):
-                catalog.pop("_LAUNCH_GATE", None)
-            _CATALOG.write_text(json.dumps(catalog, indent=2) + "\n")
-            print(f"  ✓ restored themed_page for {names} (catalog.json updated)")
-        else:
-            print("  left themed_page as-is (tiles stay hidden until you restore them)")
+    # NO themed_page restore. It offered to relight the "landing tiles" — a tile per
+    # world (Cat World, Dog World) linking to /design/<slug>. Those pages are deleted
+    # (SPEC_PET_DESIGNER_FLOW §11) and the field is gone from catalog.json, so this
+    # prompt offered to publish links to routes that 404.
 
     ans = _prompt("run the catalog guard test now? (Y/n): ")
     if ans.lower() != "n":

@@ -1,11 +1,10 @@
 {
-  "_doc": "Base-animal catalog (SPEC_PET_DESIGNER_PLATFORM \u00a74.2). Master index of curated base animals + breeds. Each entry pins a `motion_profile` key at the MOST SPECIFIC AUTHORED level (\u00a74.2): a breed carries its own key ONLY when a level-1 file exists in the motion registry; otherwise it inherits the animal row's key. `themed_page` names the /design/<slug> route (null = NO landing tile; the page is still reachable by direct URL and the breed falls back to General). A guard test (tests/test_animal_catalog.py) asserts every pinned `motion_profile` key resolves in the motion registry and every base.png exists.",
+  "_doc": "Base-animal catalog (SPEC_PET_DESIGNER_PLATFORM \u00a74.2). Master index of curated base animals + breeds, shown as images in step 1's gallery (SPEC_PET_DESIGNER_FLOW \u00a73.3). Each entry pins a `motion_profile` key at the MOST SPECIFIC AUTHORED level (\u00a74.2): a breed carries its own key ONLY when a level-1 file exists in the motion registry; otherwise it inherits the animal row's key. A guard test (tests/test_animal_catalog.py) asserts every pinned `motion_profile` key resolves in the motion registry and every base.png exists. A BASE IS A SPECIES + A BREED, AND NOTHING ELSE: `cat/black` was removed because 'black' is a COLOUR, and colour is a step-2 design input \u2014 a Black Cat base is a cat someone already designed, which \u00a72.1 forbids step 1 from holding. NO `themed_page`: it named the /design/<slug> route for the landing tiles, and the themed pages are deleted (SPEC_PET_DESIGNER_FLOW \u00a711). Publishing a route that 404s is worse than publishing nothing.",
   "animals": [
     {
       "key": "cat",
       "label": "Cat",
       "motion_profile": "quadruped",
-      "themed_page": "cat",
       "tagline": "Design your own cat",
       "breeds": [
         {
@@ -22,7 +21,6 @@
       "key": "dog",
       "label": "Dog",
       "motion_profile": "quadruped",
-      "themed_page": "dog",
       "tagline": "Design your own dog",
       "breeds": [
         {

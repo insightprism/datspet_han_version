@@ -8,11 +8,14 @@
  *     Every step always renders its ARTIFACT. A step renders its CONTROLS only
  *     when it is expanded.
  *
- * That is what makes the page 18 controls at first paint and 21 at peak instead of
- * today's 29/32 — and, just as importantly, what makes the numbers derivable rather
- * than guessed. The artifact is the picture; the controls are the swatches. Only the
- * picture ever needed to stay co-visible: "a blue jay" next to "my blue jay" is the
- * clearest possible statement of what steps 1 and 2 each did.
+ * MEASURED, not quoted from the spec: 2 controls at first paint and 25 at peak,
+ * against today's 29/32. First paint beats the spec's 3 (the curated pre-fill
+ * suppresses the draw button — nothing to draw); peak misses its ~21, because the
+ * palette is 11 with "natural" and the vocabulary is 22.
+ *
+ * The artifact is the picture; the controls are the swatches. Only the picture ever
+ * needed to stay co-visible: "a blue jay" next to "my blue jay" is the clearest
+ * possible statement of what steps 1 and 2 each did.
  *
  * NOT a wizard. There is no Next/Back — that chrome would cost ~8-10 controls,
  * fighting the one thing this redesign buys. Steps past the frontier are dimmed and
