@@ -282,23 +282,6 @@ export const motionAdmin = {
     adminFetch(`/${encodeURIComponent(key)}/duplicate`, { method: "POST", body: JSON.stringify({ new_key, new_label }) }),
 };
 
-export async function previewDesign(form: FormData): Promise<{ preview_id: string }> {
-  const r = await fetch(`${API_URL}/api/preview`, { method: "POST", body: form });
-  // Read the body defensively: a non-JSON response (an HTML error page from a
-  // proxy, an empty body, a gateway 502) must surface as the real failure, not
-  // as an opaque "JSON.parse: unexpected character" from parsing before we've
-  // checked the status. Mirrors the adminFetch/keepPet pattern elsewhere here.
-  if (!r.ok) {
-    const data = await r.json().catch(() => ({}));
-    throw new Error(data.detail || `Preview failed (${r.status})`);
-  }
-  return r.json();
-}
-
-export function previewImageUrl(previewId: string): string {
-  return `${API_URL}/api/preview/${encodeURIComponent(previewId)}`;
-}
-
 // ── The reference layer (SPEC_PET_DESIGNER_FLOW §7.4) ────────────────────────
 //
 // ONE record shape, three endpoints. Every way of starting a pet ends in the same

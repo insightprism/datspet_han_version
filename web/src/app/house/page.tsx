@@ -82,14 +82,20 @@ export default function HousePage() {
                 <div className="mono mt-0.5 truncate text-[11px]" style={{ color: "var(--faint)" }}>
                   {p.breed_id}
                 </div>
+                {/* NO "🎨 Redesign" button. It linked to /design?base=<id> and had never
+                    worked in any revision: the landing never read ?base, and after the
+                    redesign nothing reads it at all. Rather than ship a third revision of
+                    a button that has never once done anything, it is gone.
+
+                    It is not coming back in this shape either, and the reason is the
+                    archetype rule (SPEC_PET_DESIGNER_FLOW §2.1): a house pet is somebody's
+                    FINISHED design — step 2 has already run on it — so starting there
+                    means designing a design, with the modifiers compounding invisibly and
+                    no way back to the archetype. Commit 74c1783 removed house pets as a
+                    base source deliberately; this button was the last dangling thread of
+                    that decision. §3.5 says how it should arrive if it is ever revived:
+                    pre-resolved, as an explicit deep link, never a door. */}
                 <div className="mt-2 flex flex-wrap justify-center gap-2">
-                  <Link
-                    href={`/design?base=${p.id}`}
-                    className="inline-block rounded-md border px-3 py-1.5 text-xs font-semibold transition hover:opacity-85"
-                    style={{ background: "rgba(167,139,250,0.12)", color: "var(--gold)", borderColor: "rgba(167,139,250,0.4)" }}
-                  >
-                    🎨 Redesign
-                  </Link>
                   <a
                     href={petZipUrl(p.id)}
                     download

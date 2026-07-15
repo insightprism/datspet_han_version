@@ -10,7 +10,7 @@
 # Usage:
 #   ./scripts/e2e_design_a_pet.sh                 # designs for markly.1
 #   DATSME_USER_ID=<uuid> ./scripts/e2e_design_a_pet.sh
-#   PET_TEXT="a purple owl" ./scripts/e2e_design_a_pet.sh
+#   PET_TEXT="an owl" PET_COLOR="purple" ./scripts/e2e_design_a_pet.sh
 set -uo pipefail
 
 # --- config -----------------------------------------------------------------
@@ -21,7 +21,13 @@ DATSME_HOST="${DATSME_HOST:-http://127.0.0.1:19994}"
 COMFY_URL="${PET_FACTORY_COMFY_URL:-http://127.0.0.1:19953}"
 # markly.1 (display_name=markly, wu@insightprism.com). Override for another user.
 DATSME_USER_ID="${DATSME_USER_ID:-5d8f6d64-5473-41c8-a709-5ed88c5ff850}"
-PET_TEXT="${PET_TEXT:-a friendly green turtle}"
+# PET_TEXT names the ANIMAL — step 1's only input (SPEC_PET_DESIGNER_FLOW §0.1). It used
+# to default to "a friendly green turtle", which baked a COLOUR into what is now the
+# archetype prompt: step 1 draws what a typical turtle looks like, and green is step 2's
+# business. PET_COLOR carries the design instead. The split is the spec's central rule,
+# so the E2E should demonstrate it rather than quietly violate it.
+PET_TEXT="${PET_TEXT:-a friendly turtle}"
+PET_COLOR="${PET_COLOR:-green}"
 SLUG="${DATSPET_SLUG:-datspet}"
 
 JAR="$(mktemp)"
@@ -64,7 +70,7 @@ print(bal, n)
 ok "balance=$BAL_BEFORE, partner-pets=$PETS_BEFORE"
 
 # --- 2. DatsMe mints a launch (the 'Design a pet' button) -------------------
-say "Step 1/5 — DatsMe mints a launch token for '$SLUG' (the Design-a-pet button)"
+say "Step 1/6 — DatsMe mints a launch token for '$SLUG' (the Design-a-pet button)"
 LAUNCH_URL=$(PYRUN "
 from social_db import SocialSessionLocal
 from social_models import User
@@ -80,7 +86,7 @@ case "$LAUNCH_URL" in
 esac
 
 # --- 3. follow the launch into DatsPet (sets the cookie) --------------------
-say "Step 2/5 — browser follows the launch → DatsPet /launch verifies + sets the cookie"
+say "Step 2/6 — browser follows the launch → DatsPet /launch verifies + sets the cookie"
 # Exercise the REAL /launch endpoint: it must verify the token, emit a
 # SameSite=None; Secure cookie, and 303 to the design page.
 HDRS=$(curl -s -m 10 -D - -o /dev/null "$LAUNCH_URL" 2>/dev/null)
@@ -104,9 +110,31 @@ echo "$SESS" | grep -q '"launched": *true\|"launched":true' && ok "session: laun
   || die "session says not launched: $SESS"
 
 # --- 4. design + generate a REAL pet (GPU) ----------------------------------
-say "Step 3/5 — generate a real pet: \"$PET_TEXT\"  (GPU build, ~3 min)"
+# Walks the REAL three-step flow (SPEC_PET_DESIGNER_FLOW): an archetype, a design, an
+# animation. It used to POST `text=` straight at /api/generate — a field that no longer
+# exists. Generate takes ONE base field now, so a round-trip test has to earn it, which
+# is the contract working rather than ceremony. It also means this script now exercises
+# /api/reference and /api/preview, which it never did before.
+say "Step 3/6 — draw the base animal: \"$PET_TEXT\"  (~10 s)"
+REF=$(curl -s -m 60 -H "Cookie: datsme_launch=$COOKIE" -X POST "$DATSPET_BACKEND/api/reference" \
+        -F "animal=$PET_TEXT" 2>/dev/null \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin).get("reference_id",""))' 2>/dev/null)
+[ -n "$REF" ] || die "/api/reference did not return a reference_id"
+ok "archetype drawn: $REF"
+
+# A design is REQUIRED (§4.1) — designing nothing is what adopt-a-sample is for — so the
+# preview needs at least one modifier. Preview returns a NEW reference (§6.1): the design
+# made visible, and the still the build will animate as-is.
+say "Step 4/6 — preview the design: $PET_COLOR  (~10 s)"
+PREV=$(curl -s -m 60 -H "Cookie: datsme_launch=$COOKIE" -X POST "$DATSPET_BACKEND/api/preview" \
+        -F "reference_id=$REF" -F "color=$PET_COLOR" 2>/dev/null \
+        | python3 -c 'import sys,json;print(json.load(sys.stdin).get("reference_id",""))' 2>/dev/null)
+[ -n "$PREV" ] || die "/api/preview did not return a reference_id"
+ok "preview drawn: $PREV"
+
+say "Step 5/6 — generate the pet from the previewed still  (GPU build, ~3 min)"
 JOB=$(curl -s -m 20 -H "Cookie: datsme_launch=$COOKIE" -X POST "$DATSPET_BACKEND/api/generate" \
-        -F "text=$PET_TEXT" 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin).get("job_id",""))' 2>/dev/null)
+        -F "reference_id=$PREV" 2>/dev/null | python3 -c 'import sys,json;print(json.load(sys.stdin).get("job_id",""))' 2>/dev/null)
 [ -n "$JOB" ] || die "generate did not return a job_id"
 ok "job started: $JOB — polling…"
 DEADLINE=$(( $(date +%s) + 420 ))   # 7 min ceiling
@@ -126,7 +154,7 @@ done
 echo
 
 # --- 5. Accept → writeback → host fetches + adopts --------------------------
-say "Step 4/5 — Accept: DatsPet posts the writeback; DatsMe fetches the bundle + adopts"
+say "Step 6/6 — Accept: DatsPet posts the writeback; DatsMe fetches the bundle + adopts"
 ACC=$(curl -s -m 90 -H "Cookie: datsme_launch=$COOKIE" -X POST -H "Content-Type: application/json" \
         -d "{\"pet_id\":\"$JOB\"}" "$DATSPET_BACKEND/api/datsme/accept" 2>/dev/null)
 if echo "$ACC" | grep -q '"redirect_url"'; then
@@ -138,7 +166,7 @@ else
 fi
 
 # --- 6. verify the RESULT in the DatsMe user's DB ---------------------------
-say "Step 5/5 — verify in the DatsMe user's SQLite + ledger (not just HTTP)"
+say "Verify — in the DatsMe user's SQLite + ledger (not just HTTP)"
 RESULT=$(PYRUN "
 from social_db import SocialSessionLocal
 from social_ledger.social_ledger_service import get_user_credit_balance

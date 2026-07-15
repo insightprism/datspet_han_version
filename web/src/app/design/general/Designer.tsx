@@ -25,13 +25,11 @@
  * product. Disclosure lives in <Step> because the artifact/controls split is what makes
  * the page small.
  *
- * NOT to be confused with components/PetDesigner.tsx — the OLD single-form designer,
- * which /design/cat and /design/dog still use. That one is the pre-reference flow and
- * still posts the legacy /api/generate contract; retiring it is the other half of build
- * step 8, and it needs the themed-page decision in §11 first.
+ * This is the ONLY designer. components/PetDesigner.tsx — the old single-form one — and
+ * the themed pages and /make that used it are all deleted (§11), and with them the whole
+ * legacy /api/generate contract. There is one flow and one contract.
  */
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import {
   fetchCatalog, catalogBaseOptions, referenceImageUrl, catalogBaseImageUrl,
   type CatalogBaseOption,
@@ -544,9 +542,10 @@ export default function Designer() {
         )}
       </Step>
 
-      <div className="mt-6">
-        <Link href="/design" className="btn-ghost text-xs">← back to worlds</Link>
-      </div>
+      {/* No "← back to worlds". It linked to /design, which now redirects straight back
+          here — a link to the page you are already on. The worlds (the landing tiles)
+          went with the themed pages (§11). The global nav still has Design and Pet
+          house on every page, so nothing is stranded. */}
     </div>
   );
 }
