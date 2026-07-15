@@ -1,5 +1,10 @@
 # Deploying DatsPet to pet.datsme.me
 
+> **➡️ Deploying right now? Use [`CHECKLIST.md`](CHECKLIST.md), not this file.**
+> That is the step-by-step procedure, and every item on it exists because something
+> broke. This file is the *reference*: topology, one-off setup, and why the box looks
+> the way it does. When the two disagree, fix both.
+
 Production layout (spec `docs/SPEC_DEPLOY_PETDATSME_POOL.md` Part C; live since
 2026-07-13). Everything runs on the Hetzner box (`ssh root@5.161.70.13`), which
 also hosts DatsMe (prod + staging) and the pool dispatcher.
