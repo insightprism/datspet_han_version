@@ -59,7 +59,8 @@ No SDK change.
 4. **The landing is public and standalone-safe.** It renders marketing content with zero auth.
    In integrated mode it offers Sign in / Sign up / Continue designing; in standalone mode
    (`DATSME_HMAC_SECRET` unset) it hides the DatsMe buttons and offers "Start designing (local
-   mode)". Rev.1 does **not** change design-page gating: `/design` and `/make` stay reachable
+   mode)". Rev.1 does **not** change design-page gating: `/design` stays reachable
+   (`/make` is deleted — SPEC_PET_DESIGNER_FLOW §11)
    exactly as today (anonymous = base tier, adopt requires the launch session). Whether
    generation itself should require sign-in on the public host is a separate decision (§9.3).
 
@@ -208,6 +209,12 @@ DatsPet-issued cookie. Harmless when `datspet_admin` is absent.
 ---
 
 ## 4. The landing page (`web/src/app/page.tsx` → new `PublicLanding` component)
+
+> ⚠️ **Superseded in part (SPEC_PET_DESIGNER_FLOW §11):** `DesignLanding` and `/make` are
+> DELETED. `/design` no longer renders the world tiles — it 307s to `/design/general` (in
+> nginx for prod, `deploy/nginx-default.conf`; the Next route is the dev half). It is still
+> the DPP deep-link target and still must answer, which is the only part of this section
+> that still binds. Original text follows.
 
 `/` becomes the public front door. `DesignLanding` keeps rendering at `/design` (the DPP
 deep-link target — commit 53da4fd made it the home; this spec moves the home back out in favor

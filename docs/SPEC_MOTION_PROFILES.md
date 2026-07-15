@@ -552,7 +552,9 @@ control (each pose is a separate ~75 s Wan I2V generation; §8).
 Two lookup modes, one response shape:
 - `GET /api/motions?animal=<species>` — **keyword path** (the General free-text page): resolves via
   §3.5/§3.7 most-specific-level matching.
-- `GET /api/motions?profile=<key>` — **pinned path** (the catalog/themed pages pass their authored
+- `GET /api/motions?profile=<key>` — **pinned path** (a curated base's reference carries its
+  authored key; the "themed pages" this once named are deleted — SPEC_PET_DESIGNER_FLOW §11 —
+  but the pinned path is unchanged and is what the designer uses. It passes the authored
   `motion_profile` key, SPEC_PET_DESIGNER_PLATFORM §4.2): loads that profile directly, no keyword
   matching. An unknown key → 404 (a catalog guard test prevents this shipping).
 

@@ -796,7 +796,17 @@ page.) These are the mechanics §C.5 codifies for the online tiers.
 ### Appendix (cont.) — original grounding (Rev.2 + Rev.3)
 - Pool contract + live generation: `pool.datsme.me/openapi.json`, live job `1467e39a…` (done),
   `created_pets/make_pet.py`, `pool_handler/pet_factory_handler.py`.
-- **Reference-image flow (Finding 1):** `web/src/app/design/page.tsx:82,130` (posts base_pet_id +
+- **Reference-image flow (Finding 1):** ⚠️ **THESE CITATIONS ARE SUPERSEDED — see
+  `SPEC_PET_DESIGNER_FLOW` §6/§11 before trusting them in an incident.** The designer was
+  rebuilt on a `reference_id` contract: `/api/generate` now takes
+  `{reference_id, name, poses, motion_profile}` and **always** animates as-is
+  (`remix_strength=None`), because the still was already previewed and locked. The
+  base_pet_id/preview_id/text params, `_legacy_resolve_base` and the themed pages are all
+  deleted. `web/src/app/design/page.tsx` is now a 24-line redirect to `/design/general`,
+  NOT the designer — the designer is `web/src/app/design/general/Designer.tsx`. Finding 1's
+  actual protection now lives in `webui/tests/test_reference_flow.py` +
+  `test_pool_backend.py`. Original (Rev.2/Rev.3) grounding, kept for history:
+  `web/src/app/design/page.tsx:82,130` (posted base_pet_id +
   preview_id), `webui/app.py:355-388` (`start_job` builds local-path `reference_image` +
   `remix_strength` + `display_name`), `:200` (`run_pet_job` → `make_pet_zip`),
   `pet_factory/factory.py:384` (signature), `:278` (`_prep_reference_image` re-normalizes),
