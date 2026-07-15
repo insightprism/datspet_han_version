@@ -45,6 +45,11 @@ proxy times out while the backend works locally:
 ## Update procedure (from the dev box)
 
 ```bash
+# 0. PREFLIGHT — before bundling, if web/ changed. Catches the export-only defects
+#    that `next dev` is structurally incapable of showing you (see below). ~15 s.
+#    Safe to run with a dev server live; builds into its own distDir.
+scripts/preflight_static_export.py
+
 git bundle create /tmp/datspet.bundle main && scp /tmp/datspet.bundle root@5.161.70.13:/tmp/
 ssh root@5.161.70.13 '
   cd /var/www/datspet && git pull /tmp/datspet.bundle main
@@ -62,6 +67,25 @@ the box's `node_modules` silently drifts. Adding `vitest` as a devDependency bro
 staging build outright: `next build` typechecks `**/*.ts`, which includes `vitest.config.ts`,
 which imports `vitest/config` — absent on the box. `Failed to compile`, no export, and
 nothing about the error names npm. Run `npm install` first whenever `package.json` changed.
+(`scripts/preflight_static_export.py` now fails with this exact advice, since it runs the
+same build.)
+
+**Run the preflight when `web/` changed (step 0).** `next dev` and `output: "export"` are two
+different runtimes for identical source, and dev is the forgiving one — so a whole class of
+defect exists ONLY in the artifact you ship and cannot be reproduced locally no matter how
+carefully you look:
+
+- A page calling Next's `redirect()` is a real server-side 307 under `next dev`. In the export
+  it is a **blank page**: empty `<body>`, hop buried in a `NEXT_REDIRECT;…` script payload, no
+  meta-refresh. That is how `/design` — the DPP deep-link target, whose URL is registered with
+  the host and is not ours to edit — shipped broken on 2026-07-15. Prod's redirect must live in
+  nginx (`location = /design`), and the preflight enforces that pairing.
+- **A broken route does not 404.** The vhost ends in `try_files … /index.html`, so a missing
+  page serves the *landing page* with a **200**. Curling a route and asserting 200 therefore
+  proves nothing; the preflight checks the export's actual files instead.
+
+Both halves of the `/design` redirect (`web/src/app/design/page.tsx` for dev, the nginx
+`location =` for prod) must move together. The preflight fails if they drift apart.
 
 **⚠️ NEVER `cp deploy/nginx-default.conf nginx-default.conf` ON STAGING.** The repo conf is
 PROD's: it hardcodes `proxy_pass http://172.18.0.1:29954`. Staging's backend is **29964**, so

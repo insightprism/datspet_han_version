@@ -1,5 +1,10 @@
 node_modules/
 .next/
+# The static export. `next build` with DATSPET_STATIC_EXPORT=1 writes here (deploys),
+# and with DATSPET_DIST_DIR also set it writes to that dir instead — which is how
+# scripts/preflight_static_export.py builds a throwaway export while dev is live.
+out/
+.next-preflight/
 .env.local
 next-env.d.ts
 tsconfig.tsbuildinfo

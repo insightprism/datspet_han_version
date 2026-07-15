@@ -13,9 +13,18 @@
 // the API same-origin. Override the backend with DATSPET_API_ORIGIN.
 const isStaticExport = process.env.DATSPET_STATIC_EXPORT === "1";
 
+// DATSPET_DIST_DIR builds into a directory OTHER than `.next`. The preflight
+// (scripts/preflight_static_export.py) uses it to build a throwaway export while
+// a dev server is live: `next dev` and `next build` collide only through a SHARED
+// .next/, so a build with its own distDir cannot poison the dev server, and
+// scripts/guard-build-vs-dev.js stands down when this is set. Unset = `.next`,
+// i.e. every normal dev/build/deploy path is untouched.
+const distDir = process.env.DATSPET_DIST_DIR || undefined;
+
 const nextConfig = isStaticExport
-  ? { output: "export" }
+  ? { output: "export", ...(distDir ? { distDir } : {}) }
   : {
+      ...(distDir ? { distDir } : {}),
       async rewrites() {
         const api = process.env.DATSPET_API_ORIGIN || "http://localhost:19954";
         // Proxy BOTH the XHR API (/api/*) and the browser-navigated backend
