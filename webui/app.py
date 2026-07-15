@@ -48,6 +48,11 @@ from pet_factory import animal_catalog as animal_catalog_mod
 # the pose selector caps + the resolved pricing hint come from it, and the server
 # enforces the resolved cap on generate (SPEC_PET_DESIGNER_PLATFORM §5).
 from pet_factory import tiers as tiers_mod
+# body_shapes is the step-2 body vocabulary (thin/normal/chubby) — pure data, like
+# the three above. It feeds compose_design, never the archetype prompt: shape is a
+# DESIGN modifier, so picking one can never invalidate a curated base
+# (SPEC_PET_DESIGNER_FLOW §0.1/§7.2).
+from pet_factory import body_shapes as body_shapes_mod
 
 # Generation backend (spec §A.6): "local" runs the on-box GPU directly (dev / break-
 # glass); "pool" routes generation to the shared_gpu_cpu pool (prod, GPU-less box).
@@ -125,6 +130,14 @@ app.include_router(motion_admin.router)
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 ALLOWED_IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 
+# How hard to redraw an uploaded photo into a sprite (SPEC_PET_DESIGNER_FLOW §3.4).
+# High on purpose: a photograph is far from the side-profile, flat-shaded, white-
+# background still Wan I2V needs, and the gap is what makes today's raw-photo
+# animations unreliable. This is the ONE knob of the upload door, and it is a
+# starting value, not a calibrated one — it deserves the same GPU session §4.4
+# gives body shape.
+UPLOAD_REDRAW_STRENGTH = 0.85
+
 # The pipeline owns the whole GPU (ComfyUI + birefnet); run one job at a
 # time. Queued jobs wait here and report "Waiting for the GPU…" meanwhile.
 GPU_LOCK = threading.Lock()
@@ -178,19 +191,43 @@ _COLOR_WORDS = {
 }
 
 
-def compose_design(species: str, color: str, accessories: list[str]) -> tuple[str, str, Optional[float]]:
-    """Turn the design page's structured picks into (prompt_description,
-    display_name, min_strength). Prompt wording follows the remix calibration:
-    'recolored entirely {color}' is what actually flips a color against the
-    source image. min_strength is 0.9 when the species name itself contains a
-    conflicting color word (see _COLOR_WORDS), else None. The display name
-    stays short — color + species, not the accessory list."""
-    # Clause order matters (calibrated on stills): accessories directly after
-    # the species, the recolor emphasis LAST. With the recolor clause in the
-    # middle, the accessory gets dropped; with accessories last, the color
+def compose_design(species: str, color: str, accessories: list[str],
+                   body_shape: str = "", extra: str = "") -> tuple[str, str, Optional[float]]:
+    """Turn step 2's structured picks into (prompt_description, display_name,
+    min_strength) — the ONE place a design becomes a prompt
+    (SPEC_PET_DESIGNER_FLOW §4).
+
+    Every "what should it look like" input arrives here and nowhere else. In
+    particular `body_shape` composes into the DESIGN string, never into the
+    archetype prompt (§0.1): step 1 draws "a corgi", step 2 makes it chubby. That
+    placement is what lets a curated base.png survive any design choice (§3.3).
+
+    Prompt wording follows the remix calibration: 'recolored entirely {color}' is
+    what actually flips a color against the source image. min_strength is 0.9 when
+    the redraw has to fight the source — a conflicting color word in the species
+    name (see _COLOR_WORDS), or a silhouette change (§4.4). The display name stays
+    short — color + species, not the accessory list, the shape, or the free text.
+    """
+    # Clause order matters (calibrated on stills): shape adjectives lead (they
+    # attach to the noun phrase), accessories directly after the species, free
+    # text after those, and the recolor emphasis LAST. With the recolor clause in
+    # the middle, the accessory gets dropped; with accessories last, the color
     # loses. This ordering keeps both.
+    #
+    # NOT YET CALIBRATED (§4.3/§4.4): the shape and free-text positions are
+    # reasoned, not measured. The color and accessory positions above were settled
+    # by running them; these two deserve the same GPU session before launch.
     min_strength = None
     description = f"vivid {color} {species}" if color else species
+
+    shape_fragment = body_shapes_mod.prompt_fragment(body_shape)
+    if shape_fragment:
+        description = f"{shape_fragment} {description}"
+        # A silhouette change fights the source image exactly like a conflicting
+        # color does (§4.4 reason 3) — same class of conflict, same trigger. The
+        # curated corgi is normal-shaped and will win at a gentle denoise.
+        min_strength = 0.9
+
     if accessories:
         worn = []
         for acc in accessories:
@@ -199,10 +236,18 @@ def compose_design(species: str, color: str, accessories: list[str]) -> tuple[st
             else:
                 worn.append(("an " if acc[0] in "aeiou" else "a ") + acc)
         description += " wearing " + ", ".join(worn)
+
+    if extra:
+        # The unbounded escape hatch (§4.3, decision #4). It sits BEFORE the
+        # recolor clause so that clause stays last and the color still wins — the
+        # calibration above is load-bearing and free text must not displace it.
+        description += f", {extra}"
+
     if color:
         description += f", recolored entirely {color}"
         if any(w in _COLOR_WORDS and w != color for w in species.split()):
             min_strength = 0.9
+
     display_name = (f"{color} {species}" if color else species).title()
     return description, display_name, min_strength
 
@@ -442,23 +487,320 @@ def _reattach_pool_jobs() -> None:
         ).start()
 
 
-@app.post("/api/preview")
-def preview_design(
+# ── The reference store (SPEC_PET_DESIGNER_FLOW §7.3) ────────────────────────
+#
+# A reference is a still plus a sidecar of what the fill step resolved about it.
+# It lives on the filesystem, not in the DB: these are transient scratch bytes,
+# not pets (db.py's stated boundary). PREVIEW_DIR holds the pair:
+#
+#     {id}.png    the still
+#     {id}.json   {id, owner, created_at, description, display_name,
+#                  motion_profile, source, min_strength, generated}
+#
+# _cleanup_transients already sweeps PREVIEW_DIR by mtime at 24 h, so the sidecar
+# inherits expiry for free — no migration, no new dependency.
+#
+# `source` is recorded for support and telemetry ONLY. No runtime path may branch
+# on it (§4.2/§6): the engine reads the record and acts. Rev.1 of the spec relaxed
+# the design guard on source == "txt2img" and thereby violated its own rule.
+
+def _reference_paths(reference_id: str) -> tuple[Path, Path]:
+    return PREVIEW_DIR / f"{reference_id}.png", PREVIEW_DIR / f"{reference_id}.json"
+
+
+def _reference_record(meta: dict) -> dict:
+    """The one record shape all three endpoints return (§7.4). `owner` is
+    deliberately NOT in it — it is an access-control fact, not the caller's data."""
+    return {
+        "reference_id": meta["id"],
+        "image_url": f"/api/reference/{meta['id']}.png",
+        "description": meta.get("description", ""),
+        "display_name": meta.get("display_name", ""),
+        "motion_profile": meta.get("motion_profile"),
+        "source": meta.get("source", ""),
+        "min_strength": meta.get("min_strength"),
+        "generated": bool(meta.get("generated", False)),
+    }
+
+
+def _save_reference(png: bytes, *, owner: Optional[str], description: str,
+                    display_name: str, motion_profile: Optional[str], source: str,
+                    min_strength: Optional[float] = None,
+                    generated: bool = False) -> dict:
+    """Mint one reference. EVERY door ends here, which is the whole design: past
+    this point nothing downstream asks where the picture came from (§6)."""
+    reference_id = uuid.uuid4().hex[:12]
+    png_path, meta_path = _reference_paths(reference_id)
+    meta = {
+        "id": reference_id, "owner": owner, "created_at": time.time(),
+        "description": description, "display_name": display_name,
+        "motion_profile": motion_profile, "source": source,
+        "min_strength": min_strength, "generated": generated,
+    }
+    png_path.write_bytes(png)
+    meta_path.write_text(json.dumps(meta))
+    return meta
+
+
+def _reference_visible(meta: dict, owner: Optional[str]) -> bool:
+    """Mirrors _can_access: a reference is visible iff it is unowned (standalone)
+    or the caller's own. A reference can now be a user's uploaded PHOTO, so this
+    gives file-backed content the rule db._scope_clause gives rows (§7.3)."""
+    ref_owner = meta.get("owner")
+    return ref_owner is None or ref_owner == owner
+
+
+def _load_reference(reference_id: str, owner: Optional[str]) -> dict:
+    """Resolve a reference for this caller, or raise.
+
+    404 for malformed / not-yours — never 403, which would confirm it exists.
+    400 for swept-or-missing, so a user whose reference aged out is told to start
+    over rather than handed a 500 (§7.3). The two are distinguishable in principle,
+    but ids are 48 bits of uuid4 — enumeration is not the threat; a confusing dead
+    end for a real user is.
+    """
+    reference_id = (reference_id or "").strip()
+    if not reference_id or not reference_id.isalnum():
+        raise HTTPException(404, "reference not found")
+    png_path, meta_path = _reference_paths(reference_id)
+    if not png_path.exists() or not meta_path.exists():
+        raise HTTPException(400, "Your reference expired — start over.")
+    try:
+        meta = json.loads(meta_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        raise HTTPException(400, "Your reference expired — start over.")
+    if not _reference_visible(meta, owner):
+        raise HTTPException(404, "reference not found")
+    return meta
+
+
+def _render_still(description: str, request: Request, owner: Optional[str],
+                  reference_path: Optional[Path] = None,
+                  strength: Optional[float] = None) -> bytes:
+    """Render one still — the ~10 s GPU step, and the ONE place that knows how to
+    reach a renderer.
+
+    Mirrors render_design_still's own two shapes (§7.1) so pool and local stay one
+    decision rather than two:
+
+        reference_path=None → txt2img an archetype  (step 1's long-tail door)
+        reference_path set  → img2img redraw        (step 1's upload door, step 3)
+
+    Both /api/reference and /api/preview call this. Callers must be sync `def`
+    handlers (§5.3) — this blocks ~10 s and FastAPI runs sync paths in a threadpool;
+    an `async def` caller would stall the event loop and freeze /api/job polling for
+    every concurrent user.
+    """
+    if PET_GEN_BACKEND == "pool":
+        # Best-effort fast-fail (§A.3, R5-5): the pool has no per-task admission
+        # control, so a still would otherwise queue silently behind a 3-min build.
+        # NOT a hard guarantee — the check and the submit are two steps.
+        status = pool_client.workshop_status("pet_preview")
+        if not status["online"]:
+            raise HTTPException(423, "The workshop is offline right now — try again in a bit.")
+        if status["busy"]:
+            raise HTTPException(423, "The workshop is busy generating a pet — try again in a bit.")
+        params = {"description": description}
+        if reference_path is not None:
+            # The v1 shape. Omitting these two IS the v2 shape — it hard-fails 422
+            # on a v1 node, which is why both nodes must be v2 first (§10.1).
+            params["reference_image_b64"] = _encode_reference_image(reference_path)
+            params["strength"] = strength
+        try:
+            return pool_client.run_to_result(
+                "pet_preview", params,
+                labels=datsme_integration.pool_labels(request, owner) or None,
+                poll_interval=1.0, timeout_s=180.0)
+        except pool_client.PoolError as e:
+            # Surface the real cause in the server log — a missing app key or a
+            # schema 422 must be distinguishable from "actually busy" for ops.
+            print(f"[webui] pet_preview pool error: {e}", flush=True)
+            raise HTTPException(423, "The workshop couldn't draw that just now — try again in a bit.") from e
+
+    _, render_design_still = _local_pet_factory()
+    # Fail fast instead of stalling the page behind a 3-minute generation.
+    if not GPU_LOCK.acquire(timeout=1.5):
+        raise HTTPException(423, "The GPU is busy generating a pet — try again in a bit.")
+    try:
+        if reference_path is None:
+            return render_design_still(description)
+        return render_design_still(description, str(reference_path), strength)
+    except Exception as e:
+        # The local renderer drives ComfyUI over HTTP. When it isn't up — or is on a
+        # port other than PET_FACTORY_COMFY_URL claims — this raises a bare
+        # ConnectionError that escapes as an opaque 500, and under a button that reads
+        # as "the button is broken". The pool branch above already does the right
+        # thing (log the real cause for ops, hand the user something actionable); the
+        # local branch had NO handler at all. Mirror it.
+        #
+        # Note the boot-time warning at the top of this module covers the same
+        # failure — this is the same class of problem caught at request time, where
+        # the user actually meets it.
+        print(f"[webui] local render failed: {e!r}", flush=True)
+        raise HTTPException(
+            503, "The drawing engine isn't responding — is ComfyUI running "
+                 "(./start_comfyui_only.sh)?") from e
+    finally:
+        GPU_LOCK.release()
+
+
+def _resolve_reference_door(on_catalog: bool, has_image: bool, animal: str) -> str:
+    """Which door filled the box — decided ONCE, here (§7.4).
+
+    Today start_job guards base_pet_id+image (:825-826) but nothing guards
+    catalog_*+image, and its elif chain lets catalog silently win and DROP the
+    upload. Deciding the door in one place closes every conflicting pair by
+    construction, instead of by remembering to enumerate each new one.
+
+    `animal` alongside an upload is a HINT ("what is this a photo of?"), not a
+    second door — it names the animal without supplying a picture, which is what
+    a door is.
+    """
+    chosen = [name for name, on in (
+        ("catalog", on_catalog), ("upload", has_image), ("txt2img", bool(animal)),
+    ) if on]
+    if chosen == ["upload", "txt2img"]:
+        return "upload"
+    if len(chosen) > 1:
+        raise HTTPException(400, "Pick a curated animal, name your own, or upload a "
+                                 "photo — one of the three.")
+    if not chosen:
+        raise HTTPException(400, "Name an animal or upload a photo to start.")
+    return chosen[0]
+
+
+@app.post("/api/reference")
+def create_reference(
     request: Request,
-    base_pet_id: str = Form(""),
     catalog_animal: str = Form(""),
     catalog_breed: str = Form(""),
-    strength: float = Form(0.85),
-    color: str = Form(""),
-    accessories: str = Form(""),
-    name: str = Form(""),
+    animal: str = Form(""),
+    image: Optional[UploadFile] = File(None),
+    strength: float = Form(UPLOAD_REDRAW_STRENGTH),
 ):
-    """Run ONLY the redraw stage (~10 s) and return a preview id. The design
-    page shows the image next to the original; /api/generate can then be
-    given the preview_id to animate this exact still. Two base sources
-    (§4.3): a house pet (`base_pet_id`) or a curated catalog breed
-    (`catalog_animal`+`catalog_breed`)."""
+    """Step 1: fill the box (§3). Returns one reference record.
+
+    Three ways in, ONE artifact out — an archetype, carrying no design this flow
+    applied (§2.1). Adding a fourth way (a webcam, a DatsMe avatar) is a branch
+    here and nothing else: preview, generate, the engine and the pool never learn
+    of it.
+
+        catalog_animal+catalog_breed  a curated base.png     free, instant, vetted
+        animal                        _base_prompt(animal)   ~10 s, the long tail
+        image (+ optional animal)     an img2img redraw      ~10 s
+
+    Sync `def`, not `async def` (§5.3): this blocks ~10 s in _render_still, so it
+    must run in FastAPI's threadpool. The upload is read with image.file.read(),
+    NOT `await image.read()` — the await is what would stall the event loop.
+    """
     owner = datsme_integration.resolve_launch_identity(request)
+    catalog_animal = catalog_animal.strip().lower()[:40]
+    catalog_breed = catalog_breed.strip().lower()[:40]
+    animal = animal.strip()[:60]
+    has_image = image is not None and bool(image.filename)
+    on_catalog = bool(catalog_animal and catalog_breed)
+
+    door = _resolve_reference_door(on_catalog, has_image, animal)
+
+    if door == "catalog":
+        # Free, instant, vetted — a cache hit (§3.3). The curated base.png is a
+        # HUMAN-APPROVED best-of-N from this same _base_prompt path
+        # (animal_catalog/generate_candidates.py + promote_candidate.py). No design
+        # input can reach this branch, so a hit can never degrade into a miss.
+        base = animal_catalog_mod.base_image_path(catalog_animal, catalog_breed)
+        if base is None:
+            raise HTTPException(404, "catalog base image not found")
+        return _reference_record(_save_reference(
+            Path(base).read_bytes(), owner=owner,
+            description=catalog_breed or catalog_animal,
+            display_name=(catalog_breed or catalog_animal).title(),
+            # Pinned from the catalog entry (§4.2), so the curated path always
+            # animates at ≥ the fidelity free-text keyword matching would find.
+            motion_profile=animal_catalog_mod.resolved_motion_profile(
+                catalog_animal, catalog_breed),
+            source="catalog", generated=False))
+
+    if door == "txt2img":
+        # The long tail — a cache MISS (§3.3). ~10 s and unvetted, and that is
+        # honest: there was never a curated blue jay to lose. motion_profile stays
+        # None so the engine keyword-resolves it from the name at build time.
+        png = _render_still(animal, request, owner)
+        return _reference_record(_save_reference(
+            png, owner=owner, description=animal.lower(),
+            display_name=animal.title(), motion_profile=None,
+            source="txt2img", generated=True))
+
+    # door == "upload": redraw it (§3.4). THIS is the change of behaviour — today
+    # an uploaded photo reaches Wan I2V raw and animates unreliably, because a
+    # photo is not the side-profile flat-shaded sprite make_pet_zip's docstring
+    # requires. Redrawing at FILL time is what lets the user see the sprite before
+    # paying for a 3-minute build.
+    if image.content_type not in ALLOWED_IMAGE_MIMES:
+        raise HTTPException(400, f"unsupported image type: {image.content_type}")
+    body = image.file.read()          # sync — see the docstring
+    if len(body) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Image exceeds 12 MB limit")
+
+    subject = animal or "pet"
+    # The user chooses how hard to redraw (§3.4): "faithful" keeps their photo's look
+    # but preserves the photographic pose/lighting Wan I2V animates badly; "sprite"
+    # animates reliably but looks redrawn. Only they know which side of that they
+    # want, so the server takes the number and clamps it rather than deciding.
+    redraw_strength = min(0.9, max(0.3, strength))
+    tmp = PREVIEW_DIR / f"_upload_{uuid.uuid4().hex[:12]}"
+    tmp.write_bytes(body)
+    try:
+        png = _render_still(subject, request, owner, reference_path=tmp,
+                            strength=redraw_strength)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return _reference_record(_save_reference(
+        png, owner=owner, description=subject.lower(),
+        display_name=subject.title(), motion_profile=None,
+        source="upload", generated=True))
+
+
+@app.get("/api/reference/{reference_id}.png")
+def reference_image(reference_id: str, request: Request):
+    """The still. Owner-scoped, unlike the /api/preview/{id} it replaces — a
+    reference can be a user's uploaded photo, so it needs the rule rows get."""
+    owner = datsme_integration.resolve_launch_identity(request)
+    try:
+        _load_reference(reference_id, owner)
+    except HTTPException as e:
+        # An image endpoint has one honest failure: it isn't there. Collapse the
+        # 400-expired case to 404 so a broken <img> is the whole story.
+        raise HTTPException(404, "reference not found") from e
+    png_path, _ = _reference_paths(reference_id)
+    return FileResponse(png_path, media_type="image/png")
+
+
+@app.get("/api/body-shapes")
+def body_shapes_menu():
+    """Step 2's body vocabulary (§7.2). Separate from /api/catalog because
+    fetchCatalog discards the envelope (`data.animals ?? []`), so folding it in
+    would churn every catalog consumer. Mirrors /api/motions' precedent.
+
+    Returns {key,label,is_default} only — `prompt_fragment` is calibrated
+    server-side wording and never reaches the browser, same posture as the tier
+    table."""
+    return {"shapes": body_shapes_mod.list_shapes(),
+            "default": body_shapes_mod.default_shape_key()}
+
+
+def _legacy_preview(request, owner, *, base_pet_id, catalog_animal, catalog_breed,
+                    strength, color, accessories, name):
+    """The pre-reference preview contract. **DELETE IN BUILD STEP 7**, whole.
+
+    Serves /design/general, /design/cat and /design/dog until they move to the
+    reference contract (step 8). It resolves a base from a house pet or a catalog
+    breed — the two origins `POST /api/reference` now resolves once, at fill time.
+
+    It mints a real reference under the hood and returns only its id as
+    `preview_id`, so there is ONE store and one sweep even during the transition —
+    the legacy `GET /api/preview/{id}` and the legacy generate path both read the
+    same file the new endpoints do.
+    """
     base_pet_id = base_pet_id.strip()
     catalog_animal = catalog_animal.strip().lower()[:40]
     catalog_breed = catalog_breed.strip().lower()[:40]
@@ -467,73 +809,126 @@ def preview_design(
     if not color and not accessory_list:
         raise HTTPException(400, "Pick a color or at least one accessory to preview.")
 
-    preview_id = uuid.uuid4().hex[:12]
-    if base_pet_id:
-        base_row = db.get_pet(base_pet_id)
-        if base_row is None or not _can_access(base_row, owner):
-            raise HTTPException(404, "base pet not found")
-        species = base_row["display_name"].lower()
-        base_frame = extract_base_frame(base_pet_id, PREVIEW_DIR / f"{preview_id}_base.png")
-    elif catalog_animal and catalog_breed:
-        catalog_base = animal_catalog_mod.base_image_path(catalog_animal, catalog_breed)
-        if catalog_base is None:
-            raise HTTPException(404, "catalog base image not found")
-        species = catalog_breed
-        base_frame = PREVIEW_DIR / f"{preview_id}_base.png"
-        shutil.copyfile(catalog_base, base_frame)
-    else:
-        raise HTTPException(400, "Pick a base pet or a catalog breed to preview.")
-    species = name.strip().lower()[:60] or species
-    description, _display, min_strength = compose_design(species, color, accessory_list)
-    strength = min(0.9, max(0.3, strength))
-    if min_strength:
-        strength = max(strength, min_strength)
+    scratch = PREVIEW_DIR / f"_legacy_{uuid.uuid4().hex[:12]}.png"
+    try:
+        if base_pet_id:
+            base_row = db.get_pet(base_pet_id)
+            if base_row is None or not _can_access(base_row, owner):
+                raise HTTPException(404, "base pet not found")
+            species = base_row["display_name"].lower()
+            base_frame = extract_base_frame(base_pet_id, scratch)
+        elif catalog_animal and catalog_breed:
+            catalog_base = animal_catalog_mod.base_image_path(catalog_animal, catalog_breed)
+            if catalog_base is None:
+                raise HTTPException(404, "catalog base image not found")
+            species = catalog_breed
+            shutil.copyfile(catalog_base, scratch)
+            base_frame = scratch
+        else:
+            raise HTTPException(400, "Pick a base pet or a catalog breed to preview.")
 
-    if PET_GEN_BACKEND == "pool":
-        # Best-effort fast-fail (§A.3, R5-5): the pool has no per-task admission
-        # control, so a preview would otherwise queue silently behind a 3-min
-        # build. Check pet-worker busy-state first and return the same 423 the
-        # local path does. NOT a hard guarantee — the check and the submit are two
-        # steps, so an occasional preview can still queue behind a concurrent build.
-        status = pool_client.workshop_status("pet_preview")
-        if not status["online"]:
-            raise HTTPException(423, "The workshop is offline right now — try again in a bit.")
-        if status["busy"]:
-            raise HTTPException(423, "The workshop is busy generating a pet — try again in a bit.")
-        try:
-            png = pool_client.run_to_result(
-                "pet_preview",
-                {"reference_image_b64": _encode_reference_image(base_frame),
-                 "description": description, "strength": strength},
-                labels=datsme_integration.pool_labels(request, owner) or None,
-                poll_interval=1.0, timeout_s=180.0)
-        except pool_client.PoolError as e:
-            # Surface the real cause in the server log — a missing app key or a
-            # schema 422 must be distinguishable from "actually busy" for ops.
-            print(f"[webui] pet_preview pool error: {e}", flush=True)
-            raise HTTPException(423, "The workshop couldn't preview that just now — try again in a bit.") from e
-    else:
-        _, render_design_still = _local_pet_factory()
-        # Fail fast instead of stalling the page behind a 3-minute generation.
-        if not GPU_LOCK.acquire(timeout=1.5):
-            raise HTTPException(423, "The GPU is busy generating a pet — try again in a bit.")
-        try:
-            png = render_design_still(description, base_frame, strength)
-        finally:
-            GPU_LOCK.release()
+        species = name.strip().lower()[:60] or species
+        description, display_name, min_strength = compose_design(species, color, accessory_list)
+        strength = min(0.9, max(0.3, strength))
+        if min_strength:
+            strength = max(strength, min_strength)
+        png = _render_still(description, request, owner,
+                            reference_path=base_frame, strength=strength)
+    finally:
+        scratch.unlink(missing_ok=True)
 
-    (PREVIEW_DIR / f"{preview_id}.png").write_bytes(png)
-    return {"preview_id": preview_id}
+    meta = _save_reference(
+        png, owner=owner, description=display_name.lower(), display_name=display_name,
+        motion_profile=(animal_catalog_mod.resolved_motion_profile(catalog_animal, catalog_breed)
+                        if catalog_animal and catalog_breed and not base_pet_id else None),
+        source="design", min_strength=min_strength, generated=True)
+    return {"preview_id": meta["id"]}
 
 
 @app.get("/api/preview/{preview_id}")
 def preview_image(preview_id: str):
+    """**LEGACY, DELETE IN BUILD STEP 7.** The unscoped still-server the live pages
+    still use. Deliberately left exactly as buggy as it is today — no owner check —
+    rather than "fixed" here: its replacement, GET /api/reference/{id}.png, IS the
+    fix (§7.3), and hardening a doomed endpoint would only make step 7 look risky.
+    Nothing new may point at this."""
     if not preview_id.isalnum():
         raise HTTPException(404, "preview not found")
     path = PREVIEW_DIR / f"{preview_id}.png"
     if not path.exists():
         raise HTTPException(404, "preview not found")
     return FileResponse(path, media_type="image/png")
+
+
+@app.post("/api/preview")
+def preview_design(
+    request: Request,
+    reference_id: str = Form(""),
+    strength: float = Form(0.85),
+    color: str = Form(""),
+    accessories: str = Form(""),
+    body_shape: str = Form(""),
+    extra: str = Form(""),
+    name: str = Form(""),
+    # ── LEGACY, DELETE IN BUILD STEP 7 — see _legacy_preview ────────────────
+    base_pet_id: str = Form(""),
+    catalog_animal: str = Form(""),
+    catalog_breed: str = Form(""),
+):
+    """Step 3: see it (§5). Takes a reference, returns a REFERENCE — not a
+    different kind of handle (§6.1):
+
+        archetype ──(colour/shape/accessories/text/strength)──▶ your pet's look
+        reference₁ ──────────────────────────────────────────▶ reference₂
+
+    Two handle types would force this endpoint, the frontend, and start_job to
+    branch on which kind they hold — exactly the source-agnosticism the reference
+    layer buys. One store, one TTL, one URL shape, one record.
+
+    Sync `def`, not `async def` (§5.3) — see _render_still.
+    """
+    owner = datsme_integration.resolve_launch_identity(request)
+    if not reference_id.strip():
+        return _legacy_preview(request, owner, base_pet_id=base_pet_id,
+                               catalog_animal=catalog_animal, catalog_breed=catalog_breed,
+                               strength=strength, color=color, accessories=accessories,
+                               name=name)
+    ref = _load_reference(reference_id, owner)
+
+    color = color.strip().lower()[:20]
+    accessory_list = [a.strip().lower()[:30] for a in accessories.split(",") if a.strip()][:3]
+    body_shape = body_shape.strip().lower()[:20]
+    extra = extra.strip()[:120]
+    shaped = not body_shapes_mod.is_default(body_shape)
+    if not (color or accessory_list or shaped or extra):
+        # §4.1, widened from "colour or accessory" now that shape and free text
+        # are design inputs too. Designing nothing is adopting, and the zero-GPU
+        # adopt path exists for that.
+        raise HTTPException(400, "Pick a colour, an accessory, a body shape, or "
+                                 "describe a change.")
+
+    species = name.strip().lower()[:60] or ref["description"]
+    description, display_name, min_strength = compose_design(
+        species, color, accessory_list, body_shape, extra)
+    strength = min(0.9, max(0.3, strength))
+    if min_strength:
+        strength = max(strength, min_strength)
+
+    png_path, _ = _reference_paths(ref["id"])
+    png = _render_still(description, request, owner,
+                        reference_path=png_path, strength=strength)
+
+    # The new record carries the SHORT species phrase ("purple corgi"), NOT the
+    # ~240-char composed design string (§7.3). Generate is always as-is now, so
+    # this steers only the motion prompts, the breed_id slug and the default
+    # display name — and make_pet_zip truncates at [:60] anyway. The long prompt
+    # did its job here, in the redraw.
+    return _reference_record(_save_reference(
+        png, owner=owner, description=display_name.lower(),
+        display_name=display_name,
+        # A design never changes the animal, so the profile rides along unchanged.
+        motion_profile=ref.get("motion_profile"),
+        source="design", min_strength=min_strength, generated=True))
 
 
 # Poses NOT offered in the selector at launch: triggered roles that only play if a
@@ -743,27 +1138,21 @@ def health():
     return out
 
 
-@app.post("/api/generate")
-async def start_job(
-    request: Request,
-    name: str = Form(""),
-    text: str = Form(""),
-    image: Optional[UploadFile] = File(None),
-    base_pet_id: str = Form(""),
-    catalog_animal: str = Form(""),
-    catalog_breed: str = Form(""),
-    strength: float = Form(0.85),
-    color: str = Form(""),
-    accessories: str = Form(""),
-    preview_id: str = Form(""),
-    poses: str = Form(""),
-    motion_profile: str = Form(""),
-):
-    # Who is generating? DatsMe-launched user (verified) or None (standalone).
-    # This scopes the generated pet, the draft purge, and any base-pet lookup
-    # so one user's Generate never touches another user's (or the local) pets.
-    owner = datsme_integration.resolve_launch_identity(request)
-    name = name.strip()[:60]
+async def _legacy_resolve_base(request, owner, *, name, text, image, base_pet_id,
+                               catalog_animal, catalog_breed, strength, color,
+                               accessories, preview_id):
+    """The pre-reference contract, quarantined. **DELETE IN BUILD STEP 7**, whole.
+
+    This is the code SPEC_PET_DESIGNER_FLOW exists to remove: three per-origin
+    chains that re-derive the description, the reference image and the strength
+    from "which origin was this?" at BUILD time — the thing `reference_id` resolves
+    once at FILL time instead. It is lifted here verbatim rather than left inline so
+    that (a) the new path above reads as the whole story, and (b) step 7 is one
+    deletion, not an archaeology exercise.
+
+    It serves /design/general, /design/cat, /design/dog and /make until those move
+    to the reference contract (step 8). Nothing new may call it.
+    """
     text = text.strip()[:200]
     base_pet_id = base_pet_id.strip()
     catalog_animal = catalog_animal.strip().lower()[:40]
@@ -772,50 +1161,13 @@ async def start_job(
     color = color.strip().lower()[:20]
     accessory_list = [a.strip().lower()[:30] for a in accessories.split(",") if a.strip()][:3]
 
-    # Catalog base source (SPEC_PET_DESIGNER_PLATFORM §4.3): a themed page sends
-    # the chosen animal/breed instead of a house base_pet_id. The curated base.png
-    # is the img2img source (no cold-start Z-Image), and the catalog's pinned
-    # motion_profile governs the build unless the caller overrode it. Resolve it
-    # up front so the same design/prompt path handles catalog and house bases.
     catalog_base_path = None
     catalog_species = None
     if catalog_animal and catalog_breed and not base_pet_id:
         catalog_base_path = animal_catalog_mod.base_image_path(catalog_animal, catalog_breed)
         if catalog_base_path is None:
             raise HTTPException(404, "catalog base image not found")
-        # Species for the prompt = the breed label ("Corgi"), animal as fallback.
         catalog_species = catalog_breed or catalog_animal
-
-    # Motion-profile package (SPEC_MOTION_PROFILES §4.3/§5.1). `poses` is a JSON
-    # {name: bool} string in the form body; malformed → None (walk+idle default).
-    # `motion_profile` is the catalog's pinned profile key (empty → keyword
-    # resolution from the description). make_pet_zip does the enabled-∩-requested-∪-
-    # required intersection, so the web tier only parses safely and forwards.
-    poses_pkg = None
-    if poses.strip():
-        try:
-            parsed = json.loads(poses)
-            if isinstance(parsed, dict):
-                poses_pkg = {str(k): bool(v) for k, v in parsed.items()}
-        except (json.JSONDecodeError, TypeError, ValueError):
-            poses_pkg = None   # malformed → safe default (walk+idle)
-    motion_profile = motion_profile.strip()[:60] or None
-    # A catalog build pins its motion_profile from the catalog entry (§4.2) unless
-    # the caller supplied one — so the curated path always animates at ≥ the
-    # fidelity free-text keyword matching would find (the Rev.3 guarantee).
-    if motion_profile is None and catalog_base_path is not None:
-        motion_profile = animal_catalog_mod.resolved_motion_profile(catalog_animal, catalog_breed)
-
-    # SERVER-SIDE tier enforcement (§8.6): the UI caps the pose selector, but the
-    # server is authoritative — a request over the caller's cap is CLIPPED here,
-    # not trusted. Resolve the caller's entitlement (standalone → base = 2 poses)
-    # and clip the requested set to max_poses, always keeping walk+idle. Without
-    # this, the only server cap is the global MAX_POSES=10 and every user gets the
-    # plus cap unpriced. Clip (don't 400) so a legitimate over-cap UI never hard-errors.
-    if poses_pkg is not None:
-        caps = datsme_integration.resolve_launch_capabilities(request)
-        max_poses = tiers_mod.resolve_entitlement(caps)["max_poses"]
-        poses_pkg = _clip_poses_to_cap(poses_pkg, max_poses)
 
     has_image = image is not None and bool(image.filename)
     has_design = bool(color or accessory_list)
@@ -833,57 +1185,36 @@ async def start_job(
 
     display_name = None
     if base_pet_id and has_design:
-        # Design page: compose the prompt from structured picks. The species
-        # is the base pet's own name unless the user overrode it. The base pet
-        # must be visible to this caller (their own or a local pet), else 404.
         base_row = db.get_pet(base_pet_id)
         if base_row is None or not _can_access(base_row, owner):
             raise HTTPException(404, "base pet not found")
-        species = base_row["display_name"].lower()
-        species = name.lower() or species
+        species = name.lower() or base_row["display_name"].lower()
         description, display_name, min_strength = compose_design(species, color, accessory_list)
         if min_strength:
             strength = max(strength, min_strength)
     elif on_catalog:
-        # Themed/catalog path: same structured-prompt composition as the house
-        # design path, but the species is the curated breed (overridable by name)
-        # and the starting image is the curated base.png (set below).
         species = name.lower() or catalog_species
         description, display_name, min_strength = compose_design(species, color, accessory_list)
         if min_strength:
             strength = max(strength, min_strength)
     else:
-        # Free-text paths: explicit name > description > generic. This string
-        # also steers the motion prompts, so a short species-ish phrase works
-        # best.
         description = name or text or "pet"
 
-    # Starting a new generation supersedes THIS caller's unsaved draft. Scope
-    # the purge to the caller so a launched user's Generate never deletes
-    # another user's (or the local user's) draft.
-    _purge_drafts(owner)
+    motion_profile = None
+    if catalog_base_path is not None:
+        motion_profile = animal_catalog_mod.resolved_motion_profile(catalog_animal, catalog_breed)
 
-    job_id = uuid.uuid4().hex[:12]
-    job_dir = SCRATCH_DIR / job_id   # transient: reference upload, remix base
+    job_dir = SCRATCH_DIR / uuid.uuid4().hex[:12]
     job_dir.mkdir(parents=True, exist_ok=True)
-
     reference_image = None
     remix_strength = None
     if (base_pet_id or on_catalog) and preview_id and preview_id.isalnum() \
             and (PREVIEW_DIR / f"{preview_id}.png").exists():
-        # The user previewed this design — animate the EXACT still they saw
-        # (no second redraw, no re-roll of the look). Same for house and catalog.
         reference_image = PREVIEW_DIR / f"{preview_id}.png"
     elif base_pet_id:
-        # Redesign path: the base pet's own resting frame is the starting
-        # image, redrawn toward the new description at the requested strength.
         reference_image = extract_base_frame(base_pet_id, job_dir / "remix_base.png")
         remix_strength = min(0.9, max(0.3, strength))
     elif on_catalog:
-        # Catalog path (§4.3): the curated base.png is the img2img source —
-        # copied into the job scratch dir so it's a plain local path the local
-        # and pool backends both consume identically (the pool encoder base64s
-        # it as reference_image_b64, the existing v2 transport — no new field).
         reference_image = job_dir / "catalog_base.png"
         shutil.copyfile(catalog_base_path, reference_image)
         remix_strength = min(0.9, max(0.3, strength))
@@ -894,7 +1225,99 @@ async def start_job(
         reference_image = job_dir / "reference_upload"
         reference_image.write_bytes(body)
 
-    job = Job(id=job_id, name=display_name or description, dir=job_dir,
+    return (description, display_name or description, reference_image,
+            remix_strength, motion_profile)
+
+
+@app.post("/api/generate")
+async def start_job(
+    request: Request,
+    reference_id: str = Form(""),
+    name: str = Form(""),
+    poses: str = Form(""),
+    motion_profile: str = Form(""),
+    # ── LEGACY, DELETE IN BUILD STEP 7 ──────────────────────────────────────
+    # The pre-reference contract, still served so /design/general, /design/cat,
+    # /design/dog and /make keep working while /design/general2 is built on the
+    # new one (build order step 5: "legacy fields still accepted"). Every one of
+    # these is resolved at FILL time under `reference_id`. They come out together
+    # with the old frontends, in step 7 — this fork is time-boxed on purpose.
+    text: str = Form(""),
+    image: Optional[UploadFile] = File(None),
+    base_pet_id: str = Form(""),
+    catalog_animal: str = Form(""),
+    catalog_breed: str = Form(""),
+    strength: float = Form(0.85),
+    color: str = Form(""),
+    accessories: str = Form(""),
+    preview_id: str = Form(""),
+):
+    # Who is generating? DatsMe-launched user (verified) or None (standalone).
+    # This scopes the generated pet, the draft purge, and any base-pet lookup
+    # so one user's Generate never touches another user's (or the local) pets.
+    owner = datsme_integration.resolve_launch_identity(request)
+    name = name.strip()[:60]
+    reference_id = reference_id.strip()
+
+    if reference_id:
+        # THE PAYOFF (§6, §7.3). Three per-origin chains used to live below — the
+        # motion profile, the description, and the reference image + strength were
+        # each re-derived from "which origin was this?" at build time. The record
+        # already carries all of it, resolved once at FILL time where the animal and
+        # breed were actually known. So the chains are not relocated; they are gone.
+        ref = _load_reference(reference_id, owner)      # 404 not-yours · 400 expired
+        reference_image, _ = _reference_paths(ref["id"])
+        description = ref.get("description") or "pet"
+        display_name = name or ref.get("display_name") or description.title()
+        remix_strength = None       # ALWAYS as-is — see the thread kwargs below
+        legacy_motion_profile = ref.get("motion_profile")
+    else:
+        (description, display_name, reference_image, remix_strength,
+         legacy_motion_profile) = await _legacy_resolve_base(
+            request, owner, name=name, text=text, image=image,
+            base_pet_id=base_pet_id, catalog_animal=catalog_animal,
+            catalog_breed=catalog_breed, strength=strength, color=color,
+            accessories=accessories, preview_id=preview_id)
+
+    # Motion-profile package (SPEC_MOTION_PROFILES §4.3/§5.1). `poses` is a JSON
+    # {name: bool} string in the form body; malformed → None (walk+idle default).
+    # make_pet_zip does the enabled-∩-requested-∪-required intersection, so the web
+    # tier only parses safely and forwards.
+    poses_pkg = None
+    if poses.strip():
+        try:
+            parsed = json.loads(poses)
+            if isinstance(parsed, dict):
+                poses_pkg = {str(k): bool(v) for k, v in parsed.items()}
+        except (json.JSONDecodeError, TypeError, ValueError):
+            poses_pkg = None   # malformed → safe default (walk+idle)
+    # An explicit override wins; otherwise the pinned key resolved at fill time from
+    # the catalog entry (§4.2) — so the curated path always animates at ≥ the
+    # fidelity free-text keyword matching would find. None → the engine keyword-
+    # resolves from `description`, which is the long tail's path.
+    motion_profile = motion_profile.strip()[:60] or legacy_motion_profile or None
+
+    # SERVER-SIDE tier enforcement (§8.6): the UI caps the pose selector, but the
+    # server is authoritative — a request over the caller's cap is CLIPPED here,
+    # not trusted. Resolve the caller's entitlement (standalone → base = 2 poses)
+    # and clip the requested set to max_poses, always keeping walk+idle. Without
+    # this, the only server cap is the global MAX_POSES=10 and every user gets the
+    # plus cap unpriced. Clip (don't 400) so a legitimate over-cap UI never hard-errors.
+    if poses_pkg is not None:
+        caps = datsme_integration.resolve_launch_capabilities(request)
+        max_poses = tiers_mod.resolve_entitlement(caps)["max_poses"]
+        poses_pkg = _clip_poses_to_cap(poses_pkg, max_poses)
+
+    # Starting a new generation supersedes THIS caller's unsaved draft. Scope
+    # the purge to the caller so a launched user's Generate never deletes
+    # another user's (or the local user's) draft.
+    _purge_drafts(owner)
+
+    job_id = uuid.uuid4().hex[:12]
+    job_dir = SCRATCH_DIR / job_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    job = Job(id=job_id, name=display_name, dir=job_dir,
               external_user_id=owner,
               # Capture attribution NOW, in the request context — the generation
               # thread below can't see the request's User-Agent.
@@ -904,6 +1327,11 @@ async def start_job(
 
     threading.Thread(
         target=run_pet_job, args=(job,),
+        # On the reference path remix_strength is ALWAYS None: the still is one the
+        # user has already seen and approved, so the build animates it AS-IS (§1).
+        # Redrawing here would re-roll the look after they said yes to it. The engine
+        # keeps its remix and text branches for the CLI (§7.1) — and, until step 7,
+        # for _legacy_resolve_base, which is the only thing that still sets this.
         kwargs={"description": description, "reference_image": reference_image,
                 "remix_strength": remix_strength, "display_name": display_name,
                 "poses": poses_pkg, "motion_profile": motion_profile},
