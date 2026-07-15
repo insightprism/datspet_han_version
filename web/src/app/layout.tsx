@@ -38,9 +38,6 @@ export default function RootLayout({
               <Link href="/design" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
                 Design
               </Link>
-              <Link href="/make" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
-                Describe
-              </Link>
               <Link href="/house" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
                 Pet house
               </Link>

@@ -109,14 +109,39 @@ def _client_capturing_run(app_mod, monkeypatch):
     return TestClient(app_mod.app), captured
 
 
+def _reference(client, app_mod, monkeypatch, animal="a red fox"):
+    """Mint a reference the way the designer does, and return its id.
+
+    /api/generate takes ONE base field now (SPEC_PET_DESIGNER_FLOW §8): everything
+    else is resolved at fill time and carried on the record. So a generate test has to
+    go through step 1 first — which is the contract working, not ceremony.
+
+    The renderer is stubbed: these tests are about pose parsing and cap clipping, and
+    a GPU would not make them truer.
+    """
+    import io
+    from PIL import Image
+
+    def fake_render(description, request, owner, reference_path=None, strength=None):
+        buf = io.BytesIO()
+        Image.new("RGB", (32, 32), (7, 7, 7)).save(buf, "PNG")
+        return buf.getvalue()
+
+    monkeypatch.setattr(app_mod, "_render_still", fake_render)
+    r = client.post("/api/reference", data={"animal": animal})
+    assert r.status_code == 200, r.text
+    return r.json()["reference_id"]
+
+
 def test_start_job_parses_valid_poses_json(app_mod, monkeypatch):
     client, captured = _client_capturing_run(app_mod, monkeypatch)
     # This test targets pose-JSON PARSING + motion_profile forwarding — grant the
     # plus capability so tier clipping (tested separately) doesn't drop `run`.
     monkeypatch.setattr(app_mod.datsme_integration, "resolve_launch_capabilities",
                         lambda request: ["pet_designer_plus"])
+    ref = _reference(client, app_mod, monkeypatch)
     r = client.post("/api/generate", data={
-        "text": "a red fox",
+        "reference_id": ref,
         "poses": '{"walk": true, "idle": true, "run": true}',
         "motion_profile": "corgi",
     })
@@ -127,9 +152,12 @@ def test_start_job_parses_valid_poses_json(app_mod, monkeypatch):
 
 def test_start_job_malformed_poses_becomes_none(app_mod, monkeypatch):
     client, captured = _client_capturing_run(app_mod, monkeypatch)
-    r = client.post("/api/generate", data={"text": "a red fox", "poses": "not json{{"})
+    ref = _reference(client, app_mod, monkeypatch)
+    r = client.post("/api/generate", data={"reference_id": ref, "poses": "not json{{"})
     assert r.status_code == 200, r.text
     assert captured["poses"] is None                    # safe default (walk+idle)
+    # None: a typed animal carries no pinned profile, so the engine keyword-resolves
+    # it from the description at build time (§3.4's long-tail branch).
     assert captured["motion_profile"] is None
 
 
@@ -157,107 +185,61 @@ def test_catalog_base_image_serves_and_404s(app_mod):
     assert missing.status_code == 404
 
 
-def test_catalog_generate_uses_curated_base_and_pins_profile(app_mod, monkeypatch):
-    # A themed-page generate (catalog_animal+catalog_breed, no base_pet_id) must:
-    #  - use the curated base.png as the img2img reference (a real file path),
-    #  - pin the catalog's motion_profile (curated ≥ free-text fidelity, §4.2).
+def test_catalog_reference_pins_the_profile_through_to_the_build(app_mod, monkeypatch):
+    # The curated path must animate at >= the fidelity free-text keyword matching would
+    # find (SPEC_PET_DESIGNER_PLATFORM §4.2) — the Rev.3 guarantee. That pinning now
+    # happens at FILL time and rides the record, so this asserts it survives the trip.
+    #
+    # This test used to post catalog_animal+catalog_breed straight at /api/generate and
+    # assert remix_strength was not None. Both halves are gone: the catalog is a step-1
+    # door now, and generate NEVER remixes — it animates a still the user already saw
+    # and locked (§8). Asserting a remix here would pin the bug the spec removed.
     client, captured = _client_capturing_run(app_mod, monkeypatch)
-    r = client.post("/api/generate", data={
-        "catalog_animal": "dog",
-        "catalog_breed": "corgi",
-        "color": "blue",
-    })
+    r = client.post("/api/reference", data={"catalog_animal": "dog", "catalog_breed": "corgi"})
     assert r.status_code == 200, r.text
-    ref = captured["reference_image"]
-    assert ref is not None and str(ref).endswith("catalog_base.png")
-    assert ref.exists(), "curated base was not copied into the job scratch dir"
-    assert captured["motion_profile"] == "quadruped"    # dog's pinned profile
-    assert captured["remix_strength"] is not None       # img2img remix, not cold-start
+    ref = r.json()
+    assert ref["motion_profile"] == "quadruped"        # dog's pinned profile
+    assert ref["generated"] is False                   # a curated file, no GPU
+
+    r = client.post("/api/generate", data={"reference_id": ref["reference_id"]})
+    assert r.status_code == 200, r.text
+    assert captured["motion_profile"] == "quadruped"
+    assert captured["reference_image"] is not None and captured["reference_image"].exists()
+    assert captured["remix_strength"] is None          # always as-is (§8)
 
 
 def test_catalog_generate_explicit_profile_overrides_pin(app_mod, monkeypatch):
     client, captured = _client_capturing_run(app_mod, monkeypatch)
+    ref = client.post("/api/reference", data={
+        "catalog_animal": "dog", "catalog_breed": "corgi"}).json()["reference_id"]
     r = client.post("/api/generate", data={
-        "catalog_animal": "dog", "catalog_breed": "corgi",
-        "color": "red", "motion_profile": "avian",
+        "reference_id": ref, "motion_profile": "avian",
     })
     assert r.status_code == 200, r.text
-    assert captured["motion_profile"] == "avian"        # caller override wins
+    assert captured["motion_profile"] == "avian"        # caller override beats the pin
 
 
-def test_catalog_generate_unknown_breed_404(app_mod, monkeypatch):
+def test_generate_requires_a_reference(app_mod, monkeypatch):
+    # The design guard moved to fill time — /api/preview owns "pick a colour, an
+    # accessory, a body shape, or describe a change" (§4.1), and test_reference_flow
+    # covers it. What generate must refuse is running with no base at all.
+    #
+    # 400, not 404: an empty/expired reference is "start over", never a stack trace
+    # (§7.3). This used to be a catalog-shaped request with nothing to redraw toward.
+    client, _ = _client_capturing_run(app_mod, monkeypatch)
+    assert client.post("/api/generate", data={}).status_code == 400
+
+
+def test_generate_refuses_the_deleted_legacy_contract(app_mod, monkeypatch):
+    # Build step 7: the pre-reference params are GONE, not deprecated. A request in the
+    # old shape must fail loudly rather than quietly build something — a silently
+    # ignored `catalog_animal` would produce a pet from the wrong base.
     client, _ = _client_capturing_run(app_mod, monkeypatch)
     r = client.post("/api/generate", data={
-        "catalog_animal": "dog", "catalog_breed": "nonesuch", "color": "red",
-    })
-    assert r.status_code == 404
-
-
-def test_catalog_generate_requires_design_or_name(app_mod, monkeypatch):
-    # A catalog base with no color/accessory/name has nothing to redraw toward.
-    client, _ = _client_capturing_run(app_mod, monkeypatch)
-    r = client.post("/api/generate", data={
-        "catalog_animal": "dog", "catalog_breed": "corgi",
+        "catalog_animal": "dog", "catalog_breed": "corgi", "color": "blue",
+        "text": "a red fox",
     })
     assert r.status_code == 400
-
-
-# --- sample adopt (SPEC_PET_DESIGNER_PLATFORM §4.4) --------------------------
-def test_adopt_sample_inserts_draft_pet_gpu_free(app_mod, monkeypatch, tmp_path):
-    # Seed a sample bundle into a temp catalog samples dir the loader reads.
-    import io, zipfile, json as _json
-    from pet_factory import animal_catalog as cat
-    samples_dir = tmp_path / "dog_samples"
-    samples_dir.mkdir()
-    # A minimal valid bundle: sprite + manifest + package.
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("x_sprite.png", b"\x89PNG\r\n\x1a\n" + b"0" * 32)
-        z.writestr("manifest.json", _json.dumps({"animations": {"idle": {"frames": [0]}}}))
-        z.writestr("package.json", _json.dumps({"display_name": "Sample Pup", "breed_id": "samplepup"}))
-    (samples_dir / "samplepup.zip").write_bytes(buf.getvalue())
-
-    monkeypatch.setattr(cat, "sample_bundle_path",
-                        lambda a, s: (samples_dir / f"{s}.zip") if s == "samplepup" else None)
-
-    from fastapi.testclient import TestClient
-    client = TestClient(app_mod.app)
-    r = client.post("/api/catalog/dog/samples/samplepup/adopt")
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["display_name"] == "Sample Pup" and body["breed_id"] == "samplepup"
-
-    # The adopted pet is a DRAFT (not in the saved list) until kept — same
-    # lifecycle as a generated pet.
-    saved_ids = [p["id"] for p in client.get("/api/pets").json()]
-    assert body["pet_id"] not in saved_ids
-    client.post(f"/api/pets/{body['pet_id']}/keep")
-    saved_ids = [p["id"] for p in client.get("/api/pets").json()]
-    assert body["pet_id"] in saved_ids
-
-
-def test_adopt_unknown_sample_404(app_mod):
-    from fastapi.testclient import TestClient
-    client = TestClient(app_mod.app)
-    r = client.post("/api/catalog/dog/samples/nosuchsample/adopt")
-    assert r.status_code == 404
-
-
-# --- tiers + charging (SPEC_PET_DESIGNER_PLATFORM §5/§8.6) -------------------
-def test_entitlement_standalone_is_launch_default(app_mod):
-    from fastapi.testclient import TestClient
-    client = TestClient(app_mod.app)
-    ent = client.get("/api/entitlement").json()
-    # Launch posture (§5.2): the default tier is 'plus', so a standalone caller gets
-    # the plus cap and the extra-pose price. (Flipping default_tier updates this.)
-    #
-    # ⚠️ TESTING (2026-07-15): the plus cap is 10, not the launch value of 5, so the
-    # redesigned designer can exercise every offerable pose. REVERT tiers.json AND this
-    # before launch — default_tier is "plus", so this is what EVERY user gets, and at
-    # 50 credits an extra pose a 10-pose pet would charge 100 + 8×50 = 500.
-    assert ent["tier"] == "plus"
-    assert ent["max_poses"] == 10 and ent["extra_pose_slots"] == 8
-    assert ent["price_per_extra_pose"] == 50
 
 
 def test_server_clips_poses_over_cap(app_mod, monkeypatch):
@@ -271,10 +253,11 @@ def test_server_clips_poses_over_cap(app_mod, monkeypatch):
     # was nothing left to clip — the test would have passed vacuously while proving
     # nothing. A guard that goes quiet when the config moves is not a guard.
     client, captured = _client_capturing_run(app_mod, monkeypatch)
+    ref = _reference(client, app_mod, monkeypatch)
     monkeypatch.setattr(app_mod.tiers_mod, "resolve_entitlement",
                         lambda caps: {"max_poses": 5})
     r = client.post("/api/generate", data={
-        "text": "a red fox",
+        "reference_id": ref,
         # 6 poses requested (walk+idle + 4 optional) — one over the cap of 5.
         "poses": '{"walk": true, "idle": true, "run": true, "sleep": true, "sit": true, "eat": true}',
     })
@@ -289,10 +272,11 @@ def test_server_clips_to_base_when_capability_maps_base(app_mod, monkeypatch):
     # base (cap 2) and confirm a 5-pose request clips to walk+idle. This is the
     # posture once default_tier flips back to 'base' + a premium cap gates plus.
     client, captured = _client_capturing_run(app_mod, monkeypatch)
+    ref = _reference(client, app_mod, monkeypatch)
     monkeypatch.setattr(app_mod.tiers_mod, "resolve_entitlement",
                         lambda caps: {"max_poses": 2})
     r = client.post("/api/generate", data={
-        "text": "a red fox",
+        "reference_id": ref,
         "poses": '{"walk": true, "idle": true, "run": true, "sleep": true, "sit": true}',
     })
     assert r.status_code == 200, r.text
@@ -337,10 +321,11 @@ def test_plus_capability_raises_the_cap(app_mod, monkeypatch):
     client, captured = _client_capturing_run(app_mod, monkeypatch)
     monkeypatch.setattr(app_mod.datsme_integration, "resolve_launch_capabilities",
                         lambda request: ["pet_designer_plus"])
+    ref = _reference(client, app_mod, monkeypatch)
     r = client.post("/api/generate", data={
-        "text": "a red fox",
+        "reference_id": ref,
         "poses": '{"walk": true, "idle": true, "run": true, "sleep": true, "sit": true}',
     })
     assert r.status_code == 200, r.text
     enabled = {k for k, v in captured["poses"].items() if v}
-    assert enabled == {"walk", "idle", "run", "sleep", "sit"}, f"plus cap 5 should keep all, got {enabled}"
+    assert enabled == {"walk", "idle", "run", "sleep", "sit"}, f"plus cap should keep all, got {enabled}"

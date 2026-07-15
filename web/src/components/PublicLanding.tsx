@@ -176,9 +176,6 @@ export default function PublicLanding() {
 
       {/* Footer nav — always-available entry points */}
       <div className="flex flex-wrap gap-3">
-        <Link href="/make" className={SECONDARY_BTN} style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}>
-          ✏️ Describe a pet from scratch →
-        </Link>
         <Link href="/house" className={SECONDARY_BTN} style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}>
           🏠 Visit the pet house →
         </Link>

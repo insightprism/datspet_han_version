@@ -403,33 +403,3 @@ def test_standalone_references_stay_readable(client, no_gpu):
     _can_access. Scoping must not lock the standalone user out of their own box."""
     ref = client.post("/api/reference", data={"animal": "blue jay"}).json()
     assert client.get(ref["image_url"]).status_code == 200
-
-
-# ── the legacy contract, until step 7 ────────────────────────────────────────
-
-def test_legacy_preview_contract_still_works(client, no_gpu):
-    """/design/general, /design/cat and /design/dog still post the old shape. They
-    must keep working until step 8 moves them (§10.3 item 11) — this is the test the
-    old endpoint never had, which is why breaking it was silent."""
-    r = client.post("/api/preview", data={"catalog_animal": "cat", "catalog_breed": "tabby",
-                                          "color": "purple"})
-    assert r.status_code == 200, r.text
-    preview_id = r.json()["preview_id"]
-    assert client.get(f"/api/preview/{preview_id}").status_code == 200
-
-
-def test_legacy_generate_contract_still_works(client, no_gpu, app_mod, monkeypatch):
-    seen = {}
-
-    def fake_thread(target=None, args=(), kwargs=None, daemon=None):
-        seen.update(kwargs or {})
-
-        class _T:
-            def start(self): pass
-        return _T()
-
-    monkeypatch.setattr(app_mod.threading, "Thread", fake_thread)
-    r = client.post("/api/generate", data={"catalog_animal": "cat", "catalog_breed": "tabby",
-                                           "color": "purple"})
-    assert r.status_code == 200, r.text
-    assert seen["remix_strength"] is not None, "the legacy catalog path still redraws"

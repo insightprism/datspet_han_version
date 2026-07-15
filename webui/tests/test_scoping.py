@@ -113,10 +113,26 @@ def test_generate_purges_only_the_callers_draft(app_client, dpp_env, monkeypatch
     monkeypatch.setattr(app_mod.threading, "Thread",
                         lambda *a, **k: type("T", (), {"start": lambda self: None})())
 
-    # user A generates (free-text). Their purge must NOT remove user B's draft
-    # nor the local draft (A's scope is user-A, which has no drafts here).
-    r = app_client.post("/api/generate", data={"text": "a red fox"},
-                        cookies={"datsme_launch": _cookie_for("user-A")})
+    # Generate needs a reference now (SPEC_PET_DESIGNER_FLOW §8) — one base field, and
+    # everything else resolved at fill time. Stub the renderer and mint one as user A.
+    import io
+    from PIL import Image
+
+    def fake_render(description, request, owner, reference_path=None, strength=None):
+        buf = io.BytesIO()
+        Image.new("RGB", (32, 32), (9, 9, 9)).save(buf, "PNG")
+        return buf.getvalue()
+
+    monkeypatch.setattr(app_mod, "_render_still", fake_render)
+    cookies = {"datsme_launch": _cookie_for("user-A")}
+    ref = app_client.post("/api/reference", data={"animal": "a red fox"}, cookies=cookies)
+    assert ref.status_code == 200, ref.text
+
+    # user A generates. Their purge must NOT remove user B's draft nor the local draft
+    # (A's scope is user-A, which has no drafts here).
+    r = app_client.post("/api/generate",
+                        data={"reference_id": ref.json()["reference_id"]},
+                        cookies=cookies)
     assert r.status_code == 200, r.text
     assert db.get_pet("draftB000001") is not None, "user B's draft was wrongly purged"
     assert db.get_pet("draftLocal01") is not None, "local draft was wrongly purged"

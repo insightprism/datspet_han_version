@@ -151,24 +151,23 @@ export function catalogBaseOptions(animals: CatalogAnimal[]): CatalogBaseOption[
   return out;
 }
 
-// The portrait for an adoptable sample (§4.4). The catalog returns a relative
-// preview_url; this prefixes it with the API host.
-export function catalogSamplePreviewUrl(previewUrl: string): string {
-  return `${API_URL}${previewUrl}`;
-}
-
-// Adopt a pre-made sample into the caller's house (§4.4) — zero-GPU. Returns the
-// new draft pet id so the caller runs the normal Save/Accept flow. Credentialed:
-// a DatsMe-launched user's adopt is scoped to them (the launch cookie rides).
-export async function adoptSample(animal: string, sample: string): Promise<{ pet_id: string; display_name: string; breed_id: string }> {
-  const r = await fetch(
-    `${API_URL}/api/catalog/${encodeURIComponent(animal)}/samples/${encodeURIComponent(sample)}/adopt`,
-    { method: "POST", credentials: "include" },
-  );
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(data.detail || "Could not adopt this pet");
-  return data;
-}
+// NOTE — adopt-a-sample has no client helper any more.
+//
+// `catalogSamplePreviewUrl` and `adoptSample` were <SampleGallery>'s, and the gallery
+// went with the themed pages (SPEC_PET_DESIGNER_FLOW §11). They are removed rather than
+// kept warm: dead client code that looks live is worse than an absent helper, and the
+// six lines cost nothing to write again.
+//
+// THE CAPABILITY IS NOT GONE. `POST /api/catalog/{animal}/samples/{sample}/adopt` is
+// still live and still tested server-side, and platform §4.4 calls it the zero-GPU
+// business lever — free users steered to adopt, paid users generate. It simply has no
+// UI now. `CatalogSample` / `CatalogAnimal.samples` below stay, because /api/catalog
+// really does return them and the type must model the response, not the consumer.
+//
+// Worth knowing before reviving it: catalog.json defines no samples at all today, so
+// the gallery rendered nothing even when it existed. That was always a CONTENT gap, not
+// a code one — a real dog sample sits staged at _candidates/dog/samples/friendlypup.zip
+// (commit b64dc3c), one `promote_sample.py dog friendlypup` from being real.
 
 // The caller's OWN resolved tier entitlement (SPEC_PET_DESIGNER_PLATFORM §5.3).
 // The browser never sees the whole tier table — only this slice. The pose

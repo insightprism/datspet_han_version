@@ -59,11 +59,11 @@ export default function HousePage() {
         <div className="card p-8 text-center">
           <p style={{ color: "var(--muted)" }}>No pets yet — the house is empty.</p>
           <Link
-            href="/make"
+            href="/design/general"
             className="mono mt-4 inline-block rounded-lg border px-5 py-3 text-sm font-semibold"
             style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}
           >
-            Make your first pet
+            Design your first pet
           </Link>
         </div>
       )}

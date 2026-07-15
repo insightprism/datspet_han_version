@@ -1,8 +1,17 @@
 """webui — Pet Maker backend (FastAPI, mirrors DatsMe's api conventions).
 
-The React frontend (web/, Next.js on :19955) talks to this API (:19954):
+The React frontend (web/, Next.js on :19955) talks to this API (:19954).
 
-  POST /api/generate                 text and/or reference image → job_id
+The designer is three steps (SPEC_PET_DESIGNER_FLOW), and every way of starting a
+pet ends in the SAME artifact — a reference still. Nothing downstream of the fill
+step asks where the picture came from:
+
+  POST /api/reference                a curated breed | an animal name | a photo
+                                     → ONE reference record
+  POST /api/preview                  reference + design → a NEW reference (§6.1)
+  POST /api/generate                 {reference_id, name, poses, motion_profile}
+                                     → job_id. Four fields: everything else was
+                                     resolved at FILL time and rides the record.
   GET  /api/job/{job_id}             live job status + progress
   GET  /api/pets                     every pet ever generated here (persisted)
   GET  /api/pets/{pet_id}/sheet.png  sprite sheet for the engine
@@ -41,8 +50,9 @@ import pool_client
 # tier; it powers /api/motions and the pose menu (SPEC_MOTION_PROFILES §5.1).
 from pet_factory import motion_profiles as motion_profiles_mod
 # animal_catalog is likewise pure data (base-animal tree + curated base PNGs) — it
-# powers the landing-page tiles, the themed pages' breed picker + instant base
-# image, and the catalog img2img source (SPEC_PET_DESIGNER_PLATFORM §4).
+# powers step 1's gallery: the curated bases the user picks from, served as images
+# (SPEC_PET_DESIGNER_FLOW §3.3). The landing tiles and themed-page breed pickers it
+# used to feed are gone with the themed pages (§11).
 from pet_factory import animal_catalog as animal_catalog_mod
 # tiers is the entitlement table (pose caps + extra-pose price), also pure data —
 # the pose selector caps + the resolved pricing hint come from it, and the server
@@ -788,78 +798,6 @@ def body_shapes_menu():
             "default": body_shapes_mod.default_shape_key()}
 
 
-def _legacy_preview(request, owner, *, base_pet_id, catalog_animal, catalog_breed,
-                    strength, color, accessories, name):
-    """The pre-reference preview contract. **DELETE IN BUILD STEP 7**, whole.
-
-    Serves /design/general, /design/cat and /design/dog until they move to the
-    reference contract (step 8). It resolves a base from a house pet or a catalog
-    breed — the two origins `POST /api/reference` now resolves once, at fill time.
-
-    It mints a real reference under the hood and returns only its id as
-    `preview_id`, so there is ONE store and one sweep even during the transition —
-    the legacy `GET /api/preview/{id}` and the legacy generate path both read the
-    same file the new endpoints do.
-    """
-    base_pet_id = base_pet_id.strip()
-    catalog_animal = catalog_animal.strip().lower()[:40]
-    catalog_breed = catalog_breed.strip().lower()[:40]
-    color = color.strip().lower()[:20]
-    accessory_list = [a.strip().lower()[:30] for a in accessories.split(",") if a.strip()][:3]
-    if not color and not accessory_list:
-        raise HTTPException(400, "Pick a color or at least one accessory to preview.")
-
-    scratch = PREVIEW_DIR / f"_legacy_{uuid.uuid4().hex[:12]}.png"
-    try:
-        if base_pet_id:
-            base_row = db.get_pet(base_pet_id)
-            if base_row is None or not _can_access(base_row, owner):
-                raise HTTPException(404, "base pet not found")
-            species = base_row["display_name"].lower()
-            base_frame = extract_base_frame(base_pet_id, scratch)
-        elif catalog_animal and catalog_breed:
-            catalog_base = animal_catalog_mod.base_image_path(catalog_animal, catalog_breed)
-            if catalog_base is None:
-                raise HTTPException(404, "catalog base image not found")
-            species = catalog_breed
-            shutil.copyfile(catalog_base, scratch)
-            base_frame = scratch
-        else:
-            raise HTTPException(400, "Pick a base pet or a catalog breed to preview.")
-
-        species = name.strip().lower()[:60] or species
-        description, display_name, min_strength = compose_design(species, color, accessory_list)
-        strength = min(0.9, max(0.3, strength))
-        if min_strength:
-            strength = max(strength, min_strength)
-        png = _render_still(description, request, owner,
-                            reference_path=base_frame, strength=strength)
-    finally:
-        scratch.unlink(missing_ok=True)
-
-    meta = _save_reference(
-        png, owner=owner, description=display_name.lower(), display_name=display_name,
-        motion_profile=(animal_catalog_mod.resolved_motion_profile(catalog_animal, catalog_breed)
-                        if catalog_animal and catalog_breed and not base_pet_id else None),
-        source="design", min_strength=min_strength, generated=True)
-    return {"preview_id": meta["id"]}
-
-
-@app.get("/api/preview/{preview_id}")
-def preview_image(preview_id: str):
-    """**LEGACY, DELETE IN BUILD STEP 7.** The unscoped still-server the live pages
-    still use. Deliberately left exactly as buggy as it is today — no owner check —
-    rather than "fixed" here: its replacement, GET /api/reference/{id}.png, IS the
-    fix (§7.3), and hardening a doomed endpoint would only make step 7 look risky.
-    Nothing new may point at this."""
-    if not preview_id.isalnum():
-        raise HTTPException(404, "preview not found")
-    path = PREVIEW_DIR / f"{preview_id}.png"
-    if not path.exists():
-        raise HTTPException(404, "preview not found")
-    return FileResponse(path, media_type="image/png")
-
-
 @app.post("/api/preview")
 def preview_design(
     request: Request,
@@ -870,12 +808,8 @@ def preview_design(
     body_shape: str = Form(""),
     extra: str = Form(""),
     name: str = Form(""),
-    # ── LEGACY, DELETE IN BUILD STEP 7 — see _legacy_preview ────────────────
-    base_pet_id: str = Form(""),
-    catalog_animal: str = Form(""),
-    catalog_breed: str = Form(""),
 ):
-    """Step 3: see it (§5). Takes a reference, returns a REFERENCE — not a
+    """Step 2's answer: see it (§5). Takes a reference, returns a REFERENCE — not a
     different kind of handle (§6.1):
 
         archetype ──(colour/shape/accessories/text/strength)──▶ your pet's look
@@ -889,10 +823,7 @@ def preview_design(
     """
     owner = datsme_integration.resolve_launch_identity(request)
     if not reference_id.strip():
-        return _legacy_preview(request, owner, base_pet_id=base_pet_id,
-                               catalog_animal=catalog_animal, catalog_breed=catalog_breed,
-                               strength=strength, color=color, accessories=accessories,
-                               name=name)
+        raise HTTPException(400, "Pick a base animal first.")
     ref = _load_reference(reference_id, owner)
 
     color = color.strip().lower()[:20]
@@ -1005,7 +936,7 @@ def motions(animal: str = "", profile: str = ""):
 def catalog():
     """The base-animal tree (SPEC_PET_DESIGNER_PLATFORM §4.3): animals, each with
     its breeds, the pinned motion_profile key, and whether it has a themed page.
-    Drives the landing-page tiles (§2) and each themed page's breed picker (§3.1).
+    Drives step 1's gallery — the curated bases, shown as images (§3.3).
     Read-only + cacheable. The browser sees only what it needs to render + route —
     the base_image_url per breed is a stable path it can <img src> directly."""
     animals = []
@@ -1138,97 +1069,6 @@ def health():
     return out
 
 
-async def _legacy_resolve_base(request, owner, *, name, text, image, base_pet_id,
-                               catalog_animal, catalog_breed, strength, color,
-                               accessories, preview_id):
-    """The pre-reference contract, quarantined. **DELETE IN BUILD STEP 7**, whole.
-
-    This is the code SPEC_PET_DESIGNER_FLOW exists to remove: three per-origin
-    chains that re-derive the description, the reference image and the strength
-    from "which origin was this?" at BUILD time — the thing `reference_id` resolves
-    once at FILL time instead. It is lifted here verbatim rather than left inline so
-    that (a) the new path above reads as the whole story, and (b) step 7 is one
-    deletion, not an archaeology exercise.
-
-    It serves /design/general, /design/cat, /design/dog and /make until those move
-    to the reference contract (step 8). Nothing new may call it.
-    """
-    text = text.strip()[:200]
-    base_pet_id = base_pet_id.strip()
-    catalog_animal = catalog_animal.strip().lower()[:40]
-    catalog_breed = catalog_breed.strip().lower()[:40]
-    preview_id = preview_id.strip()
-    color = color.strip().lower()[:20]
-    accessory_list = [a.strip().lower()[:30] for a in accessories.split(",") if a.strip()][:3]
-
-    catalog_base_path = None
-    catalog_species = None
-    if catalog_animal and catalog_breed and not base_pet_id:
-        catalog_base_path = animal_catalog_mod.base_image_path(catalog_animal, catalog_breed)
-        if catalog_base_path is None:
-            raise HTTPException(404, "catalog base image not found")
-        catalog_species = catalog_breed or catalog_animal
-
-    has_image = image is not None and bool(image.filename)
-    has_design = bool(color or accessory_list)
-    on_catalog = catalog_base_path is not None
-    if has_image and image.content_type not in ALLOWED_IMAGE_MIMES:
-        raise HTTPException(400, f"unsupported image type: {image.content_type}")
-    if base_pet_id and has_image:
-        raise HTTPException(400, "Redesign a house pet OR upload an image — not both.")
-    if base_pet_id and not (name or text or has_design):
-        raise HTTPException(400, "Pick a color/accessories or describe the new look.")
-    if on_catalog and not (name or has_design):
-        raise HTTPException(400, "Pick a color/accessories or a name for your design.")
-    if not base_pet_id and not on_catalog and not text and not name and not has_image:
-        raise HTTPException(400, "Describe the pet OR drop in a reference image.")
-
-    display_name = None
-    if base_pet_id and has_design:
-        base_row = db.get_pet(base_pet_id)
-        if base_row is None or not _can_access(base_row, owner):
-            raise HTTPException(404, "base pet not found")
-        species = name.lower() or base_row["display_name"].lower()
-        description, display_name, min_strength = compose_design(species, color, accessory_list)
-        if min_strength:
-            strength = max(strength, min_strength)
-    elif on_catalog:
-        species = name.lower() or catalog_species
-        description, display_name, min_strength = compose_design(species, color, accessory_list)
-        if min_strength:
-            strength = max(strength, min_strength)
-    else:
-        description = name or text or "pet"
-
-    motion_profile = None
-    if catalog_base_path is not None:
-        motion_profile = animal_catalog_mod.resolved_motion_profile(catalog_animal, catalog_breed)
-
-    job_dir = SCRATCH_DIR / uuid.uuid4().hex[:12]
-    job_dir.mkdir(parents=True, exist_ok=True)
-    reference_image = None
-    remix_strength = None
-    if (base_pet_id or on_catalog) and preview_id and preview_id.isalnum() \
-            and (PREVIEW_DIR / f"{preview_id}.png").exists():
-        reference_image = PREVIEW_DIR / f"{preview_id}.png"
-    elif base_pet_id:
-        reference_image = extract_base_frame(base_pet_id, job_dir / "remix_base.png")
-        remix_strength = min(0.9, max(0.3, strength))
-    elif on_catalog:
-        reference_image = job_dir / "catalog_base.png"
-        shutil.copyfile(catalog_base_path, reference_image)
-        remix_strength = min(0.9, max(0.3, strength))
-    elif has_image:
-        body = await image.read()
-        if len(body) > MAX_UPLOAD_BYTES:
-            raise HTTPException(413, "Image exceeds 12 MB limit")
-        reference_image = job_dir / "reference_upload"
-        reference_image.write_bytes(body)
-
-    return (description, display_name or description, reference_image,
-            remix_strength, motion_profile)
-
-
 @app.post("/api/generate")
 async def start_job(
     request: Request,
@@ -1236,48 +1076,35 @@ async def start_job(
     name: str = Form(""),
     poses: str = Form(""),
     motion_profile: str = Form(""),
-    # ── LEGACY, DELETE IN BUILD STEP 7 ──────────────────────────────────────
-    # The pre-reference contract, still served so /design/general, /design/cat,
-    # /design/dog and /make keep working while /design/general2 is built on the
-    # new one (build order step 5: "legacy fields still accepted"). Every one of
-    # these is resolved at FILL time under `reference_id`. They come out together
-    # with the old frontends, in step 7 — this fork is time-boxed on purpose.
-    text: str = Form(""),
-    image: Optional[UploadFile] = File(None),
-    base_pet_id: str = Form(""),
-    catalog_animal: str = Form(""),
-    catalog_breed: str = Form(""),
-    strength: float = Form(0.85),
-    color: str = Form(""),
-    accessories: str = Form(""),
-    preview_id: str = Form(""),
 ):
+    """Step 3: build the pet (§8).
+
+    Four fields. That is the whole contract, and it is the point: `image`, `text`,
+    `base_pet_id`, `catalog_animal`, `catalog_breed`, `strength`, `color`,
+    `accessories` and `preview_id` are all GONE — resolved once at fill time and
+    carried on the record (§7.3).
+    """
     # Who is generating? DatsMe-launched user (verified) or None (standalone).
-    # This scopes the generated pet, the draft purge, and any base-pet lookup
-    # so one user's Generate never touches another user's (or the local) pets.
+    # This scopes the generated pet and the draft purge, so one user's Generate never
+    # touches another user's (or the local) pets.
     owner = datsme_integration.resolve_launch_identity(request)
     name = name.strip()[:60]
-    reference_id = reference_id.strip()
+    if not reference_id.strip():
+        # No base at all — a bad request, not a missing reference. This is also what a
+        # caller using the DELETED legacy contract now gets (build step 7): the old
+        # params are gone, so a catalog_animal/text-shaped request arrives with nothing
+        # here and fails LOUDLY. Silently ignoring them would build the wrong pet.
+        raise HTTPException(400, "Pick a base animal first.")
 
-    if reference_id:
-        # THE PAYOFF (§6, §7.3). Three per-origin chains used to live below — the
-        # motion profile, the description, and the reference image + strength were
-        # each re-derived from "which origin was this?" at build time. The record
-        # already carries all of it, resolved once at FILL time where the animal and
-        # breed were actually known. So the chains are not relocated; they are gone.
-        ref = _load_reference(reference_id, owner)      # 404 not-yours · 400 expired
-        reference_image, _ = _reference_paths(ref["id"])
-        description = ref.get("description") or "pet"
-        display_name = name or ref.get("display_name") or description.title()
-        remix_strength = None       # ALWAYS as-is — see the thread kwargs below
-        legacy_motion_profile = ref.get("motion_profile")
-    else:
-        (description, display_name, reference_image, remix_strength,
-         legacy_motion_profile) = await _legacy_resolve_base(
-            request, owner, name=name, text=text, image=image,
-            base_pet_id=base_pet_id, catalog_animal=catalog_animal,
-            catalog_breed=catalog_breed, strength=strength, color=color,
-            accessories=accessories, preview_id=preview_id)
+    # THE PAYOFF (§6, §7.3). Three per-origin chains used to live here — the motion
+    # profile, the description, and the reference image + strength were each re-derived
+    # from "which origin was this?" at BUILD time. The record already carries all of it,
+    # resolved once at FILL time where the animal and breed were actually known. So the
+    # chains are not relocated; they are gone.
+    ref = _load_reference(reference_id, owner)          # 404 not-yours · 400 expired
+    reference_image, _ = _reference_paths(ref["id"])
+    description = ref.get("description") or "pet"
+    display_name = name or ref.get("display_name") or description.title()
 
     # Motion-profile package (SPEC_MOTION_PROFILES §4.3/§5.1). `poses` is a JSON
     # {name: bool} string in the form body; malformed → None (walk+idle default).
@@ -1295,7 +1122,7 @@ async def start_job(
     # the catalog entry (§4.2) — so the curated path always animates at ≥ the
     # fidelity free-text keyword matching would find. None → the engine keyword-
     # resolves from `description`, which is the long tail's path.
-    motion_profile = motion_profile.strip()[:60] or legacy_motion_profile or None
+    motion_profile = motion_profile.strip()[:60] or ref.get("motion_profile") or None
 
     # SERVER-SIDE tier enforcement (§8.6): the UI caps the pose selector, but the
     # server is authoritative — a request over the caller's cap is CLIPPED here,
@@ -1327,13 +1154,16 @@ async def start_job(
 
     threading.Thread(
         target=run_pet_job, args=(job,),
-        # On the reference path remix_strength is ALWAYS None: the still is one the
-        # user has already seen and approved, so the build animates it AS-IS (§1).
-        # Redrawing here would re-roll the look after they said yes to it. The engine
-        # keeps its remix and text branches for the CLI (§7.1) — and, until step 7,
-        # for _legacy_resolve_base, which is the only thing that still sets this.
+        # remix_strength is ALWAYS None — not "usually", not "on this path". The still
+        # is one the user has already SEEN and locked (§4.7), so the build animates it
+        # as-is; redrawing here would re-roll the look after they said yes to it. With
+        # the legacy contract gone this is a fact rather than a branch, which is what
+        # makes test_generate_is_always_as_is a real guard and not a coincidence.
+        #
+        # The engine keeps its remix and text branches for the CLI (§7.1): make_pet.sh
+        # and examples/cli.py still need them. The web tier simply never uses them.
         kwargs={"description": description, "reference_image": reference_image,
-                "remix_strength": remix_strength, "display_name": display_name,
+                "remix_strength": None, "display_name": display_name,
                 "poses": poses_pkg, "motion_profile": motion_profile},
         daemon=True,
     ).start()

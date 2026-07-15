@@ -4,11 +4,21 @@
 three-step designer, rewritten from it after many rounds of review against a running app.
 §6, §7 and §9–§13 are design, reconciled to them.
 
-**Implementation:** build steps 1, 2, 3, 5 and 6 are **done and green** — 213 tests, `tsc`
-clean. Step 4 is a fleet deploy (§10.1). Step 7 is **blocked on step 8** (§10). **Decision #5 —
-the silhouette calibration — was RUN and PASSED (§4.4), so body shape ships.** The
-remaining opens are content calls, not gates: §9 #18 (`tabby` is a coat pattern, not a
-breed) and the ⚠️ pose-cap revert (#24).
+**Implementation: build steps 0–3 and 5–8 are DONE and green** — 208 tests, `tsc` clean.
+The designer is live at `/design/general`; `/design` 307s to it. **There is one designer and
+one contract**: the legacy `/api/generate` params, `_legacy_resolve_base`, `_legacy_preview`
+and `GET /api/preview/{id}` are deleted, along with `/design/cat`, `/design/dog`, `/make` and
+`components/PetDesigner.tsx` (§11).
+
+Step 4 (the fleet rollout) is the only build step left, and it is a **deploy** — it gates
+`pet_preview` v2 reaching prod, not anything here (§10.1). **Decision #5, the silhouette
+calibration, was RUN and PASSED (§4.4): body shape ships.**
+
+Remaining opens are content and tooling, not gates: ⚠️ revert `plus.max_poses` 10 → 5 before
+launch (#24); `tabby` is a coat pattern, not a breed (#18); `SPEC_PET_DESIGNER_PLATFORM`
+needs a revision now that themed pages are gone (§11.3); and the frontend still has no test
+runner, so `designFlow.ts` — the file this spec calls "the product" — is its least-tested
+code.
 
 A UX consolidation of the designer surface. Sits under
 **`docs/SPEC_PET_DESIGNER_PLATFORM.md`** (the umbrella — landing, themed pages, base
@@ -1378,16 +1388,22 @@ cd web && npx tsc --noEmit        # NEVER `next build` — it poisons the live d
 | 4 | 🚩 **FLEET ROLLOUT** — v2 onto `omen-pet` + `dual-nvidia-pet` + gate | — | **YES** |
 | 5 | **Web tier** — reference store, `/api/reference`, `/api/body-shapes`, `compose_design` gains shape **and free text** (#4 = yes), `reference_id` on preview+generate. Legacy fields still accepted | ✅ (local dev) | 4 gates prod only |
 | 6 | **Frontend** — the flow in `/design/general2`; `api.ts` additions; **the §4.6 vocabulary trim** (taste gate, on screen) | ✅ | — |
-| 7 | **Cleanup** — delete legacy params, the `has_image` branch, `:825-826`, the `preview_id` alias | ✅ | — |
-| 8 | **Promote** — `general2` → `components/PetDesigner.tsx`; resolve cat/dog and `/make` (§11) | ✅ | — |
+| 8 | ✅ **Promote** — `general2` → `/design/general`; themed pages + `/make` DELETED (§11) | ✅ | — |
+| 7 | ✅ **Cleanup** — legacy params, `_legacy_resolve_base`, `_legacy_preview`, `GET /api/preview/{id}`, the `:825-826` guard: **all gone.** Ran AFTER 8, which is the only order that works — see below | ✅ | — |
 
 *Rev.1's step 0 (the upload stopgap to prod) is **deleted** — §3.4.*
 
-**Step 8 is not optional and not §11's problem.** `CLAUDE.md`: *"Finish the refactor. Don't ship with a
-dual-write/transition layer still in place."* Between steps 6 and 8 there are **two designer
-implementations** — the new flow on General, the old shared `PetDesigner` on `/design/cat` and
-`/design/dog`. The fork-into-`general2` posture is right for *building* and wrong for *resting*.
-Rev.1 left promotion in its deferred list; Rev.2 makes it a numbered step.
+> **The build order had 7 before 8, and that is backwards.** Step 7 deletes the legacy
+> contract; step 8 moves the last callers off it. Run in the written order, step 7 breaks
+> `/design/cat`, `/design/dog` and `/make` — which §10.3's own regression check forbids. They
+> ran **8 then 7**, and the dependency is inherent, not incidental: you cannot delete a
+> contract while it has callers.
+>
+> **Both are now DONE.** `/design/cat`, `/design/dog`, `/make`,
+> `components/PetDesigner.tsx`, `SampleGallery` and `DesignLanding` are deleted; `/design`
+> 307s to `/design/general` (the DPP deep-link target had to keep answering, and does).
+> `/api/generate` is four fields. There is **one designer**, which is what `CLAUDE.md`'s
+> "finish the refactor — don't ship with a transition layer still in place" was asking for.
 
 **Frontend sub-order** (each verifiable alone): (a) `designFlow.ts` + `useDesignFlow.ts` against a
 **stubbed** `createReference` returning a hardcoded catalog id — proves the entire state machine and
@@ -1437,7 +1453,8 @@ is the product; an untested rule is a comment.
 
 ### 10.3 Manual E2E (`./start_all.sh`, `PET_GEN_BACKEND=local`, `:19955`)
 
-1. `/design/general2` → box **pre-filled with a picture**, step 2 open, ~6 actions to a pet.
+1. `/design/general` → the box lands **pre-filled with a picture**, ~8 actions to a pet. `/design`
+   307s here (the DPP deep-link target — it must never 404).
 2. **The archetype reads as generic.** The box shows a plain tabby — not designed, not coloured, not
    wearing anything. A user asked "is that your pet?" should say *"no, that's just a cat."*
 3. **Curated is always free, whatever you design:** pick corgi → base appears instantly, no GPU (watch
@@ -1452,43 +1469,81 @@ is the product; an untested rule is a comment.
 9. **Design survives an animal change:** set purple + Chubby, then switch corgi → labrador → **the
    design is kept** (§7.6), only the preview clears.
 10. **Preview failure:** kill ComfyUI mid-preview → an error + retry, not a dead end (§5.2).
-11. **Regression:** `/design/general`, `/design/cat`, `/design/dog`, `/make` all still work.
+11. **The step gates hold:** step 2 does not exist until *Use this animal →*; step 3 does not
+    exist until *Use this as my pet →*. Unlocking either drops the frontier back.
+12. **The pet lands in step 3's card**, with steps 1 and 2 still above it and green — the page
+    is not replaced (§8.1).
+13. **Regression:** `/house` and `/` still work. `/design/cat`, `/design/dog` and `/make` are
+    **404 by design** (§11) — if any of them answers, the deletion was incomplete.
 
 **GPU-less posture:** `import numpy` must still fail in the prod venv; `body_shapes` stays stdlib-only.
 **Never add a module-top ML import** to `webui/` or a `pet_factory` data subpackage.
 
 ---
 
-## 11. What this spec does NOT change
+## 11. Resolved: the themed pages, `/make`, and what went with them
 
-Deliberately deferred until the studio is real and can be seen. **Note that promoting `general2` over
-the shared component is *not* on this list any more — it is build step 8.**
+**Rev.6 — this was the deferred list, and it is now decisions.** They were deferred "until
+the studio is real and can be seen"; it is, and they were made looking at it.
 
-- **`/design/cat` and `/design/dog`.** Once the door set exists, a themed page either shows an
-  incoherent "upload a photo of your ferret" door or locks the box to door 1 — and locking it is *a
-  themed page owning a private copy of how generation works*, which platform §0 forbids. The likely end
-  state is **merchandising + sample-adoption pages that hand off** via `?animal=cat&breed=tabby`. Not
-  decided here, but decided at step 8.
-- **`/make`.** Its two capabilities become door 2 and (if decision #4 is yes) step 2's free-text field.
-  It has no external contract — the DPP launch targets `/design` only (`test_front_door.py:22-56`,
-  `return=/design`) — so deletion is likely. **Decision #4 forces this call rather than deferring it.**
-- **The house-pet source** (§3.5) and `/house`'s broken Redesign link (`house/page.tsx:87`). Note it is
-  broken twice over: the only code that reads `?base` is `PetDesigner.tsx:283`, inside the dead
-  `kind:"house"` branch.
-- **`SampleGallery`** — renders nothing (`SampleGallery.tsx:36`) because `catalog.json` defines no
-  samples. This is a **content gap, not a code gap**: a real dog sample sits staged at
-  `_candidates/dog/samples/friendlypup.zip` (commit `b64dc3c`), one `promote_sample.py dog friendlypup`
-  from rendering. It is also the zero-GPU business lever (platform §4.4) and the likely reason themed
-  pages survive — so the themed-page decision and the sample decision are the same decision.
-- **`SPEC_PET_DESIGNER_PLATFORM` §3.3's rewrite.** Its Rev.1–4 text mandates General = *"free-text,
-  redesign-any-house-pet, no theming, everything exposed"* — but `53da4fd` moved free-text out to
-  `/make` and `74c1783` replaced house pets with curated bases, and **`general/page.tsx:4` now cites
-  §3.3 as authority for the opposite of what §3.3 says.** The misattribution is duplicated into
-  `general2/page.tsx:11`. Both were deliberate product decisions; the spec was never updated, and its
-  §8 "General never regresses" guard has now been silently broken twice. **Practical note for anyone
-  reading §3.3 as a constraint on this work: it is not one — it has already been overridden in
-  practice.** The rewrite belongs with the §11 decisions, in one commit, recorded rather than quietly
-  amended.
+### 11.1 `/design/cat`, `/design/dog`, `/make` — DELETED
+
+The dilemma this spec named was real: once the door set exists, a themed page either shows
+an incoherent *"upload a photo of your ferret"* door, or locks the box to one door — and
+locking it is *a themed page owning a private copy of how generation works*, which platform
+§0 forbids. Three end states were on the table (adopt the new designer pre-filled;
+merchandise + hand off; delete). **Delete was chosen.**
+
+`/make` went with them. It could not survive the reference contract on its own terms: it has
+no design step, and §4.1 requires one. Both its capabilities already live in the designer —
+upload is step 1's own picture door, free text is step 2's *"anything else?"*. It had no
+external contract to break: the DPP launch targets `/design` only
+(`test_front_door.py:22-56`, `return=/design`).
+
+Deleted with them, because their last callers went: `components/PetDesigner.tsx` (the
+pre-reference single-form designer), `SampleGallery.tsx`, `DesignLanding.tsx`, and the
+`previewDesign` / `previewImageUrl` / `adoptSample` / `catalogSamplePreviewUrl` helpers in
+`api.ts`.
+
+**`/design` now 307s to `/design/general`.** It must keep answering — the DPP deep-link and
+the host's stored config both name it, and neither is ours to edit. It stays a *route*
+rather than a next.config rewrite because that is where a landing goes if worlds return.
+
+**What this cost, stated plainly:** the Cat World / Dog World concept that
+`SPEC_PET_DESIGNER_PLATFORM` §3 is largely about. **That spec is now substantially wrong**
+and needs its own revision — recorded here rather than quietly diverged from (§11.3).
+
+### 11.2 Adopt-a-sample has no UI — the capability is still there
+
+`SampleGallery` was adopt's only surface, so adopt is now unreachable from the browser.
+
+**`POST /api/catalog/{animal}/samples/{sample}/adopt` is still live and still tested.**
+Platform §4.4 calls it the zero-GPU business lever — free users steered to adopt, paid users
+generate — and it is worth reviving deliberately rather than losing by attrition.
+
+It never worked anyway, and not for a code reason: **`catalog.json` defines no samples**, so
+the gallery rendered nothing even when it existed. That is a CONTENT gap. A real dog sample
+sits staged at `_candidates/dog/samples/friendlypup.zip` (commit `b64dc3c`), one
+`promote_sample.py dog friendlypup` from being real. Whoever revives the lever needs a
+surface AND that promote — and the surface is now a decision, not a leftover.
+
+### 11.3 Still not done
+
+- **`SPEC_PET_DESIGNER_PLATFORM` needs a revision.** Its §3 (themed pages) describes surfaces
+  that no longer exist, and its §3.3 has been wrong since `53da4fd`/`74c1783` — it mandates
+  General = *"free-text, redesign-any-house-pet, everything exposed"*, which those commits
+  deliberately overrode. Two pages cited it as authority for the opposite of what it says;
+  both are deleted now, so nothing misattributes it any more — but the text is still there
+  and still wrong. One commit, recorded rather than quietly amended.
+- **The house-pet source** (§3.5). Backend-complete (`extract_base_frame`), never reachable.
+  `/house`'s Redesign button still links to `/design?base=<id>`, which now 307s to the
+  designer and **drops the `?base`** — the same silent drop as before, one hop later. It is a
+  broken link either way; §3.5 says how it should arrive if revived.
+- **⚠️ `plus.max_poses` = 10** (#24) — revert to 5 before launch.
+- **`tabby`** (#18) — a coat pattern, not a breed. Fails the test that removed `cat/black`.
+- **No frontend test runner**, so §10's "prove the state machine with zero backend" gate
+  cannot run. `designFlow.ts` is pure and trivially testable once a runner is chosen — and it
+  is the file this spec calls "the product".
 
 ---
 
