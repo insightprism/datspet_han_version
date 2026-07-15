@@ -51,9 +51,25 @@ ssh root@5.161.70.13 '
   webui/venv/bin/pip install -q -r webui/requirements.txt        # if reqs changed
   webui/venv/bin/pip install -q --no-deps -e /var/www/datspet    # data-only pet_factory (idempotent; see above)
   cp deploy/nginx-default.conf nginx-default.conf                # if conf changed
-  cd web && DATSPET_STATIC_EXPORT=1 NEXT_PUBLIC_API_URL=https://pet.datsme.me npm run build  # if web/ changed
+  cd web && npm install --no-audit --no-fund                    # REQUIRED if package.json changed — see below
+  DATSPET_STATIC_EXPORT=1 NEXT_PUBLIC_API_URL=https://pet.datsme.me npm run build  # if web/ changed
   systemctl restart datspet-backend && docker restart datspet-nginx'
 ```
+
+**`npm install` is NOT optional when `package.json` moved (learned 2026-07-15).** This
+procedure had a `pip install -r requirements.txt` step for Python and *nothing* for npm, so
+the box's `node_modules` silently drifts. Adding `vitest` as a devDependency broke the
+staging build outright: `next build` typechecks `**/*.ts`, which includes `vitest.config.ts`,
+which imports `vitest/config` — absent on the box. `Failed to compile`, no export, and
+nothing about the error names npm. Run `npm install` first whenever `package.json` changed.
+
+**⚠️ NEVER `cp deploy/nginx-default.conf nginx-default.conf` ON STAGING.** The repo conf is
+PROD's: it hardcodes `proxy_pass http://172.18.0.1:29954`. Staging's backend is **29964**, so
+that copy silently points the staging vhost at the PRODUCTION backend — launches would verify
+against the wrong environment and writebacks would land on the wrong host, which is the exact
+failure the twin exists to prevent. Patch staging's own `nginx-default.conf` in place instead,
+and always `docker run --rm -v <conf>:/etc/nginx/conf.d/default.conf:ro nginx:alpine nginx -t`
+before restarting the vhost.
 
 **First deploy of the motion-profiles code (and on any fresh venv):** run the
 `--no-deps -e` install above BEFORE restarting the backend — the web tier imports
