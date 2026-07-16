@@ -1,5 +1,5 @@
 {
-  "_doc": "Coat axis (SPEC_PET_DESIGN_AXES §2) — surface: fur. Shown ONLY for animals whose resolved surface is 'fur' (a cat sees this; a bird sees plumage; an unknown creature sees neither — §3.3). PLACEHOLDER FRAGMENTS pending Phase 3. min_strength is null FOR NOW: §6 names a strong coat change as the likely 0.9 candidate (fluffy/long-haired changes silhouette, the body-shape precedent), but which axes need the clamp is a Phase 3 MEASUREMENT — one number in this file when the render evidence lands.",
+  "_doc": "Coat axis (SPEC_PET_DESIGN_AXES §2) — surface: fur. Shown ONLY for animals whose resolved surface is 'fur' (a cat sees this; a bird sees plumage; an unknown creature sees neither — §3.3). min_strength 0.9 is MEASURED (Phase 3, 2026-07-16, curated tabby at fixed seed): at 0.85 only long_haired and curly visibly took — fluffy/sleek/shaggy lost to the authored coat; at 0.9 all five took and the tabby stayed a tabby. §6's prediction, confirmed.",
   "axis": "coat",
   "label": "coat",
   "kind": "surface",
@@ -7,7 +7,7 @@
   "default": "natural",
   "clause_slot": 30,
   "position": "suffix",
-  "min_strength": null,
+  "min_strength": 0.9,
   "options": [
     { "key": "natural", "label": "Natural", "prompt_fragment": "" },
     { "key": "fluffy", "label": "Fluffy", "prompt_fragment": "with fluffy fur" },

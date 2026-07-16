@@ -281,9 +281,11 @@ fewer controls. `designFlow.ts` carries the picks; `api.ts` gains the `axis_pick
 ## 6. Strength interaction
 
 Unchanged mechanism (`SPEC_PET_DESIGNER_FLOW` §4.5): an axis whose change fights the source
-declares `min_strength: 0.9` in its JSON (a strong coat change is the likely candidate;
-expression probably none). The existing "using strong — required for this change" notice
-covers it. Which axes need it is a Phase 3 measurement — one number in a data file.
+declares `min_strength: 0.9` in its JSON. The existing "using strong — required for this
+change" notice covers it. **Measured (Phase 3, 2026-07-16):** coat, plumage, and scales all
+carry 0.9 — texture asks fight the authored surface and lose at 0.85; expression and pattern
+carry none (expression's weakness on realistic styles is semantic, and pattern's failures on
+strongly-marked animals are Tier B by choice — see §8's results).
 
 ---
 
@@ -308,6 +310,32 @@ measured budget, and fewer for an uncatalogued animal (no surface axis).
 Phase 0 is a pure test-guarded refactor and ships alone. Phase 1 is invisible (no new UI, just
 resolution + a filtered endpoint). Phases 2 and 3 ship together behind the disclosure — an
 un-calibrated axis is worse than none.
+
+**Phase 3 RAN 2026-07-16 — PASSED the Tier C bar,** on a 76-cell fixed-seed matrix (curated
+tabby / txt2img blue jay / txt2img python / "a clockwork octopus") plus a 14-cell follow-up at
+0.9. Results, now carried as data in the axis files' `_doc`s:
+
+- **Expression is the strongest axis** (inverting this spec's own risk call): all five options
+  live at 0.85 on every cartoon-styled animal; suffix position confirmed (§11.3). On the
+  realistic-styled jay only grumpy+sleepy read — semantics (a beak can't smile), not strength.
+- **coat / plumage / scales got `min_strength: 0.9`, measured** — at 0.85 the authored surface
+  won (coat 2/5 live, plumage 0/4, scales 1/3); at 0.9 everything took with identity intact.
+  §6's prediction confirmed. Plumage's options read similar to each other at 0.9 — live, but
+  the vocabulary wants sharper words (§11.2).
+- **pattern stays unclamped, deliberately**: live at 0.85 on plainly-marked animals (patches
+  renders as a charming patchwork on the octopus — Tier A) and prior-locked on tabby stripes /
+  jay wings — Tier B, the strength slider's territory. Forcing 0.9 would cost distinctive base
+  details exactly where 0.85 already works (see next bullet).
+- **0.9 wins fights but erodes fine base detail**: the clockwork octopus lost its clock in the
+  0.9 stack; the python's palette drifted at body-thin's forced 0.9. The §12.3 pre-build
+  verbiage and the strength control's honesty matter for exactly this reason.
+- **`max_concurrent_strong` measured null**: the stacks (colour + accessory + pattern + surface
+  + expression, ± body at 0.9) showed no destructive interference on any matrix animal; clause
+  ordering held everywhere (no erased picks). No subject substitution in any step-2 cell.
+- **Step-1 observation, out of this spec's scope but recorded**: the txt2img "python"
+  *archetype* drew a legged cute reptile — subject drift at the fill step, disclosed by the
+  work→look→lock flow (the user sees the base before locking), but relevant to any future
+  front-door quality work.
 
 ---
 
@@ -360,7 +388,8 @@ un-calibrated axis is worse than none.
    slots in as data.
 2. **Vocabularies are content — who owns the words?** §2 is engineering placeholders; the look
    owner sets options + copy; Phase 3 calibrates against renders.
-3. **Expression prefix or suffix?** Reasoned suffix; `position` supports both; Phase 3 measures.
+3. **Expression prefix or suffix? — RESOLVED (Phase 3, 2026-07-16):** suffix, confirmed on
+   renders; the axis is the strongest of the set at 0.85 on sprite-styled animals.
 4. **Surface-specific pattern vocabulary.** Pattern is universal with generic words now; "barred
    plumage" vs "tabby stripes" could later make pattern itself surface-aware (its `options`
    filtered by surface, reusing the same `applies_to` mechanism). Deferred — generic works.

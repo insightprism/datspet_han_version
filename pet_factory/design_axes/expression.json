@@ -1,5 +1,5 @@
 {
-  "_doc": "Expression/mood axis (SPEC_PET_DESIGN_AXES §2) — universal: every animal has a face. PLACEHOLDER FRAGMENTS pending Phase 3 calibration; §11.3 reasoned this axis as a SUFFIX phrase ('…, with a grumpy expression') and `position` carries that choice as data — the calibration pass measures whether prefix reads better. HIGHEST-RISK AXIS at 160 px side-profile sprite scale (per the rev.3 review): if options don't read, the Phase 3 outcome is cutting to the strongest few, not shipping dead controls (§12 Tier C: a pick that changes nothing is the bug class users report). clause_slot 40: after the surface axis in suffix order.",
+  "_doc": "Expression/mood axis (SPEC_PET_DESIGN_AXES §2) — universal: every animal has a face. MEASURED (Phase 3, 2026-07-16) as the STRONGEST axis, inverting the rev.3 risk call: all five options live at 0.85 on every cartoon-styled animal (grumpy and sleepy are outstanding), suffix position confirmed (§11.3 resolved). Style-dependent weakness on the realistic-styled bird: only grumpy+sleepy read there — a beak can't smile; that is semantics, not strength, so no min_strength. clause_slot 40: after the surface axis in suffix order.",
   "axis": "expression",
   "label": "mood",
   "kind": "universal",

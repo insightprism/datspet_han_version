@@ -1,5 +1,5 @@
 {
-  "_doc": "Plumage axis (SPEC_PET_DESIGN_AXES §2) — surface: feathers. A whole different vocabulary per surface reads truer than one 'coat' axis with the fur options greyed out on a bird (§0.3). PLACEHOLDER FRAGMENTS pending Phase 3 calibration.",
+  "_doc": "Plumage axis (SPEC_PET_DESIGN_AXES §2) — surface: feathers. A whole different vocabulary per surface reads truer than one 'coat' axis with the fur options greyed out on a bird (§0.3). min_strength 0.9 is MEASURED (Phase 3, 2026-07-16, txt2img blue jay at fixed seed): at 0.85 all four options were prior-locked (identical to the base); at 0.9 each visibly changes the still, though the options read SIMILAR to one another (richer/sharper feathering more than four distinct textures) — the vocabulary wants sharper wording from the look owner; see the spec's §11.2.",
   "axis": "plumage",
   "label": "feathers",
   "kind": "surface",
@@ -7,7 +7,7 @@
   "default": "natural",
   "clause_slot": 30,
   "position": "suffix",
-  "min_strength": null,
+  "min_strength": 0.9,
   "options": [
     { "key": "natural", "label": "Natural", "prompt_fragment": "" },
     { "key": "iridescent", "label": "Iridescent", "prompt_fragment": "with iridescent shimmering plumage" },
