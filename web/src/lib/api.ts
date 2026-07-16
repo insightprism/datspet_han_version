@@ -400,11 +400,31 @@ export interface DesignAdminAnimals {
   animals: DesignAnimalProfile[];
 }
 
+// Calibration freshness (SPEC_PET_DESIGN_AXES_CALIBRATION §6) — per-cell
+// verdicts so the Features tab can badge options that need recalibrating. Read
+// -only; the render/heal loop is a dev-box command, never a browser action.
+export interface DesignCalibrationCell {
+  animal: string;
+  cell: string;
+  axis: string | null;
+  option: string | null;
+  verdict: "current" | "missing" | "stale";
+  reason: string;
+}
+export interface DesignCalibrationStatus {
+  available: boolean;
+  reason?: string;
+  reviewed: { at: string; notes: string } | null;
+  unreviewed_render_count: number;
+  cells: DesignCalibrationCell[];
+}
+
 const designFetch = (path: string, init?: RequestInit) =>
   adminApiFetch("/api/admin/design", path, init);
 
 export const designAdmin = {
   listAxes: (): Promise<DesignAdminAxisList> => designFetch("/axes"),
+  calibrationStatus: (): Promise<DesignCalibrationStatus> => designFetch("/calibration-status"),
   getAxis: (key: string): Promise<DesignAxisDetail> => designFetch(`/axes/${encodeURIComponent(key)}`),
   createAxis: (axis: DesignAxisFile) =>
     designFetch("/axes", { method: "POST", body: JSON.stringify({ axis }) }),

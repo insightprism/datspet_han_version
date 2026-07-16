@@ -113,6 +113,26 @@ def list_axes():
             "axes": axes}
 
 
+@router.get("/calibration-status")
+def calibration_status():
+    """The design-axis freshness verdicts (SPEC_PET_DESIGN_AXES_CALIBRATION §6),
+    so the Features tab can badge options that need recalibration. Read-only and
+    CPU-only on any instance — prod displays status, it never renders.
+
+    Imports design_calibration LAZILY (§2 import discipline): this router is
+    imported by app.py before compose_design is defined, so a module-top import
+    would land on a partially-initialized app. Degrades to an empty verdict set
+    if the calibration record is absent (a fresh checkout before Phase 0) rather
+    than 500-ing the admin list."""
+    import design_calibration
+    try:
+        result = design_calibration.check()
+    except (FileNotFoundError, design_calibration.MatrixError) as e:
+        return {"available": False, "reason": str(e), "reviewed": None,
+                "unreviewed_render_count": 0, "cells": []}
+    return {"available": True, **result}
+
+
 @router.get("/axes/{key}")
 def get_axis(key: str):
     """One axis's full JSON (the edit form's source — fragments included; this

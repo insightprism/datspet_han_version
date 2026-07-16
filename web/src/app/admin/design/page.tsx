@@ -25,9 +25,27 @@ import {
   designAdmin, getDatsmeSession, AdminApiError,
   type DesignAdminAxisList, type DesignAdminAnimals, type DesignAxisFile,
   type DesignAxisSummary, type DesignAnimalProfile, type DesignBreedProfile,
-  type DesignAxisOption,
+  type DesignAxisOption, type DesignCalibrationStatus,
 } from "@/lib/api";
 import ConfirmModal from "@/components/ConfirmModal";
+
+/**
+ * The recalibration reminder, read-time derived (SPEC_PET_DESIGN_AXES_CALIBRATION
+ * §6, decision 0.2 — never a hand-set flag). An axis is "uncalibrated" when any
+ * of its option cells is missing or stale; the badge points the look owner at
+ * the §5 heal command. The whole loop is a dev-box act — the browser only ever
+ * DISPLAYS this, it can't render.
+ */
+const HEAL_COMMAND = "source pet_env.sh && .venv/bin/python scripts/calibrate_design_axes.py";
+
+function staleAxisKeys(status: DesignCalibrationStatus | null): Set<string> {
+  const stale = new Set<string>();
+  if (!status?.available) return stale;
+  for (const c of status.cells) {
+    if (c.verdict !== "current" && c.axis) stale.add(c.axis);
+  }
+  return stale;
+}
 
 function blankAxis(): DesignAxisFile {
   return {
@@ -53,6 +71,7 @@ export default function DesignAdminPage() {
   const [tab, setTab] = useState<Tab>("features");
   const [list, setList] = useState<DesignAdminAxisList | null>(null);
   const [animals, setAnimals] = useState<DesignAdminAnimals | null>(null);
+  const [calibration, setCalibration] = useState<DesignCalibrationStatus | null>(null);
   const [gateState, setGateState] = useState<"checking" | "ok" | "denied">("checking");
   const [draft, setDraft] = useState<Draft | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
@@ -65,6 +84,9 @@ export default function DesignAdminPage() {
     setList(l);
     setAnimals(a);
     setGateState("ok");
+    // Calibration status is advisory — a failure here must never block the
+    // editor, so it is fetched separately and swallowed.
+    designAdmin.calibrationStatus().then(setCalibration).catch(() => setCalibration(null));
   }, []);
 
   // Gate on mount. A 401 → bounce to the host admin-launch (return here).
@@ -158,6 +180,7 @@ export default function DesignAdminPage() {
   }
 
   const writable = !!list?.writable;
+  const stale = staleAxisKeys(calibration);
 
   return (
     <main>
@@ -194,11 +217,22 @@ export default function DesignAdminPage() {
 
       {notice && <div className="mono mb-4 text-sm" style={{ color: "var(--green)" }}>{notice}</div>}
 
+      {tab === "features" && stale.size > 0 && (
+        <div className="mono mb-4 rounded-lg border p-3 text-xs" style={{ background: "rgba(251,146,60,0.1)", color: "var(--orange)", borderColor: "rgba(251,146,60,0.35)" }}>
+          <div className="mb-1 font-semibold">
+            {stale.size} {stale.size > 1 ? "axes need" : "axis needs"} recalibration —
+            an option was added or a fragment changed since the last render.
+          </div>
+          <div style={{ color: "var(--muted)" }}>Re-measure on a dev box, then review the sheets:</div>
+          <code className="mt-1 block select-all rounded px-2 py-1" style={{ background: "#0c0c0c", color: "var(--heading)" }}>{HEAL_COMMAND}</code>
+        </div>
+      )}
+
       {tab === "features" && (
         <div className="grid gap-6" style={{ gridTemplateColumns: draft ? "minmax(220px, 300px) 1fr" : "1fr" }}>
           <div className="flex flex-col gap-2">
             {list?.axes.map((a) => (
-              <AxisRow key={a.key} a={a} writable={writable}
+              <AxisRow key={a.key} a={a} writable={writable} uncalibrated={stale.has(a.key)}
                 onEdit={() => startEdit(a.key)} onDup={() => startDuplicate(a.key)}
                 onDel={() => setConfirmDel(a.key)} active={draft?.editingKey === a.key} />
             ))}
@@ -225,8 +259,8 @@ export default function DesignAdminPage() {
   );
 }
 
-function AxisRow({ a, writable, onEdit, onDup, onDel, active }: {
-  a: DesignAxisSummary; writable: boolean; active: boolean;
+function AxisRow({ a, writable, uncalibrated, onEdit, onDup, onDel, active }: {
+  a: DesignAxisSummary; writable: boolean; uncalibrated: boolean; active: boolean;
   onEdit: () => void; onDup: () => void; onDel: () => void;
 }) {
   return (
@@ -236,6 +270,12 @@ function AxisRow({ a, writable, onEdit, onDup, onDel, active }: {
         <span className="mono ml-2 text-xs" style={{ color: a.kind === "surface" ? "var(--gold)" : "var(--faint)" }}>
           {a.kind === "surface" ? `surface: ${a.applies_to}` : "universal"}
         </span>
+        {uncalibrated && (
+          <span className="mono ml-2 rounded-full px-2 py-0.5 text-xs" style={{ background: "rgba(251,146,60,0.15)", color: "var(--orange)" }}
+            title="an option is missing or stale in the calibration record — re-measure on a dev box">
+            uncalibrated
+          </span>
+        )}
         <div className="mono text-xs" style={{ color: "var(--faint)" }}>
           {a.option_count} options · slot {a.clause_slot} · {a.position}
           {a.min_strength != null && ` · min ${a.min_strength}`}

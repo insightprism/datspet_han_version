@@ -73,6 +73,49 @@ def _new_axis(key="material"):
     return base
 
 
+# --- calibration status (SPEC_PET_DESIGN_AXES_CALIBRATION §6) -----------------
+def test_calibration_status_returns_keyed_verdicts(admin_client):
+    """The endpoint passes the predicate's per-cell verdicts through, keyed with
+    axis/option so the Features tab can badge per option. Option cells carry
+    axis+option; _base and combo cells carry neither."""
+    r = admin_client.get("/api/admin/design/calibration-status")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["available"] is True
+    assert isinstance(body["cells"], list) and body["cells"]
+    by_cell = {(c["animal"], c["cell"]): c for c in body["cells"]}
+    opt = by_cell[("tabby", "coat-fluffy")]
+    assert opt["axis"] == "coat" and opt["option"] == "fluffy"
+    assert by_cell[("tabby", "_base")]["axis"] is None
+    assert by_cell[("tabby", "combo-stack")]["axis"] is None
+
+
+def test_calibration_status_surfaces_stale_for_the_badge(admin_client, monkeypatch):
+    """A stale option cell must reach the browser keyed by axis so the badge can
+    light up. Stub the predicate (the render loop is a dev-box act, not a test
+    dependency) and assert the passthrough."""
+    import design_calibration
+    monkeypatch.setattr(design_calibration, "check", lambda *a, **k: {
+        "reviewed": None, "unreviewed_render_count": 0, "all_current": False,
+        "cells": [{"animal": "bluejay", "cell": "plumage-downy", "axis": "plumage",
+                   "option": "downy", "verdict": "missing", "reason": "never measured"}],
+    })
+    body = admin_client.get("/api/admin/design/calibration-status").json()
+    assert body["available"] is True
+    stale = [c for c in body["cells"] if c["verdict"] != "current"]
+    assert stale and stale[0]["axis"] == "plumage" and stale[0]["option"] == "downy"
+
+
+def test_calibration_status_degrades_when_record_absent(admin_client, monkeypatch):
+    """A fresh checkout before Phase 0 has no manifest — the endpoint must
+    degrade to an empty verdict set, never 500 the admin surface."""
+    import design_calibration
+    monkeypatch.setattr(design_calibration, "check",
+                        lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("no manifest")))
+    body = admin_client.get("/api/admin/design/calibration-status").json()
+    assert body["available"] is False and body["cells"] == []
+
+
 # --- axes: read ---------------------------------------------------------------
 def test_list_returns_axes_in_menu_order_with_used_by(admin_client):
     r = admin_client.get("/api/admin/design/axes")
