@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
-import type { BodyShape, PetReference } from "@/lib/api";
+import type { DesignAxis, PetReference } from "@/lib/api";
 import {
-  initialState, designFlowReducer, frontier, previewSettled,
+  initialState, designFlowReducer, frontier, previewSettled, hasDesign,
   type DesignFlowState,
 } from "./designFlow";
 
@@ -18,9 +18,14 @@ import {
  * No jsdom, no React, no mocks: the reducer is pure, so this is arithmetic.
  */
 
-const SHAPES: BodyShape[] = [
-  { key: "normal", label: "Normal", is_default: true },
-  { key: "fat", label: "Chubby", is_default: false },
+const AXES: DesignAxis[] = [
+  {
+    axis: "body", label: "body", kind: "universal", default: "normal",
+    options: [
+      { key: "normal", label: "Normal", is_default: true },
+      { key: "fat", label: "Chubby", is_default: false },
+    ],
+  },
 ];
 
 const ref = (id: string, name: string): PetReference => ({
@@ -45,7 +50,7 @@ function designed(): DesignFlowState {
 describe("§5.2 — the step-2 gate", () => {
   it("blocks the lock until a preview settles: a design alone is not an answer", () => {
     const s = designed();
-    expect(frontier(s, SHAPES)).toBe(2);
+    expect(frontier(s, AXES)).toBe(2);
     expect(previewSettled(s)).toBe(false);
   });
 
@@ -55,7 +60,7 @@ describe("§5.2 — the step-2 gate", () => {
     // green while the frontier held step 3 shut. A click that lies about its own outcome.
     const clicked = designFlowReducer(designed(), { type: "designAccepted" });
     expect(clicked.designConfirmed).toBe(true);          // the reducer honours the click…
-    expect(frontier(clicked, SHAPES)).toBe(2);           // …but the step is NOT done,
+    expect(frontier(clicked, AXES)).toBe(2);           // …but the step is NOT done,
     expect(previewSettled(clicked)).toBe(false);         // so the button must be disabled.
   });
 
@@ -64,7 +69,7 @@ describe("§5.2 — the step-2 gate", () => {
     // a retry. Gating on `!s.preview` alone is the dead end the spec names.
     const s = designFlowReducer(designed(), { type: "previewFailureDismissed" });
     expect(previewSettled(s)).toBe(true);
-    expect(frontier(designFlowReducer(s, { type: "designAccepted" }), SHAPES)).toBe(3);
+    expect(frontier(designFlowReducer(s, { type: "designAccepted" }), AXES)).toBe(3);
   });
 });
 
@@ -99,15 +104,33 @@ describe("§7.6 — what a new archetype voids, and what it must not", () => {
 
     s = designFlowReducer(s, { type: "baseAccepted" });
     s = designFlowReducer(s, { type: "designAccepted" });
-    expect(frontier(s, SHAPES)).toBe(2);   // blocked: the corgi was never previewed
+    expect(frontier(s, AXES)).toBe(2);   // blocked: the corgi was never previewed
   });
 
   it("keeps the design when the archetype changes (§0.1 — they were never its properties)", () => {
-    let s = designFlowReducer(designed(), { type: "bodyShapePicked", key: "fat" });
+    let s = designFlowReducer(designed(), { type: "axisPicked", axis: "body", key: "fat" });
     s = designFlowReducer(s, { type: "referenceFilled", seq: s.seq, reference: ref("r2", "corgi") });
-    expect(s.color).toBe("purple");        // "I want it chubby and purple" survives
-    expect(s.bodyShape).toBe("fat");       // changing my mind from tabby to corgi.
+    expect(s.color).toBe("purple");             // "I want it chubby and purple" survives
+    expect(s.axisPicks.body).toBe("fat");       // changing my mind from tabby to corgi.
     expect(s.preview).toBeNull();          // Only the preview dies — it is (base × design).
+  });
+
+  it("counts a non-default axis pick as a design, and nothing else", () => {
+    // SPEC_PET_DESIGN_AXES §4: the "designing nothing is adopting" guard widened —
+    // hasDesign is what the preview button gates on, and it must agree with the
+    // server's rule, or the button and the 400 it triggers would disagree about
+    // whether a design exists. A default pick, an unknown option, and a pick on
+    // an axis the server never offered for THIS animal are all NOT designs.
+    const untouched = atStepTwo();
+    expect(hasDesign(untouched, AXES)).toBe(false);
+    const realPick = designFlowReducer(untouched, { type: "axisPicked", axis: "body", key: "fat" });
+    expect(hasDesign(realPick, AXES)).toBe(true);
+    const defaultPick = designFlowReducer(untouched, { type: "axisPicked", axis: "body", key: "normal" });
+    const unknownOption = designFlowReducer(untouched, { type: "axisPicked", axis: "body", key: "bogus" });
+    const unservedAxis = designFlowReducer(untouched, { type: "axisPicked", axis: "plumage", key: "ruffled" });
+    for (const state of [defaultPick, unknownOption, unservedAxis]) {
+      expect(hasDesign(state, AXES)).toBe(false);
+    }
   });
 
   it("drops a stale fill so a slow draw cannot overwrite a newer one", () => {

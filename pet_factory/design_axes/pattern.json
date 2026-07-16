@@ -1,0 +1,18 @@
+{
+  "_doc": "Markings/pattern axis (SPEC_PET_DESIGN_AXES §2) — universal: every animal can bear markings, catalogued or not. Generic words read across surfaces (a spotted bird, a striped snake); surface-specific pattern wording ('barred plumage') is a deferred refinement (§11.4). PLACEHOLDER FRAGMENTS (§2/§11.2): the look owner sets the words and the Phase 3 calibration pass tunes them against real 160 px renders — the §12 Tier C bar is that every option is LIVE, non-destructive, and subject-preserving, not that it renders exactly as named. clause_slot 20: prefix adjective, outside body's slot 10.",
+  "axis": "pattern",
+  "label": "markings",
+  "kind": "universal",
+  "default": "natural",
+  "clause_slot": 20,
+  "position": "prefix",
+  "min_strength": null,
+  "options": [
+    { "key": "natural", "label": "Natural", "prompt_fragment": "" },
+    { "key": "spotted", "label": "Spotted", "prompt_fragment": "spotted" },
+    { "key": "striped", "label": "Striped", "prompt_fragment": "striped" },
+    { "key": "tuxedo", "label": "Tuxedo", "prompt_fragment": "tuxedo-patterned" },
+    { "key": "patches", "label": "Patches", "prompt_fragment": "patch-patterned" },
+    { "key": "ombre", "label": "Ombre", "prompt_fragment": "ombre-shaded" }
+  ]
+}

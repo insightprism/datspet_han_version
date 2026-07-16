@@ -80,6 +80,23 @@ def resolved_motion_profile(animal_key: str, breed_key: Optional[str] = None) ->
     return animal.get("motion_profile")
 
 
+def resolved_surface(animal_key: str, breed_key: Optional[str] = None) -> Optional[str]:
+    """The authored `surface` tag for a breed (SPEC_PET_DESIGN_AXES §3.1),
+    most-specific-wins exactly like resolved_motion_profile: the breed's own
+    `surface` if it declares one (a Sphynx diverging from `cat`), else the
+    animal row's. Returns None if the animal isn't in the catalog. NO inference
+    — the tag is authored; that it matches a surface axis's `applies_to` is a
+    guard test's job (tests/test_animal_catalog.py), not a runtime import."""
+    animal = _animal(animal_key)
+    if animal is None:
+        return None
+    if breed_key:
+        breed = _breed(animal_key, breed_key)
+        if breed and breed.get("surface"):
+            return breed["surface"]
+    return animal.get("surface")
+
+
 def base_image_path(animal_key: str, breed_key: str) -> Optional[Path]:
     """The on-disk curated base.png for an animal/breed, or None if the entry or
     the file is absent. The file layout is `<animal>/<breed>/base.png` (§4.2).

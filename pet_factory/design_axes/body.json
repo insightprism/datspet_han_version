@@ -1,0 +1,15 @@
+{
+  "_doc": "Body-shape axis — migrated verbatim from body_shapes/shapes.json (SPEC_PET_DESIGN_AXES §1, Phase 0; originally SPEC_PET_DESIGNER_FLOW §7.2). A body SHAPE (thin/normal/chubby) is a step-2 DESIGN modifier — 'what should my corgi look like' — and is deliberately NOT 'body type', which is taken repo-wide for the motion taxonomy (quadruped/avian/serpentine). `min_strength: 0.9` is the §4.4 silhouette rule, moved from compose_design CODE to this file's DATA in the Phase 0 migration: a silhouette change fights the source image exactly like a conflicting colour word does, and the curated corgi is normal-shaped and would win at a gentle denoise. The golden test (webui/tests/test_compose_golden.py) pins the full composed tuple, min_strength included. clause_slot 10 = the prefix fragment nearest the species noun phrase. The default's fragment MUST be exactly \"\" — a default contributes no words — and the guard test pins it.",
+  "axis": "body",
+  "label": "body",
+  "kind": "universal",
+  "default": "normal",
+  "clause_slot": 10,
+  "position": "prefix",
+  "min_strength": 0.9,
+  "options": [
+    { "key": "thin", "label": "Thin", "prompt_fragment": "slender and slim" },
+    { "key": "normal", "label": "Normal", "prompt_fragment": "" },
+    { "key": "fat", "label": "Chubby", "prompt_fragment": "chubby and round" }
+  ]
+}

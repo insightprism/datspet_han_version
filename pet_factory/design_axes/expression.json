@@ -1,0 +1,18 @@
+{
+  "_doc": "Expression/mood axis (SPEC_PET_DESIGN_AXES §2) — universal: every animal has a face. PLACEHOLDER FRAGMENTS pending Phase 3 calibration; §11.3 reasoned this axis as a SUFFIX phrase ('…, with a grumpy expression') and `position` carries that choice as data — the calibration pass measures whether prefix reads better. HIGHEST-RISK AXIS at 160 px side-profile sprite scale (per the rev.3 review): if options don't read, the Phase 3 outcome is cutting to the strongest few, not shipping dead controls (§12 Tier C: a pick that changes nothing is the bug class users report). clause_slot 40: after the surface axis in suffix order.",
+  "axis": "expression",
+  "label": "mood",
+  "kind": "universal",
+  "default": "neutral",
+  "clause_slot": 40,
+  "position": "suffix",
+  "min_strength": null,
+  "options": [
+    { "key": "neutral", "label": "Neutral", "prompt_fragment": "" },
+    { "key": "happy", "label": "Happy", "prompt_fragment": "with a happy smiling expression" },
+    { "key": "grumpy", "label": "Grumpy", "prompt_fragment": "with a grumpy scowling expression" },
+    { "key": "sleepy", "label": "Sleepy", "prompt_fragment": "with sleepy half-closed eyes" },
+    { "key": "mischievous", "label": "Mischievous", "prompt_fragment": "with a mischievous grinning expression" },
+    { "key": "wide_eyed", "label": "Wide-eyed", "prompt_fragment": "with big wide curious eyes" }
+  ]
+}

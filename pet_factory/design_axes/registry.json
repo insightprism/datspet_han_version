@@ -1,0 +1,12 @@
+{
+  "_doc": "Design-axis registry (SPEC_PET_DESIGN_AXES §1). One entry per axis, in MENU ORDER — the order /api/design-axes returns them and the design step renders them. Each entry names an axis file <key>.json in this directory; a registry entry without its file, or an axis file without its entry, fails the build (tests/test_design_axes.py — the half-formed-entry rule). Only ONE of the surface axes (coat/plumage/scales) ever shows for a given animal, chosen by its resolved surface, so listing all three here keeps menu order stable across animals. `max_concurrent_strong` is the §11.6 soft-cap on concurrently-selected strong (min_strength-declaring) modifiers — null until the Phase 3 calibration pass measures the real ceiling; the field exists from Phase 0 so that measurement lands as a one-line data edit, not a schema change.",
+  "axes": [
+    { "key": "body" },
+    { "key": "pattern" },
+    { "key": "coat" },
+    { "key": "plumage" },
+    { "key": "scales" },
+    { "key": "expression" }
+  ],
+  "max_concurrent_strong": null
+}

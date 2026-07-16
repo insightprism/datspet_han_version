@@ -19,8 +19,8 @@
  */
 import { useCallback, useEffect, useReducer, useState } from "react";
 import {
-  createReference, previewReference, fetchBodyShapes, fetchMotions, fetchEntitlement,
-  type BodyShape, type Entitlement,
+  createReference, previewReference, fetchDesignAxes, fetchMotions, fetchEntitlement,
+  type DesignAxis, type Entitlement,
 } from "@/lib/api";
 import {
   designFlowReducer, initialState, frontier, expandedStep, hasDesign,
@@ -32,7 +32,7 @@ const DEFAULT_STRENGTH = 0.85;
 
 export function useDesignFlow() {
   const [state, dispatch] = useReducer(designFlowReducer, initialState(DEFAULT_STRENGTH));
-  const [shapes, setShapes] = useState<BodyShape[]>([]);
+  const [axes, setAxes] = useState<DesignAxis[]>([]);
   const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
 
   // Until the entitlement resolves, fall back to the base cap so the UI never
@@ -41,14 +41,26 @@ export function useDesignFlow() {
 
   useEffect(() => {
     let cancelled = false;
-    fetchBodyShapes()
-      .then((r) => { if (!cancelled) setShapes(r.shapes); })
-      .catch(() => { /* the control simply doesn't render — see DesignStep */ });
     fetchEntitlement()
       .then((e) => { if (!cancelled) setEntitlement(e); })
       .catch(() => { /* keep the conservative base cap */ });
     return () => { cancelled = true; };
   }, []);
+
+  // The design vocabulary keys off the REFERENCE (SPEC_PET_DESIGN_AXES §4): the
+  // server reads its resolved surface and returns only the applicable axes — a
+  // bird gets plumage, a cat gets coat, an unknown creature neither. Before any
+  // reference exists it returns the universal axes, which is enough for
+  // hasDesign/frontier to reason about defaults. A stale response is dropped
+  // via `cancelled`, the same discipline every fetch here follows.
+  const referenceId = state.reference?.reference_id ?? null;
+  useEffect(() => {
+    let cancelled = false;
+    fetchDesignAxes(referenceId ?? undefined)
+      .then((r) => { if (!cancelled) setAxes(r.axes); })
+      .catch(() => { /* keep the previous menu; the server still filters picks */ });
+    return () => { cancelled = true; };
+  }, [referenceId]);
 
   // The pose menu keys off the MOTION PROFILE, not the reference id (§7.6):
   // cat/tabby → cat/siamese are both `quadruped`, so most within-animal changes are
@@ -93,7 +105,12 @@ export function useDesignFlow() {
     form.append("reference_id", state.reference.reference_id);
     if (state.color) form.append("color", state.color);
     if (state.accessories.length) form.append("accessories", state.accessories.join(","));
-    if (state.bodyShape) form.append("body_shape", state.bodyShape);
+    // ONE field for every axis pick (SPEC_PET_DESIGN_AXES §4) — a new axis
+    // ships with no change here. The server re-filters by surface and treats
+    // unknowns as no-ops, so sending a pick the menu no longer offers is safe.
+    const picks = Object.fromEntries(
+      Object.entries(state.axisPicks).filter(([, v]) => v));
+    if (Object.keys(picks).length) form.append("axis_picks", JSON.stringify(picks));
     if (state.extra.trim()) form.append("extra", state.extra.trim());
     if (state.name.trim()) form.append("name", state.name.trim());
     form.append("strength", String(state.strength));
@@ -103,15 +120,15 @@ export function useDesignFlow() {
     } catch (e) {
       dispatch({ type: "previewFailed", seq, message: (e as Error).message });
     }
-  }, [state.reference, state.color, state.accessories, state.bodyShape, state.extra,
+  }, [state.reference, state.color, state.accessories, state.axisPicks, state.extra,
       state.name, state.strength, state.seq]);
 
   return {
-    state, dispatch, shapes, entitlement, maxPoses,
+    state, dispatch, axes, entitlement, maxPoses,
     fillReference, makePreview,
-    frontier: frontier(state, shapes),
-    expanded: expandedStep(state, shapes),
-    hasDesign: hasDesign(state, shapes),
+    frontier: frontier(state, axes),
+    expanded: expandedStep(state, axes),
+    hasDesign: hasDesign(state, axes),
   };
 }
 

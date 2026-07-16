@@ -26,7 +26,8 @@
  * match the code rather than the other way round, because the two extra colours are
  * black and white and the argument for keeping them is stronger than the round number.
  */
-import type { BodyShape } from "@/lib/api";
+import { useState } from "react";
+import type { DesignAxis } from "@/lib/api";
 import { MAX_ACCESSORIES } from "./designFlow";
 
 // §4.6: trimmed from 16 to 10 — NOT the "8" this comment used to claim, and the count
@@ -74,24 +75,32 @@ const STRENGTHS = [
 interface Props {
   color: string;
   accessories: string[];
-  bodyShape: string;
+  /** axis key → option key; the server filters what applies (SPEC_PET_DESIGN_AXES §4). */
+  axisPicks: Record<string, string>;
   extra: string;
   strength: number;
-  shapes: BodyShape[];
+  /** Pre-filtered by the animal's surface — this component holds NO animal logic. */
+  axes: DesignAxis[];
   /** The clamp the LAST preview actually applied, so the control can say so (§4.5). */
   minStrength: number | null;
   onColor: (c: string) => void;
   onAccessory: (a: string) => void;
-  onBodyShape: (k: string) => void;
+  onAxisPick: (axis: string, key: string) => void;
   onExtra: (t: string) => void;
   onStrength: (s: number) => void;
 }
 
 export default function DesignStep({
-  color, accessories, bodyShape, extra, strength, shapes, minStrength,
-  onColor, onAccessory, onBodyShape, onExtra, onStrength,
+  color, accessories, axisPicks, extra, strength, axes, minStrength,
+  onColor, onAccessory, onAxisPick, onExtra, onStrength,
 }: Props) {
   const clamped = minStrength != null && strength < minStrength;
+  // The page-size discipline (SPEC_PET_DESIGN_AXES §0.7/§7): body keeps its
+  // inline chip row; every OTHER axis sits behind a collapsed disclosure, so
+  // step 2's first paint is unchanged and depth is opt-in.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const bodyAxis = axes.find((a) => a.axis === "body");
+  const moreAxes = axes.filter((a) => a.axis !== "body");
   return (
     <div className="flex flex-col gap-4">
       <div>
@@ -148,28 +157,68 @@ export default function DesignStep({
         </div>
       </div>
 
-      {/* Renders by MAPPING /api/body-shapes — zero hardcoded keys. Deleting the data
+      {/* Renders by MAPPING /api/design-axes — zero hardcoded keys. Deleting the data
           deletes the control: that is the test that it is genuinely data-fed. (The
           COLORS/ACCESSORIES arrays above are hardcoded; do NOT follow that precedent
           here — they have shipped arrays and no second consumer, this doesn't.) */}
-      {shapes.length >= 2 && (
+      {bodyAxis && bodyAxis.options.length >= 2 && (
         <div>
-          <div className="mono mb-1 text-xs" style={{ color: "var(--muted)" }}>body</div>
+          <div className="mono mb-1 text-xs" style={{ color: "var(--muted)" }}>
+            {bodyAxis.label}
+          </div>
           <div className="flex flex-wrap gap-2">
-            {shapes.map((s) => {
-              const active = s.is_default ? !bodyShape || bodyShape === s.key : bodyShape === s.key;
+            {bodyAxis.options.map((s) => {
+              const pick = axisPicks[bodyAxis.axis];
+              const active = s.is_default ? !pick || pick === s.key : pick === s.key;
               return (
                 <button
                   key={s.key}
                   type="button"
                   className={active ? "btn text-xs" : "btn-ghost text-xs"}
-                  onClick={() => onBodyShape(s.key)}
+                  onClick={() => onAxisPick(bodyAxis.axis, s.key)}
                 >
                   {s.label}
                 </button>
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* The rest of the vocabulary (SPEC_PET_DESIGN_AXES §7): pattern, mood, and
+          the ONE surface axis the server chose for this animal — an uncatalogued
+          creature simply receives fewer axes and renders fewer selects (§3.3).
+          Collapsed by default; opening it adds at most three compact selects. */}
+      {moreAxes.length > 0 && (
+        <div>
+          <button
+            type="button"
+            className="btn-ghost text-xs"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen(!moreOpen)}
+          >
+            ✨ more ways to make it yours {moreOpen ? "▴" : "▾"}
+          </button>
+          {moreOpen && (
+            <div className="mt-2 flex flex-col gap-3">
+              {moreAxes.map((a) => (
+                <label key={a.axis} className="flex flex-col gap-1">
+                  <span className="mono text-xs" style={{ color: "var(--muted)" }}>
+                    {a.label}
+                  </span>
+                  <select
+                    className="input"
+                    value={axisPicks[a.axis] || a.default}
+                    onChange={(e) => onAxisPick(a.axis, e.target.value)}
+                  >
+                    {a.options.map((o) => (
+                      <option key={o.key} value={o.key}>{o.label}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

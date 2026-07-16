@@ -1,0 +1,34 @@
+{
+  "_doc": "Surface keyword map (SPEC_PET_DESIGN_AXES §3.2) — resolves a TYPED animal name to a surface when the catalog has no entry. Seeded per-WORD from the motion registry's keyword lists (avian.json, serpentine.json, quadruped.json) — never per movement class: winged_flyer (dragon=scales, bat=fur, butterfly=neither) and aquatic (fish=scales, dolphin=skin, octopus=neither) are mixed-surface classes, which is exactly why surface is not a motion field (§0.4). Borrow the vocabulary, not the classification. Matching is word-boundary, case-insensitive, longest keyword wins. NO fallback surface: a name matching nothing resolves to null → the design step shows only the universal axes (§3.3) — it never guesses fur onto a clockwork octopus. A keyword must appear under at most ONE surface (guard-tested). Typed animals that resolve to null are logged by the fill endpoint; that log is this file's growth list — each miss is a one-line edit here.",
+  "surfaces": {
+    "feathers": [
+      "bird", "sparrow", "robin", "finch", "canary", "parrot", "parakeet",
+      "budgie", "cockatoo", "cockatiel", "owl", "eagle", "hawk", "falcon",
+      "raven", "crow", "pigeon", "dove", "duck", "goose", "swan", "jay",
+      "penguin", "chicken", "hen", "rooster", "chick", "flamingo", "peacock",
+      "toucan", "puffin", "ostrich", "emu", "gull", "seagull", "hummingbird",
+      "woodpecker", "magpie", "turkey", "quail", "pelican", "stork", "heron",
+      "kingfisher", "cardinal", "bluebird", "phoenix", "griffin", "gryphon"
+    ],
+    "scales": [
+      "snake", "serpent", "python", "cobra", "viper", "boa", "anaconda",
+      "rattlesnake", "mamba", "adder", "lizard", "gecko", "iguana",
+      "chameleon", "skink", "monitor lizard", "komodo", "crocodile",
+      "alligator", "caiman", "dragon", "wyvern", "basilisk", "hydra",
+      "fish", "goldfish", "koi", "salmon", "tuna", "trout", "betta",
+      "guppy", "clownfish", "seahorse", "pangolin"
+    ],
+    "fur": [
+      "cat", "kitten", "tabby", "siamese", "persian", "dog", "puppy",
+      "corgi", "labrador", "poodle", "husky", "beagle", "terrier", "pug",
+      "dalmatian", "chihuahua", "wolf", "fox", "bear", "panda", "lion",
+      "tiger", "leopard", "cheetah", "jaguar", "lynx", "horse", "pony",
+      "donkey", "sheep", "lamb", "goat", "deer", "fawn", "moose", "elk",
+      "rabbit", "bunny", "hare", "mouse", "rat", "hamster", "gerbil",
+      "chinchilla", "squirrel", "chipmunk", "otter", "ferret", "weasel",
+      "badger", "raccoon", "skunk", "koala", "monkey", "ape", "gorilla",
+      "chimpanzee", "lemur", "sloth", "alpaca", "llama", "camel", "bat",
+      "mole", "beaver", "capybara", "wombat", "possum", "opossum"
+    ]
+  }
+}

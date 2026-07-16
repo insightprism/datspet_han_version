@@ -1,10 +1,11 @@
 {
-  "_doc": "Base-animal catalog (SPEC_PET_DESIGNER_PLATFORM \u00a74.2). Master index of curated base animals + breeds, shown as images in step 1's gallery (SPEC_PET_DESIGNER_FLOW \u00a73.3). Each entry pins a `motion_profile` key at the MOST SPECIFIC AUTHORED level (\u00a74.2): a breed carries its own key ONLY when a level-1 file exists in the motion registry; otherwise it inherits the animal row's key. A guard test (tests/test_animal_catalog.py) asserts every pinned `motion_profile` key resolves in the motion registry and every base.png exists. A BASE IS A SPECIES + A BREED, AND NOTHING ELSE: `cat/black` was removed because 'black' is a COLOUR, and colour is a step-2 design input \u2014 a Black Cat base is a cat someone already designed, which \u00a72.1 forbids step 1 from holding. NO `themed_page`: it named the /design/<slug> route for the landing tiles, and the themed pages are deleted (SPEC_PET_DESIGNER_FLOW \u00a711). Publishing a route that 404s is worse than publishing nothing.",
+  "_doc": "Base-animal catalog (SPEC_PET_DESIGNER_PLATFORM §4.2). Master index of curated base animals + breeds, shown as images in step 1's gallery (SPEC_PET_DESIGNER_FLOW §3.3). Each entry pins a `motion_profile` key at the MOST SPECIFIC AUTHORED level (§4.2): a breed carries its own key ONLY when a level-1 file exists in the motion registry; otherwise it inherits the animal row's key. A guard test (tests/test_animal_catalog.py) asserts every pinned `motion_profile` key resolves in the motion registry and every base.png exists. A BASE IS A SPECIES + A BREED, AND NOTHING ELSE: `cat/black` was removed because 'black' is a COLOUR, and colour is a step-2 design input — a Black Cat base is a cat someone already designed, which §2.1 forbids step 1 from holding. NO `themed_page`: it named the /design/<slug> route for the landing tiles, and the themed pages are deleted (SPEC_PET_DESIGNER_FLOW §11). Publishing a route that 404s is worse than publishing nothing. Each animal row also carries a `surface` tag (fur/feathers/scales — SPEC_PET_DESIGN_AXES §3.1), authored at the most specific level with breed inheritance exactly like motion_profile: a breed row may override (a Sphynx diverging from cat). The guard test asserts every RESOLVED surface matches a design_axes surface axis's applies_to, so a typo can't ship a breed whose surface axis silently never appears.",
   "animals": [
     {
       "key": "cat",
       "label": "Cat",
       "motion_profile": "quadruped",
+      "surface": "fur",
       "tagline": "Design your own cat",
       "breeds": [
         {
@@ -21,6 +22,7 @@
       "key": "dog",
       "label": "Dog",
       "motion_profile": "quadruped",
+      "surface": "fur",
       "tagline": "Design your own dog",
       "breeds": [
         {

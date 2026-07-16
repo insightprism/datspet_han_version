@@ -1,0 +1,17 @@
+{
+  "_doc": "Scales axis (SPEC_PET_DESIGN_AXES §2) — surface: scales (reptiles, and scale-bearing fantasy creatures like dragons via the keyword map). PLACEHOLDER FRAGMENTS pending Phase 3 calibration. A future 'shell' axis for turtles is one new file + one registry line + catalog tags (§9) — do not widen this one.",
+  "axis": "scales",
+  "label": "scales",
+  "kind": "surface",
+  "applies_to": "scales",
+  "default": "natural",
+  "clause_slot": 30,
+  "position": "suffix",
+  "min_strength": null,
+  "options": [
+    { "key": "natural", "label": "Natural", "prompt_fragment": "" },
+    { "key": "glossy", "label": "Glossy", "prompt_fragment": "with glossy polished scales" },
+    { "key": "matte", "label": "Matte", "prompt_fragment": "with matte textured scales" },
+    { "key": "patterned", "label": "Patterned", "prompt_fragment": "with intricately patterned scales" }
+  ]
+}

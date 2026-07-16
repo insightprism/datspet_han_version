@@ -1,0 +1,19 @@
+{
+  "_doc": "Coat axis (SPEC_PET_DESIGN_AXES §2) — surface: fur. Shown ONLY for animals whose resolved surface is 'fur' (a cat sees this; a bird sees plumage; an unknown creature sees neither — §3.3). PLACEHOLDER FRAGMENTS pending Phase 3. min_strength is null FOR NOW: §6 names a strong coat change as the likely 0.9 candidate (fluffy/long-haired changes silhouette, the body-shape precedent), but which axes need the clamp is a Phase 3 MEASUREMENT — one number in this file when the render evidence lands.",
+  "axis": "coat",
+  "label": "coat",
+  "kind": "surface",
+  "applies_to": "fur",
+  "default": "natural",
+  "clause_slot": 30,
+  "position": "suffix",
+  "min_strength": null,
+  "options": [
+    { "key": "natural", "label": "Natural", "prompt_fragment": "" },
+    { "key": "fluffy", "label": "Fluffy", "prompt_fragment": "with fluffy fur" },
+    { "key": "sleek", "label": "Sleek", "prompt_fragment": "with sleek smooth fur" },
+    { "key": "long_haired", "label": "Long-haired", "prompt_fragment": "with long flowing fur" },
+    { "key": "shaggy", "label": "Shaggy", "prompt_fragment": "with shaggy unkempt fur" },
+    { "key": "curly", "label": "Curly", "prompt_fragment": "with curly fur" }
+  ]
+}

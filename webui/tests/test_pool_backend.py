@@ -340,12 +340,20 @@ def test_encode_reference_image_preserves_alpha(pool_app, tmp_path):
 
 
 def test_handler_schemas_admit_composed_design_prompts():
-    """The web tier submits the COMPOSED design string (species≤60 + color≤20 +
-    3 accessories≤30 + fixed clauses ≈ 240 chars worst case) as `animal` /
-    `description`. The schemas must not reject what the local backend accepts —
-    make_pet_zip's own [:60] cut stays the single truncation authority, so pool
-    and local truncate identically (review Bug 2)."""
+    """The web tier submits the COMPOSED design string as `animal` / `description`.
+    The schemas must not reject what the local backend accepts — make_pet_zip's
+    own [:60] cut stays the single truncation authority, so pool and local
+    truncate identically (review Bug 2).
+
+    The worst case is COMPUTED from the live design_axes vocabulary
+    (SPEC_PET_DESIGN_AXES §2) plus /api/preview's caps, so a longer fragment
+    added to an axis file fails HERE, at build time — not as a pool-side 422
+    the user sees as "the workshop couldn't draw that". Only ONE surface axis
+    can ever apply to a single design (filter_picks), so the surface term is a
+    max, not a sum."""
     import importlib.util
+
+    from pet_factory import design_axes as da
 
     def load(fname, modname):
         spec = importlib.util.spec_from_file_location(
@@ -354,15 +362,29 @@ def test_handler_schemas_admit_composed_design_prompts():
         spec.loader.exec_module(mod)
         return mod
 
-    worst = ("vivid " + "c" * 20 + " " + "s" * 60 + " wearing an " + "a" * 30
-             + ", an " + "b" * 30 + ", an " + "d" * 30
-             + ", recolored entirely " + "c" * 20)
-    assert len(worst) == 240   # the composed worst case from app.compose_design's caps
+    axes = da._load()["axes"].values()
+
+    def longest_fragment(axis):
+        return max(len(o.get("prompt_fragment", "")) for o in axis["options"])
+
+    prefix_worst = sum(longest_fragment(a) + 1 for a in axes
+                       if a["kind"] == "universal" and a["position"] == "prefix")
+    suffix_worst = sum(2 + longest_fragment(a) for a in axes
+                       if a["kind"] == "universal" and a["position"] == "suffix")
+    surface_worst = max((longest_fragment(a) for a in axes if a["kind"] == "surface"),
+                        default=0)
+    worst = (prefix_worst                        # prefix axes, one space each
+             + len("vivid ") + 20 + 1 + 60      # colour lead + species (caps)
+             + (2 + surface_worst) + suffix_worst   # ", " + suffix fragments
+             + len(" wearing an ") + 30         # 3 accessories at the 30 cap
+             + 2 * (len(", an ") + 30)
+             + 2 + 120                          # ", " + free text at its cap
+             + len(", recolored entirely ") + 20)
 
     pf = load("pet_factory_handler.py", "pfh_schema_check")
     pv = load("pet_preview_handler.py", "pvh_schema_check")
-    assert pf.METADATA["params_schema"]["properties"]["animal"]["maxLength"] >= len(worst)
-    assert pv.METADATA["params_schema"]["properties"]["description"]["maxLength"] >= len(worst)
+    assert pf.METADATA["params_schema"]["properties"]["animal"]["maxLength"] >= worst
+    assert pv.METADATA["params_schema"]["properties"]["description"]["maxLength"] >= worst
 
 
 def _load_pool_handler(fname, modname):

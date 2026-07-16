@@ -59,7 +59,7 @@ METADATA = {
             "reference_image_b64": {"type": "string"},
             # 250: the composed design string reaches ~240 chars worst case
             # (render_design_still itself imposes no length limit locally).
-            "description": {"type": "string", "maxLength": 250},
+            "description": {"type": "string", "maxLength": 600},
             # Only meaningful alongside a reference — how far the redraw drifts from it.
             "strength": {"type": "number", "minimum": 0.3, "maximum": 0.9},
         },

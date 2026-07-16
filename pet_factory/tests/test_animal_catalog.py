@@ -84,3 +84,35 @@ def test_missing_breed_resolves_to_none_not_a_crash():
     assert cat.base_image_path("cat", "does_not_exist") is None
     assert cat.base_image_path("no_such_animal", "tabby") is None
     assert cat.resolved_motion_profile("no_such_animal") is None
+    assert cat.resolved_surface("no_such_animal") is None
+
+
+# --- the design-surface contract (SPEC_PET_DESIGN_AXES §1/§3.1) --------------
+def test_every_resolved_surface_matches_a_surface_axis():
+    """Catalog surface integrity (SPEC_PET_DESIGN_AXES §10): every catalog
+    entry's RESOLVED surface must match a design_axes surface axis's
+    applies_to — a typo can't ship a breed whose surface axis silently never
+    appears. Every entry must also BE tagged: the catalog door is the confident
+    tier (§3.1), and an untagged curated breed would degrade a vetted animal to
+    the unknown-animal posture."""
+    from pet_factory import design_axes as da
+    known = da.known_surfaces()
+    for a in _all_animals():
+        for b in a["breeds"]:
+            surface = cat.resolved_surface(a["key"], b["key"])
+            assert surface, (
+                f"{a['key']}/{b['key']}: no surface tag — a curated breed must "
+                f"resolve one (SPEC_PET_DESIGN_AXES §3.1)")
+            assert surface in known, (
+                f"{a['key']}/{b['key']}: surface {surface!r} matches no surface "
+                f"axis's applies_to ({sorted(known)})")
+
+
+def test_surface_resolver_prefers_the_breed_tag_over_the_animal_tag():
+    # Most-specific-wins, mirroring resolved_motion_profile: a breed that
+    # declares its own surface (a Sphynx) overrides the animal's; a breed that
+    # doesn't inherits it.
+    for a in _all_animals():
+        for b in a["breeds"]:
+            expected = b.get("surface") or a.get("surface")
+            assert cat.resolved_surface(a["key"], b["key"]) == expected

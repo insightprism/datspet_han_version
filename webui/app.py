@@ -58,11 +58,12 @@ from pet_factory import animal_catalog as animal_catalog_mod
 # the pose selector caps + the resolved pricing hint come from it, and the server
 # enforces the resolved cap on generate (SPEC_PET_DESIGNER_PLATFORM §5).
 from pet_factory import tiers as tiers_mod
-# body_shapes is the step-2 body vocabulary (thin/normal/chubby) — pure data, like
-# the three above. It feeds compose_design, never the archetype prompt: shape is a
-# DESIGN modifier, so picking one can never invalidate a curated base
-# (SPEC_PET_DESIGNER_FLOW §0.1/§7.2).
-from pet_factory import body_shapes as body_shapes_mod
+# design_axes is the step-2 design vocabulary registry (body/pattern/expression +
+# the surface axes) — pure data, like the three above. It generalizes the old
+# body_shapes subpackage (SPEC_PET_DESIGN_AXES §1, Phase 0). Fragments feed
+# compose_design, never the archetype prompt: an axis pick is a DESIGN modifier,
+# so picking one can never invalidate a curated base (SPEC_PET_DESIGNER_FLOW §0.1).
+from pet_factory import design_axes as design_axes_mod
 
 # Generation backend (spec §A.6): "local" runs the on-box GPU directly (dev / break-
 # glass); "pool" routes generation to the shared_gpu_cpu pool (prod, GPU-less box).
@@ -206,41 +207,65 @@ _COLOR_WORDS = {
 
 
 def compose_design(species: str, color: str, accessories: list[str],
-                   body_shape: str = "", extra: str = "") -> tuple[str, str, Optional[float]]:
+                   axis_picks: Optional[dict] = None,
+                   extra: str = "") -> tuple[str, str, Optional[float]]:
     """Turn step 2's structured picks into (prompt_description, display_name,
     min_strength) — the ONE place a design becomes a prompt
-    (SPEC_PET_DESIGNER_FLOW §4).
+    (SPEC_PET_DESIGNER_FLOW §4; slot-ordered per SPEC_PET_DESIGN_AXES §2).
 
-    Every "what should it look like" input arrives here and nowhere else. In
-    particular `body_shape` composes into the DESIGN string, never into the
-    archetype prompt (§0.1): step 1 draws "a corgi", step 2 makes it chubby. That
-    placement is what lets a curated base.png survive any design choice (§3.3).
+    Every "what should it look like" input arrives here and nowhere else. Axis
+    picks ({axis_key: option_key}, e.g. {"body": "fat", "pattern": "spotted"})
+    compose into the DESIGN string, never into the archetype prompt (§0.1):
+    step 1 draws "a corgi", step 2 makes it chubby. That placement is what lets
+    a curated base.png survive any design choice (§3.3).
 
     Prompt wording follows the remix calibration: 'recolored entirely {color}' is
     what actually flips a color against the source image. min_strength is 0.9 when
     the redraw has to fight the source — a conflicting color word in the species
-    name (see _COLOR_WORDS), or a silhouette change (§4.4). The display name stays
-    short — color + species, not the accessory list, the shape, or the free text.
+    name (see _COLOR_WORDS), or an axis that declares it (body's silhouette rule,
+    now data on body.json). The display name stays short — color + species, not
+    the accessory list, the picks, or the free text.
     """
-    # Clause order matters (calibrated on stills): shape adjectives lead (they
-    # attach to the noun phrase), accessories directly after the species, free
-    # text after those, and the recolor emphasis LAST. With the recolor clause in
-    # the middle, the accessory gets dropped; with accessories last, the color
-    # loses. This ordering keeps both.
+    # Clause order matters (calibrated on stills): prefix-axis fragments lead
+    # (they attach to the noun phrase; ascending clause_slot, lowest nearest the
+    # noun), accessories directly after the species, suffix-axis fragments and
+    # free text after those, and the recolor emphasis LAST. With the recolor
+    # clause in the middle, the accessory gets dropped; with accessories last,
+    # the color loses. This ordering keeps both.
     #
-    # NOT YET CALIBRATED (§4.3/§4.4): the shape and free-text positions are
-    # reasoned, not measured. The color and accessory positions above were settled
-    # by running them; these two deserve the same GPU session before launch.
+    # NOT YET CALIBRATED (SPEC_PET_DESIGN_AXES §8 Phase 3): the axis slots and
+    # free-text positions are reasoned, not measured. The color and accessory
+    # positions above were settled by running them; the rest deserve the same
+    # GPU session before the axis controls go user-visible.
     min_strength = None
     description = f"vivid {color} {species}" if color else species
 
-    shape_fragment = body_shapes_mod.prompt_fragment(body_shape)
-    if shape_fragment:
-        description = f"{shape_fragment} {description}"
-        # A silhouette change fights the source image exactly like a conflicting
-        # color does (§4.4 reason 3) — same class of conflict, same trigger. The
-        # curated corgi is normal-shaped and will win at a gentle denoise.
-        min_strength = 0.9
+    prefixes: list[tuple[tuple[int, str], str]] = []
+    suffixes: list[tuple[tuple[int, str], str]] = []
+    for axis_key, option_key in (axis_picks or {}).items():
+        fragment = design_axes_mod.prompt_fragment(axis_key, option_key)
+        if not fragment:
+            continue  # a default, an unknown axis, or a typo'd option: no words
+        comp = design_axes_mod.axis_composition(axis_key)
+        slot = (comp["clause_slot"], axis_key)  # axis_key breaks slot ties
+        target = prefixes if comp["position"] == "prefix" else suffixes
+        target.append((slot, fragment))
+        if comp["min_strength"] is not None:
+            # An axis that declares min_strength fights the source image exactly
+            # like a conflicting color does (§4.4 reason 3) — the body silhouette
+            # rule, moved from code here to data on the axis file.
+            min_strength = max(min_strength or 0.0, comp["min_strength"])
+
+    # Ascending clause_slot, prepended in order — so the LOWEST slot lands
+    # immediately before the "vivid {color} {species}" noun phrase
+    # (SPEC_PET_DESIGN_AXES §2: lower = nearer the species noun).
+    for _, fragment in sorted(prefixes):
+        description = f"{fragment} {description}"
+
+    # Suffix-position axes append right after the species phrase (§2), before
+    # accessories and free text, keeping the recolor clause the calibrated tail.
+    for _, fragment in sorted(suffixes):
+        description += f", {fragment}"
 
     if accessories:
         worn = []
@@ -517,9 +542,15 @@ def _reference_record(meta: dict) -> dict:
 def _save_reference(png: bytes, *, owner: Optional[str], description: str,
                     display_name: str, motion_profile: Optional[str], source: str,
                     min_strength: Optional[float] = None,
-                    generated: bool = False) -> dict:
+                    generated: bool = False,
+                    surface: Optional[str] = None) -> dict:
     """Mint one reference. EVERY door ends here, which is the whole design: past
-    this point nothing downstream asks where the picture came from (§6)."""
+    this point nothing downstream asks where the picture came from (§6).
+
+    `surface` is the animal's resolved surface (fur/feathers/scales/None),
+    resolved ONCE at fill time exactly like motion_profile and carried on the
+    record (SPEC_PET_DESIGN_AXES §3) — /api/design-axes reads it to gate the
+    surface axis; step 2 never re-derives it."""
     reference_id = uuid.uuid4().hex[:12]
     png_path, meta_path = _reference_paths(reference_id)
     meta = {
@@ -527,6 +558,7 @@ def _save_reference(png: bytes, *, owner: Optional[str], description: str,
         "description": description, "display_name": display_name,
         "motion_profile": motion_profile, "source": source,
         "min_strength": min_strength, "generated": generated,
+        "surface": surface,
     }
     png_path.write_bytes(png)
     meta_path.write_text(json.dumps(meta))
@@ -660,6 +692,20 @@ def _resolve_reference_door(on_catalog: bool, has_image: bool, animal: str) -> s
     return chosen[0]
 
 
+def _resolve_typed_surface(animal: str) -> Optional[str]:
+    """The §3.2 keyword tier for a TYPED animal name, with the miss log the spec
+    requires: a name that resolves to no surface is the keyword map's growth
+    list — each logged miss is a one-line edit to surface_keywords.json. Null is
+    the honest answer, never a guess (§3.3): the design step then shows only the
+    universal axes, and free text covers 'with fluffy fur' by hand."""
+    surface = design_axes_mod.resolve_surface(animal)
+    if surface is None and animal.strip():
+        print(f"[webui] surface unresolved for typed animal {animal!r} — "
+              f"universal axes only (surface_keywords.json is the growth list)",
+              flush=True)
+    return surface
+
+
 @app.post("/api/reference")
 def create_reference(
     request: Request,
@@ -709,6 +755,9 @@ def create_reference(
             # animates at ≥ the fidelity free-text keyword matching would find.
             motion_profile=animal_catalog_mod.resolved_motion_profile(
                 catalog_animal, catalog_breed),
+            # Confident by construction (SPEC_PET_DESIGN_AXES §3.1): the breed's
+            # authored surface tag, resolved like motion_profile is.
+            surface=animal_catalog_mod.resolved_surface(catalog_animal, catalog_breed),
             source="catalog", generated=False))
 
     if door == "txt2img":
@@ -719,7 +768,8 @@ def create_reference(
         return _reference_record(_save_reference(
             png, owner=owner, description=animal.lower(),
             display_name=animal.title(), motion_profile=None,
-            source="txt2img", generated=True))
+            source="txt2img", generated=True,
+            surface=_resolve_typed_surface(animal)))
 
     # door == "upload": redraw it (§3.5). THIS is the change of behaviour — today
     # an uploaded photo reaches Wan I2V raw and animates unreliably, because a
@@ -748,7 +798,10 @@ def create_reference(
     return _reference_record(_save_reference(
         png, owner=owner, description=subject.lower(),
         display_name=subject.title(), motion_profile=None,
-        source="upload", generated=True))
+        source="upload", generated=True,
+        # §3.4: a photo carries no reliable surface signal → universal axes
+        # only; a typed animal name alongside it may promote via the keyword map.
+        surface=_resolve_typed_surface(animal) if animal else None))
 
 
 @app.get("/api/reference/{reference_id}.png")
@@ -771,17 +824,37 @@ def reference_image(reference_id: str, request: Request):
     return FileResponse(png_path, media_type="image/png")
 
 
+@app.get("/api/design-axes")
+def design_axes_menu(request: Request, reference_id: str = ""):
+    """Step 2's design vocabulary (SPEC_PET_DESIGN_AXES §4). The SERVER reads the
+    reference's resolved surface and returns only the applicable axes — the
+    universal ones plus the single matching surface axis (or none): a bird is
+    offered feathers, never fur, and the browser renders what it is handed with
+    no animal logic of its own. A new axis or surface appears here with no
+    endpoint change.
+
+    Without a reference_id (or with one that doesn't resolve) the menu degrades
+    to the universal axes — the §3.3 unknown-animal posture, and the safe answer
+    for a menu endpoint, which must not dead-end the design step over a swept
+    reference. `prompt_fragment` is calibrated server-side wording and never
+    reaches the browser, same posture as the tier table."""
+    surface = None
+    if reference_id.strip():
+        owner = datsme_integration.resolve_launch_identity(request)
+        try:
+            surface = _load_reference(reference_id, owner).get("surface")
+        except HTTPException:
+            surface = None
+    return {"axes": design_axes_mod.axes_for_surface(surface)}
+
+
 @app.get("/api/body-shapes")
 def body_shapes_menu():
-    """Step 2's body vocabulary (§7.2). Separate from /api/catalog because
-    fetchCatalog discards the envelope (`data.animals ?? []`), so folding it in
-    would churn every catalog consumer. Mirrors /api/motions' precedent.
-
-    Returns {key,label,is_default} only — `prompt_fragment` is calibrated
-    server-side wording and never reaches the browser, same posture as the tier
-    table."""
-    return {"shapes": body_shapes_mod.list_shapes(),
-            "default": body_shapes_mod.default_shape_key()}
+    """DEPRECATED alias for one deprecation cycle (SPEC_PET_DESIGN_AXES §4):
+    the body axis of /api/design-axes, in the old envelope. Same fragment-
+    withholding posture; remove once no shipped frontend calls it."""
+    body = design_axes_mod.public_axis("body") or {"options": [], "default": ""}
+    return {"shapes": body["options"], "default": body["default"]}
 
 
 @app.post("/api/preview")
@@ -791,6 +864,7 @@ def preview_design(
     strength: float = Form(0.85),
     color: str = Form(""),
     accessories: str = Form(""),
+    axis_picks: str = Form(""),
     body_shape: str = Form(""),
     extra: str = Form(""),
     name: str = Form(""),
@@ -814,19 +888,38 @@ def preview_design(
 
     color = color.strip().lower()[:20]
     accessory_list = [a.strip().lower()[:30] for a in accessories.split(",") if a.strip()][:3]
-    body_shape = body_shape.strip().lower()[:20]
     extra = extra.strip()[:120]
-    shaped = not body_shapes_mod.is_default(body_shape)
-    if not (color or accessory_list or shaped or extra):
-        # §4.1, widened from "colour or accessory" now that shape and free text
-        # are design inputs too. Designing nothing is adopting, and the zero-GPU
-        # adopt path exists for that.
+
+    # Axis picks arrive as ONE JSON object {axis_key: option_key}
+    # (SPEC_PET_DESIGN_AXES §4) — a new axis adds no Form field. Malformed JSON
+    # degrades to "no picks" (the body_shapes typo posture: a broken request
+    # must not 500 a design); unknown axes and surface-mismatched picks are
+    # dropped by filter_picks (defense in depth — the menu already hid them).
+    picks: dict[str, str] = {}
+    if axis_picks.strip():
+        try:
+            raw_picks = json.loads(axis_picks)
+        except ValueError:
+            raw_picks = {}
+        if isinstance(raw_picks, dict):
+            picks = {str(k).strip().lower()[:30]: str(v).strip().lower()[:30]
+                     for k, v in raw_picks.items() if isinstance(v, str)}
+    # `body_shape` stays a server-side alias for axis_picks["body"] for one
+    # deprecation cycle, mirroring the /api/body-shapes alias (§4).
+    if body_shape.strip() and "body" not in picks:
+        picks["body"] = body_shape.strip().lower()[:20]
+    picks = design_axes_mod.filter_picks(picks, ref.get("surface"))
+
+    axis_touched = any(not design_axes_mod.is_default(a, k) for a, k in picks.items())
+    if not (color or accessory_list or axis_touched or extra):
+        # §4.1, widened to count a non-default pick on ANY axis. Designing
+        # nothing is adopting, and the zero-GPU adopt path exists for that.
         raise HTTPException(400, "Pick a colour, an accessory, a body shape, or "
                                  "describe a change.")
 
     species = name.strip().lower()[:60] or ref["description"]
     description, display_name, min_strength = compose_design(
-        species, color, accessory_list, body_shape, extra)
+        species, color, accessory_list, picks, extra)
     strength = min(0.9, max(0.3, strength))
     if min_strength:
         strength = max(strength, min_strength)
@@ -843,8 +936,10 @@ def preview_design(
     return _reference_record(_save_reference(
         png, owner=owner, description=display_name.lower(),
         display_name=display_name,
-        # A design never changes the animal, so the profile rides along unchanged.
+        # A design never changes the animal, so the profile — and the surface —
+        # ride along unchanged.
         motion_profile=ref.get("motion_profile"),
+        surface=ref.get("surface"),
         source="design", min_strength=min_strength, generated=True))
 
 

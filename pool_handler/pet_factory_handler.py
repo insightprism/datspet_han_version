@@ -58,7 +58,7 @@ METADATA = {
             # make_pet_zip's own [:60] cut is the single truncation authority —
             # the schema only bounds transport, so pool accepts exactly what the
             # local backend accepts and both truncate identically.
-            "animal": {"type": "string", "minLength": 1, "maxLength": 250},
+            "animal": {"type": "string", "minLength": 1, "maxLength": 600},
             "breed_id": {"type": "string"},   # optional slug override
             # v2 (§A.2) — all optional, so a v1 {animal}-only submit still validates.
             "reference_image_b64": {"type": "string"},   # base64 PNG/JPEG; the redraw/upload still

@@ -22,7 +22,7 @@
  *     changing the animal cannot invalidate them. "I want it chubby" outlives
  *     corgi → labrador. Only the preview — a function of (reference × design) — clears.
  */
-import type { BodyShape, PetReference } from "@/lib/api";
+import type { DesignAxis, PetReference } from "@/lib/api";
 
 /**
  * Three steps, matching the user's model in §0 exactly: an archetype, a design, an
@@ -55,10 +55,16 @@ export interface DesignFlowState {
    */
   baseConfirmed: boolean;
 
-  /** Step 2: the design intent. Every "what should it look like" input lives here. */
+  /**
+   * Step 2: the design intent. Every "what should it look like" input lives here.
+   * `axisPicks` maps axis key → option key ({body: "fat", pattern: "spotted"});
+   * the SERVER decides which axes exist and which apply to this animal
+   * (SPEC_PET_DESIGN_AXES §4) — this state just carries what the user picked,
+   * so a pick on an axis the next animal doesn't offer simply never composes.
+   */
   color: string;
   accessories: string[];
-  bodyShape: string;
+  axisPicks: Record<string, string>;
   extra: string;
   strength: number;
 
@@ -119,7 +125,7 @@ export const MAX_ACCESSORIES = 3;
 export function initialState(strength: number): DesignFlowState {
   return {
     reference: null, referenceBusy: false, referenceError: null, baseConfirmed: false,
-    color: "", accessories: [], bodyShape: "", extra: "", strength,
+    color: "", accessories: [], axisPicks: {}, extra: "", strength,
     preview: null, previewBusy: false, previewError: null, designConfirmed: false,
     previewFailureDismissed: false,
     selectedPoses: [], poseMenu: [], poseNotice: null,
@@ -137,7 +143,7 @@ export type DesignFlowAction =
   | { type: "designUnlocked" }
   | { type: "colorPicked"; color: string }
   | { type: "accessoryToggled"; accessory: string }
-  | { type: "bodyShapePicked"; key: string }
+  | { type: "axisPicked"; axis: string; key: string }
   | { type: "extraChanged"; text: string }
   | { type: "strengthPicked"; strength: number }
   | { type: "nameChanged"; name: string }
@@ -150,11 +156,21 @@ export type DesignFlowAction =
   | { type: "poseNoticeDismissed" }
   | { type: "expand"; step: StepId };
 
-/** A design exists when the user has asked for ANY change (§4.1). */
-export function hasDesign(s: DesignFlowState, shapes: BodyShape[]): boolean {
-  const shapeIsDefault =
-    !s.bodyShape || (shapes.find((x) => x.key === s.bodyShape)?.is_default ?? true);
-  return Boolean(s.color || s.accessories.length || !shapeIsDefault || s.extra.trim());
+/**
+ * A design exists when the user has asked for ANY change (§4.1) — a non-default
+ * pick on any axis counts (SPEC_PET_DESIGN_AXES §4). A pick on an axis the
+ * server didn't offer for THIS animal is inert: the server would filter it, so
+ * counting it here would let the lock gate open on a design the preview won't
+ * show. An unknown option key is treated as default, the server's typo posture.
+ */
+export function hasDesign(s: DesignFlowState, axes: DesignAxis[]): boolean {
+  const axisTouched = axes.some((a) => {
+    const pick = s.axisPicks[a.axis];
+    if (!pick) return false;
+    const option = a.options.find((o) => o.key === pick);
+    return option ? !option.is_default : false;
+  });
+  return Boolean(s.color || s.accessories.length || axisTouched || s.extra.trim());
 }
 
 /**
@@ -178,13 +194,13 @@ export function previewSettled(s: DesignFlowState): boolean {
   return Boolean(s.preview) || s.previewFailureDismissed;
 }
 
-export function frontier(s: DesignFlowState, shapes: BodyShape[]): StepId {
+export function frontier(s: DesignFlowState, axes: DesignAxis[]): StepId {
   // Both gates read the same: a thing exists AND the user said it is the one they want.
   // Gating on the LOCK rather than on mere existence is what makes each step a place you
   // can WORK — try, look, try again — instead of a menu that fires you onward the
   // instant you touch it.
   if (!s.reference || !s.baseConfirmed) return 1;
-  if (!hasDesign(s, shapes) || !previewSettled(s) || !s.designConfirmed) return 2;
+  if (!hasDesign(s, axes) || !previewSettled(s) || !s.designConfirmed) return 2;
   return 3;
 }
 
@@ -193,8 +209,8 @@ export function frontier(s: DesignFlowState, shapes: BodyShape[]): StepId {
  * an earlier one. The min() clamp is what keeps this from becoming a cursor: it can
  * never point past what the state allows, so it cannot desync.
  */
-export function expandedStep(s: DesignFlowState, shapes: BodyShape[]): StepId {
-  const f = frontier(s, shapes);
+export function expandedStep(s: DesignFlowState, axes: DesignAxis[]): StepId {
+  const f = frontier(s, axes);
   return (s.expandedOverride ? Math.min(s.expandedOverride, f) : f) as StepId;
 }
 
@@ -203,12 +219,12 @@ export function expandedStep(s: DesignFlowState, shapes: BodyShape[]): StepId {
  * its CONTROLS only when expanded. Only the picture ever needed to stay co-visible —
  * 17 swatches never did. Measured: first paint 2, peak 25 (see Step.tsx).
  */
-export function showsControls(s: DesignFlowState, shapes: BodyShape[], step: StepId): boolean {
-  return expandedStep(s, shapes) === step;
+export function showsControls(s: DesignFlowState, axes: DesignAxis[], step: StepId): boolean {
+  return expandedStep(s, axes) === step;
 }
 
-export function isReachable(s: DesignFlowState, shapes: BodyShape[], step: StepId): boolean {
-  return step <= frontier(s, shapes);
+export function isReachable(s: DesignFlowState, axes: DesignAxis[], step: StepId): boolean {
+  return step <= frontier(s, axes);
 }
 
 /** Intersect picks with a new menu and re-apply the cap IN THE SAME transition (§7.6). */
@@ -300,8 +316,10 @@ export function designFlowReducer(
       return { ...state, seq: state.seq + 1, accessories: next, preview: null, designConfirmed: false, previewFailureDismissed: false };
     }
 
-    case "bodyShapePicked":
-      return { ...state, seq: state.seq + 1, bodyShape: action.key, preview: null, designConfirmed: false, previewFailureDismissed: false };
+    case "axisPicked":
+      return { ...state, seq: state.seq + 1,
+               axisPicks: { ...state.axisPicks, [action.axis]: action.key },
+               preview: null, designConfirmed: false, previewFailureDismissed: false };
 
     case "extraChanged":
       return { ...state, seq: state.seq + 1, extra: action.text, preview: null, designConfirmed: false, previewFailureDismissed: false };

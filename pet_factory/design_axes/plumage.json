@@ -1,0 +1,18 @@
+{
+  "_doc": "Plumage axis (SPEC_PET_DESIGN_AXES §2) — surface: feathers. A whole different vocabulary per surface reads truer than one 'coat' axis with the fur options greyed out on a bird (§0.3). PLACEHOLDER FRAGMENTS pending Phase 3 calibration.",
+  "axis": "plumage",
+  "label": "feathers",
+  "kind": "surface",
+  "applies_to": "feathers",
+  "default": "natural",
+  "clause_slot": 30,
+  "position": "suffix",
+  "min_strength": null,
+  "options": [
+    { "key": "natural", "label": "Natural", "prompt_fragment": "" },
+    { "key": "iridescent", "label": "Iridescent", "prompt_fragment": "with iridescent shimmering plumage" },
+    { "key": "ruffled", "label": "Ruffled", "prompt_fragment": "with ruffled feathers" },
+    { "key": "downy", "label": "Downy", "prompt_fragment": "with soft downy feathers" },
+    { "key": "glossy", "label": "Glossy", "prompt_fragment": "with glossy sleek feathers" }
+  ]
+}

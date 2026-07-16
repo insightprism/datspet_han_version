@@ -353,10 +353,22 @@ export interface PetReference {
   generated: boolean;             // false = a curated cache hit, free and instant
 }
 
-export interface BodyShape {
+export interface DesignAxisOption {
   key: string;
   label: string;
   is_default: boolean;
+}
+
+// One design axis (SPEC_PET_DESIGN_AXES §4): a curated vocabulary the server
+// hands us pre-filtered by the animal's surface — a bird receives plumage and
+// never coat, an unknown creature only the universal axes. The browser renders
+// what it is handed; it holds NO animal logic and never sees prompt wording.
+export interface DesignAxis {
+  axis: string;
+  label: string;
+  kind: "universal" | "surface";
+  default: string;
+  options: DesignAxisOption[];
 }
 
 async function referenceCall(path: string, form: FormData): Promise<PetReference> {
@@ -398,9 +410,17 @@ export function referenceImageUrl(referenceId: string): string {
   return `${API_URL}/api/reference/${encodeURIComponent(referenceId)}.png`;
 }
 
-export async function fetchBodyShapes(): Promise<{ shapes: BodyShape[]; default: string }> {
-  const r = await fetch(`${API_URL}/api/body-shapes`, { cache: "no-store" });
-  if (!r.ok) throw new Error("Could not load body shapes");
+// The design-step vocabulary, filtered server-side by the reference's resolved
+// surface (SPEC_PET_DESIGN_AXES §4). Without a referenceId the server returns
+// the universal axes — enough for the flow to reason about defaults before an
+// animal is chosen. Credentialed: the reference is owner-scoped (§7.3).
+export async function fetchDesignAxes(referenceId?: string): Promise<{ axes: DesignAxis[] }> {
+  const qs = referenceId ? `?reference_id=${encodeURIComponent(referenceId)}` : "";
+  const r = await fetch(`${API_URL}/api/design-axes${qs}`, {
+    cache: "no-store",
+    credentials: "include",
+  });
+  if (!r.ok) throw new Error("Could not load design options");
   return r.json();
 }
 

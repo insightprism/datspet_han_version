@@ -49,7 +49,7 @@ import PoseStep from "./PoseStep";
 
 export default function Designer() {
   const flow = useDesignFlow();
-  const { state, dispatch, shapes, entitlement, maxPoses, fillReference, makePreview } = flow;
+  const { state, dispatch, axes, entitlement, maxPoses, fillReference, makePreview } = flow;
   const { job, error: jobError, submit, reset, busy, done } = usePetJob();
   const [options, setOptions] = useState<CatalogBaseOption[] | null>(null);
   // The pending pick lives HERE, not in the dialog, because the dialog unmounts when
@@ -159,10 +159,17 @@ export default function Designer() {
   const canRedraw = Boolean(pending) && pending?.kind !== "catalog";
   const redrawLabel = pendingDrawn ? "Draw it again · ~10 s" : "Draw it · ~10 s";
 
-  const shapeLabel = shapes.find((s) => s.key === state.bodyShape);
+  // Every non-default axis pick, in menu order — "purple · chubby · spotted ·
+  // grumpy" reads back exactly what the user chose, whichever axes this animal
+  // was offered.
+  const axisSummary = axes.flatMap((a) => {
+    const pick = state.axisPicks[a.axis];
+    const option = pick ? a.options.find((o) => o.key === pick) : undefined;
+    return option && !option.is_default ? [option.label.toLowerCase()] : [];
+  });
   const designSummary = [
     state.color,
-    shapeLabel && !shapeLabel.is_default ? shapeLabel.label.toLowerCase() : "",
+    ...axisSummary,
     ...state.accessories,
     state.extra.trim(),
   ].filter(Boolean).join(" · ");
@@ -204,7 +211,7 @@ export default function Designer() {
         title="Select the Animal to Design"
         summary={state.reference?.display_name}
         tone={state.baseConfirmed ? "confirmed" : "default"}
-        expanded={showsControls(state, shapes, 1)}
+        expanded={showsControls(state, axes, 1)}
         reachable
         // Once locked, step 1 collapses — so the toggle has to live in the header,
         // the one part that stays on screen. Clicking it unlocks AND reopens, because
@@ -320,8 +327,8 @@ export default function Designer() {
         summary={designSummary}
         tone={state.designConfirmed ? "confirmed" : "default"}
         layout="split"
-        expanded={showsControls(state, shapes, 2)}
-        reachable={isReachable(state, shapes, 2)}
+        expanded={showsControls(state, axes, 2)}
+        reachable={isReachable(state, axes, 2)}
         // Same structural reason as step 1 (§3.7): once locked this body unmounts, so
         // the unlock half of the toggle has to live in the header.
         onExpand={() => dispatch(
@@ -391,14 +398,14 @@ export default function Designer() {
           <DesignStep
             color={state.color}
             accessories={state.accessories}
-            bodyShape={state.bodyShape}
+            axisPicks={state.axisPicks}
             extra={state.extra}
             strength={state.strength}
-            shapes={shapes}
+            axes={axes}
             minStrength={state.preview?.min_strength ?? null}
             onColor={(color) => dispatch({ type: "colorPicked", color })}
             onAccessory={(accessory) => dispatch({ type: "accessoryToggled", accessory })}
-            onBodyShape={(key) => dispatch({ type: "bodyShapePicked", key })}
+            onAxisPick={(axis, key) => dispatch({ type: "axisPicked", axis, key })}
             onExtra={(text) => dispatch({ type: "extraChanged", text })}
             onStrength={(strength) => dispatch({ type: "strengthPicked", strength })}
           />
@@ -496,8 +503,8 @@ export default function Designer() {
           ? `walk · idle · ${state.selectedPoses.join(" · ")}`
           : "walk · idle"}
         tone={done ? "confirmed" : "default"}
-        expanded={showsControls(state, shapes, 3)}
-        reachable={isReachable(state, shapes, 3)}
+        expanded={showsControls(state, axes, 3)}
+        reachable={isReachable(state, axes, 3)}
         onExpand={() => dispatch({ type: "expand", step: 3 })}
         artifact={job ? (
           // `bare`: <Step> already IS the card. PetJobResult carries the progress bar
