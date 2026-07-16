@@ -18,6 +18,7 @@ tables and every access goes through the helpers here, so the query surface
 stays tiny and auditable. All timestamps are unix epoch floats (time.time()),
 matching the pre-migration pet.json `created_at`.
 """
+import hashlib
 import json
 import os
 import sqlite3
@@ -105,6 +106,31 @@ def init_db() -> None:
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
         conn.commit()
     _migrate_legacy_folders()
+    _backfill_bundle_digests()
+
+
+def _backfill_bundle_digests() -> None:
+    """Fill bundle_sha256/size_bytes on rows written before insert_pet derived them
+    (SPEC_DATSPET_HOUSE_ADOPT §3.1). Every pre-existing row has them NULL, and the
+    DPP export cannot offer a `transfer` block for a row it cannot hash.
+
+    One-time and self-limiting: once filled, the WHERE matches nothing, so this is
+    a single cheap query on every subsequent boot. Bounded by the pets already on
+    this machine, and the bytes are local — no fetch, no network.
+    """
+    with _lock:
+        conn = _connect()
+        rows = conn.execute(
+            "SELECT id, bundle_zip FROM pets WHERE bundle_sha256 IS NULL"
+        ).fetchall()
+        for row in rows:
+            conn.execute(
+                "UPDATE pets SET bundle_sha256=?, size_bytes=? WHERE id=?",
+                (hashlib.sha256(row["bundle_zip"]).hexdigest(),
+                 len(row["bundle_zip"]), row["id"]),
+            )
+        if rows:
+            conn.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -158,9 +184,16 @@ def _migrate_legacy_folders() -> None:
 def insert_pet(*, pet_id: str, breed_id: str, display_name: str,
                created_at: float, draft: bool, sheet_png: bytes,
                manifest_json: str, package_json: Optional[str],
-               bundle_zip: bytes, external_user_id: Optional[str] = None,
-               bundle_sha256: Optional[str] = None,
-               size_bytes: Optional[int] = None) -> None:
+               bundle_zip: bytes, external_user_id: Optional[str] = None) -> None:
+    """Persist a pet. `bundle_sha256`/`size_bytes` are DERIVED here, never passed.
+
+    They are a pure function of `bundle_zip`, so letting a caller supply them is
+    only a chance to be wrong — and the DPP export publishes the sha256 as the
+    integrity claim the host verifies the fetched bytes against
+    (SPEC_DATSPET_HOUSE_ADOPT §3.1). They were optional params with zero callers
+    passing them, so every row's sha256 was NULL and the export could not have
+    offered a `transfer` block at all.
+    """
     with _lock:
         conn = _connect()
         conn.execute(
@@ -170,10 +203,35 @@ def insert_pet(*, pet_id: str, breed_id: str, display_name: str,
                 package_json, bundle_zip)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (pet_id, breed_id, display_name, created_at, 1 if draft else 0,
-             external_user_id, bundle_sha256, size_bytes, sheet_png,
+             external_user_id, hashlib.sha256(bundle_zip).hexdigest(),
+             len(bundle_zip), sheet_png,
              manifest_json, package_json, bundle_zip),
         )
         conn.commit()
+
+
+def pose_count(manifest_json: Optional[str]) -> Optional[int]:
+    """`len(manifest["animations"])` — the pet's pose count, and the pricing basis
+    the DPP export declares (SPEC_DPP_DATA_TRANSFER_CHANNEL §0.6).
+
+    This MUST agree with the host's `_pose_count_in_bundle`, which counts the
+    manifest.json inside the fetched zip: a disagreement is a 409
+    `pricing_basis_mismatch` on every import. It does agree by construction —
+    `_unpack_bundle` (app.py) reads `manifest.json` verbatim out of the bundle and
+    that exact string is this column — and a guard test pins it rather than
+    trusting the construction.
+
+    Returns None (not 0) when the count is unknowable. Missing is not zero: the
+    host refuses to quote an item with no declared basis, which is correct, and an
+    invented 0 would quote the base price for a pet that may have six poses.
+    """
+    if not manifest_json:
+        return None
+    try:
+        animations = json.loads(manifest_json).get("animations", {})
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return None
+    return len(animations) if isinstance(animations, dict) else None
 
 
 def get_pet(pet_id: str) -> Optional[sqlite3.Row]:
@@ -191,10 +249,28 @@ def list_saved_pets(external_user_id: Optional[str] = None) -> list[dict]:
     clause, params = _scope_clause(external_user_id)
     with _lock:
         rows = _connect().execute(
-            f"""SELECT id, breed_id, display_name, created_at FROM pets
+            f"""SELECT id, breed_id, display_name, created_at,
+                       writeback_acked_at, external_user_id FROM pets
                 WHERE draft=0 AND {clause}
                 ORDER BY created_at DESC""", params).fetchall()
-    return [dict(r) for r in rows]
+    # in_datsme: already in the caller's DatsMe house. A projected column, NOT a
+    # visibility rule — _scope_clause is untouched. Stamped by a push Accept or by
+    # the host's post-import ack (SPEC_DATSPET_HOUSE_ADOPT §3.4). Cast to a real
+    # bool so the JSON carries true/false rather than SQLite's 1/0.
+    #
+    # claimable: visible to this caller but not yet owned by them, i.e. an
+    # unclaimed local pet. The house shows these (_scope_clause is NULL-inclusive)
+    # but export_pets is exact-match, so they are invisible to the host's import
+    # until claimed — §2's asymmetry. The browser needs to know which ids to claim
+    # before linking out.
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["in_datsme"] = d.pop("writeback_acked_at") is not None
+        owner = d.pop("external_user_id")
+        d["claimable"] = external_user_id is not None and owner is None
+        out.append(d)
+    return out
 
 
 # A pet is accessible to a caller iff it is local (external_user_id IS NULL) or
@@ -289,14 +365,65 @@ def list_pending_writebacks(external_user_id: str) -> list[dict]:
 
 def export_pets(external_user_id: str) -> list[dict]:
     """Every pet row for a DatsMe user (GDPR export). Bytes excluded — this is
-    the record view, schema datspet_pets.v1."""
+    the record view, schema datspet_pets.v1.
+
+    `pose_count` is the DECLARED pricing basis the host quotes from before it
+    fetches anything (SPEC_DPP_DATA_TRANSFER_CHANNEL §0.6); it is a record field,
+    not transport, which is why it sits beside breed_id rather than inside the
+    route's `transfer` block. `bundle_sha256`/`size_bytes` ARE transport and feed
+    that block — they are selected here only because this is the one query that
+    already has the row.
+
+    Still byteless: manifest_json is parsed for its animation count and dropped;
+    bundle_zip is never read.
+    """
     with _lock:
         rows = _connect().execute(
             """SELECT id, breed_id, display_name, created_at, draft,
-                      datsme_activity_id, writeback_acked_at
+                      datsme_activity_id, writeback_acked_at,
+                      bundle_sha256, size_bytes, manifest_json
                FROM pets WHERE external_user_id=?
                ORDER BY created_at DESC""", (external_user_id,)).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["pose_count"] = pose_count(d.pop("manifest_json"))
+        out.append(d)
+    return out
+
+
+def claim_unowned_pets(pet_ids: list[str], external_user_id: str,
+                       activity_id: Optional[str]) -> list[str]:
+    """Bind unclaimed (external_user_id IS NULL) pets to a DatsMe user. Returns the
+    ids actually claimed.
+
+    Why this exists (SPEC_DATSPET_HOUSE_ADOPT §2): the house shows a launched user
+    `(external_user_id IS NULL OR external_user_id=?)` but export_pets is exact
+    match, so an unclaimed pet is visible-and-selectable here yet invisible to the
+    host's import — it would silently vanish from the import list with no error.
+    The push path never had this problem because _post_pet_writeback's
+    _bind_pending claims the pet as it adopts; a pull has no equivalent, so the
+    claim has to happen before we hand the user off.
+
+    Only NULL-owner rows are touched: a row already owned by this caller is a
+    no-op (the house claims a whole selection, most of which is normally already
+    theirs), and a row owned by ANOTHER user is left alone — it was never visible
+    to this caller, and the WHERE makes that atomic rather than check-then-write.
+    """
+    if not pet_ids:
+        return []
+    claimed = []
+    with _lock:
+        conn = _connect()
+        for pet_id in pet_ids:
+            cur = conn.execute(
+                """UPDATE pets SET external_user_id=?, datsme_activity_id=?
+                   WHERE id=? AND external_user_id IS NULL""",
+                (external_user_id, activity_id, pet_id))
+            if cur.rowcount:
+                claimed.append(pet_id)
+        conn.commit()
+    return claimed
 
 
 def revoke_user(external_user_id: str, action: str) -> int:

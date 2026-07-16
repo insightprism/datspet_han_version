@@ -184,6 +184,14 @@ def _build_manifest_body() -> dict:
             schema="datspet_pets.v1",
             description="The pets you designed on DatsPet.",
             per_user_downloadable=True,
+            # Opt this export into the DPP pull (SPEC_DPP_DATA_TRANSFER_CHANNEL
+            # §5.3). All three are required together — the host's conformance
+            # check fails a manifest that declares transferable without the other
+            # two, and its registry independently decides ingestibility, so these
+            # are a request, not a grant.
+            transferable=True,
+            ingest_target="user.pet",
+            max_bytes=10 * 1024 * 1024,   # host clamps to its own 32 MB ceiling
         )
         .set_schema_version("user.pet", "pet_bundle.v1")
     )
@@ -325,6 +333,23 @@ def resolve_launch_identity(request: Request) -> Optional[str]:
     return ctx.user_id
 
 
+def resolve_launch_activity(request: Request) -> Optional[str]:
+    """The VERIFIED activity id this caller launched under, or None.
+
+    Same posture as resolve_launch_identity: re-verify the JWT rather than trust
+    the cookie blob. Used to stamp provenance on a claimed pet
+    (SPEC_DATSPET_HOUSE_ADOPT §3.3), exactly as _bind_pending does on the push
+    path — so a claimed pet and an accepted one carry the same shape of record.
+    """
+    cookie = _read_launch_cookie(request)
+    if cookie is None:
+        return None
+    try:
+        return verify_launch_token(cookie["token"], _hmac_secret()).activity_id
+    except (LaunchError, RuntimeError):
+        return None
+
+
 def resolve_launch_capabilities(request: Request) -> list[str]:
     """The caller's VERIFIED DPP launch capabilities, or [] for standalone.
     Drives tier resolution (SPEC_PET_DESIGNER_PLATFORM §5.3). Like
@@ -463,16 +488,22 @@ def datsme_session(request: Request):
     integrated = _is_integrated()
     # The DatsMe web origin the sign-in/up flows live on (front-door §3.2). The
     # frontend never hardcodes a DatsMe origin — it renders what we hand it.
-    signin_url = signup_url = None
+    signin_url = signup_url = import_url = None
     if integrated:
         public = _datsme_public_url()
         signin_url = f"{public}/api/integrations/login-launch?activity={ACTIVITY_DESIGN_A_PET}&return=/design"
         signup_url = f"{public}/signup"
+        # Where the house's Adopt action hands off (SPEC_DATSPET_HOUSE_ADOPT §3.5).
+        # Built here for the same reason signin_url is: the frontend never hardcodes
+        # a DatsMe origin, and PARTNER_SLUG is env-overridable, so "/import/datspet"
+        # is not a constant the browser may assume.
+        import_url = f"{public}/import/{PARTNER_SLUG}"
     ctx = _read_launch_cookie(request)
     base = {
         "integrated": integrated,
         "signin_url": signin_url,
         "signup_url": signup_url,
+        "import_url": import_url,
         "admin": integrated and _has_valid_admin_cookie(request),
     }
     if ctx is None:
@@ -597,8 +628,13 @@ async def accept_pet(request: Request):
     owner = row["external_user_id"]
     if owner is not None and owner != ctx.user_id:
         raise HTTPException(status_code=404, detail="pet not found")
-    if row["writeback_acked_at"] is not None and owner is not None and owner != ctx.user_id:
-        raise HTTPException(status_code=409, detail="pet already adopted by another user")
+    # NO re-adopt 409 here. There used to be one, and it was unreachable: its
+    # condition (acked AND owner is not None AND owner != ctx.user_id) is exactly
+    # what the 404 above already raised on, so it never fired once. Re-adopt is
+    # now handled where it belongs — the host keys the pet AND the credit charge to
+    # (partner_slug, source_pet_id), so a repeat updates in place and costs 0
+    # (SPEC_DPP_DATA_TRANSFER_CHANNEL §3.3). Blocking it here would re-break the
+    # rename-sync the upsert exists to allow.
 
     # Bind the pet to this DatsMe user (so export/resync/scoping can find it)
     # and record the activity it's being accepted under.
@@ -828,10 +864,85 @@ def export_user_data(user_id: str, request: Request):
             {
                 "type": "pets",
                 "schema": "datspet_pets.v1",
-                "data": db.export_pets(user_id),
+                "data": [_export_item(row) for row in db.export_pets(user_id)],
             }
         ],
     }
+
+
+def _export_item(row: dict) -> dict:
+    """One `datspet_pets.v1` item: the record view, plus an optional `transfer`
+    block that opts it into the DPP pull (SPEC_DATSPET_HOUSE_ADOPT §3.2).
+
+    The block is built HERE and not in db.export_pets because minting a token is a
+    protocol act, not a record read — db stays the byteless record view it
+    documents itself as.
+
+    Omitted when the row cannot be transferred honestly: no digest (a pre-backfill
+    row) or no pose_count (an unparseable manifest). The host refuses to quote an
+    item with no declared basis and skips one it cannot verify, so a half-block
+    would be offered and then fail at ingest. Better absent than broken.
+    """
+    item = {k: row[k] for k in
+            ("id", "breed_id", "display_name", "created_at", "draft",
+             "datsme_activity_id", "writeback_acked_at", "pose_count")}
+    if row["bundle_sha256"] and row["pose_count"] is not None:
+        # Fresh single-use token per call: serve_bundle burns it only after a
+        # SUCCESSFUL send, and the host fetches at checkout, so a re-listed page
+        # simply mints new ones — a burned token never blocks a retry.
+        token = secrets.token_urlsafe(16)
+        db.create_bundle_token(token, row["id"], time.time() + BUNDLE_TOKEN_TTL_SEC)
+        item["transfer"] = {
+            # Must share our launch_base_url origin — the host's _fetch_bundle
+            # pins to it and follows no redirects.
+            "pointer_url": f"{_datspet_public_url()}/api/datsme/bundle/{token}",
+            "sha256": row["bundle_sha256"],
+            "size_bytes": row["size_bytes"],
+            "content_type": "application/zip",
+        }
+    return item
+
+
+@router.post("/partner/imported/{user_id}")
+async def partner_imported(user_id: str, request: Request):
+    """The host tells us it pulled these items into `user_id`'s DatsMe house
+    (SPEC_DPP_DATA_TRANSFER_CHANNEL §5.5 half 2; our §3.4).
+
+    A pull deletes the push's acknowledgment channel — in a writeback the 200 IS
+    how we learn the pet landed, but in a pull we are a passive server and never
+    see the outcome. Without this, `in_datsme` on the house would read false
+    forever for a pulled pet.
+
+    MUST be host-signed: this marks pets as delivered, so an unsigned caller could
+    mark the whole house adopted. Verified over the EXACT raw bytes the host
+    signed, then those same bytes are parsed — never re-read the stream.
+
+    activity_id stays NULL: a pull has no activity, and inventing one would put a
+    lie in the record. purge_drafts' not_pending clause reads that column, but
+    only for draft rows — an imported pet is draft=0, so it is not swept.
+    """
+    raw = await request.body()
+    _require_host_signature(request, raw)
+    try:
+        body = json.loads(raw or b"{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="invalid JSON body")
+    item_ids = body.get("item_ids")
+    if not isinstance(item_ids, list):
+        raise HTTPException(status_code=400, detail="item_ids required")
+
+    acked = []
+    for pet_id in item_ids:
+        if not (isinstance(pet_id, str) and pet_id.isalnum()):
+            continue
+        row = db.get_pet(pet_id)
+        # Only ack a pet this user actually owns. The host is trusted, but a bug
+        # there must not let one user's import stamp another user's pet.
+        if row is None or row["external_user_id"] != user_id:
+            continue
+        db.stamp_writeback_acked(pet_id, None, time.time())
+        acked.append(pet_id)
+    return {"acked": acked}
 
 
 # ---------------------------------------------------------------------------

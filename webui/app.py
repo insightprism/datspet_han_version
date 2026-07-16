@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
@@ -1190,6 +1190,31 @@ def list_pets(request: Request):
     (external_user_id IS NULL) pets. Drafts are excluded (join via /keep)."""
     owner = datsme_integration.resolve_launch_identity(request)
     return db.list_saved_pets(external_user_id=owner)
+
+
+@app.post("/api/pets/claim")
+def claim_pets(request: Request, body: dict = Body(...)):
+    """Bind unclaimed local pets to the launched caller before they are handed off
+    to DatsMe's import page (SPEC_DATSPET_HOUSE_ADOPT §2/§3.3).
+
+    The house shows a launched user their own pets OR still-unclaimed local ones,
+    but /partner/export/{user_id} is exact-match — so an unclaimed pet is
+    selectable here and invisible to the host, and would silently vanish from the
+    import list. Claiming first is what the push path already does implicitly via
+    _bind_pending; the pull needs it done explicitly.
+
+    Standalone callers get 401: with no DatsMe identity there is nobody to claim
+    TO, and the pets are already theirs to see.
+    """
+    owner = datsme_integration.resolve_launch_identity(request)
+    if owner is None:
+        raise HTTPException(401, "Not launched from DatsMe — sign in to adopt.")
+    pet_ids = body.get("pet_ids")
+    if not isinstance(pet_ids, list) or not all(
+            isinstance(p, str) and p.isalnum() for p in pet_ids):
+        raise HTTPException(400, "pet_ids must be a list of pet ids")
+    activity_id = datsme_integration.resolve_launch_activity(request)
+    return {"claimed": db.claim_unowned_pets(pet_ids, owner, activity_id)}
 
 
 @app.post("/api/pets/{pet_id}/keep")
