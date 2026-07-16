@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   claimPets,
@@ -55,7 +55,7 @@ export default function HousePage() {
   const [page, setPage] = useState(0);
   const [isNarrow, setIsNarrow] = useState(false);
 
-  useEffect(() => {
+  const loadHouse = useCallback(() => {
     // Independent — fire together, don't chain.
     listPets()
       .then(setPets)
@@ -63,6 +63,28 @@ export default function HousePage() {
     getHouseConfig().then(setHouse).catch(() => { /* pager falls back to a default */ });
     getDatsmeSession().then(setSession).catch(() => setSession({ launched: false }));
   }, []);
+
+  useEffect(() => { loadHouse(); }, [loadHouse]);
+
+  // bfcache restore. DatsMe's Cancel (and browser-Back after an import) returns
+  // here via history.back(), which the browser serves from the back/forward cache:
+  // this page is NOT reloaded, it is UNFROZEN with its JS state exactly as it was
+  // when we left. So it wakes with `adopting` still true — the Adopt button stuck
+  // on "Handing over…", disabled forever — and with pre-departure "✓ In DatsMe"
+  // chips that predate an import the user just completed. Reset the in-flight flag
+  // and re-fetch so the woken page tells the truth about the present. The fix is
+  // to handle being woken, NOT to defeat bfcache — instant Back is the feature.
+  // Guard on e.persisted: a plain pageshow also fires on every normal load, and an
+  // unguarded handler would double-fetch on first render (loadHouse already ran).
+  useEffect(() => {
+    function onPageShow(e: PageTransitionEvent) {
+      if (!e.persisted) return;
+      setAdopting(false);
+      loadHouse();
+    }
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, [loadHouse]);
 
   // Track a narrow viewport so mobile mounts fewer sheets. matchMedia (not a
   // width guess) so it tracks rotation and resize; read in an effect so the
@@ -112,6 +134,12 @@ export default function HousePage() {
       // invisible to /partner/export, so handing it over unclaimed lands the user
       // on an import page where it silently isn't listed (§2). Only bother when
       // something actually needs it.
+      //
+      // DECISION (cancel does NOT unclaim): a user who cancels on DatsMe has still
+      // claimed these pets — external_user_id is now bound. Deliberately left as
+      // is. Claiming only binds ownership (charges nothing), and the binding makes
+      // the pet correctly exportable on the next attempt; unclaim-on-cancel would
+      // add a failure mode for zero user benefit.
       const needClaim = (pets ?? [])
         .filter((p) => selected.has(p.id) && p.claimable)
         .map((p) => p.id);
