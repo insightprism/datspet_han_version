@@ -1242,16 +1242,30 @@ def _require_pet(pet_id: str, owner: Optional[str]):
     return row
 
 
+# A pet's sprite sheet and manifest are IMMUTABLE per pet id: the id is a uuid4
+# minted once at generation and the bytes never change under it. So the browser
+# may cache them hard — every house reload, page-flip, and PetStage re-mount then
+# hits cache instead of re-fetching ~1 MB per pet. On mobile that is the whole
+# difference between a house that reloads instantly and one that re-downloads
+# megabytes over cellular, and it retires the 429 blanks caused by the house
+# firing ~4 asset requests per pet at once (SPEC per house-scaling work).
+# `private`, not `public`: access is ownership-scoped (_require_pet), so only the
+# owning browser may cache — never a shared proxy that could serve another user.
+_IMMUTABLE_ASSET_CACHE = "private, max-age=604800, immutable"  # 1 week
+
+
 @app.get("/api/pets/{pet_id}/sheet.png")
 def pet_sheet(pet_id: str, request: Request):
     row = _require_pet(pet_id, datsme_integration.resolve_launch_identity(request))
-    return Response(content=row["sheet_png"], media_type="image/png")
+    return Response(content=row["sheet_png"], media_type="image/png",
+                    headers={"Cache-Control": _IMMUTABLE_ASSET_CACHE})
 
 
 @app.get("/api/pets/{pet_id}/manifest.json")
 def pet_manifest(pet_id: str, request: Request):
     row = _require_pet(pet_id, datsme_integration.resolve_launch_identity(request))
-    return Response(content=row["manifest_json"], media_type="application/json")
+    return Response(content=row["manifest_json"], media_type="application/json",
+                    headers={"Cache-Control": _IMMUTABLE_ASSET_CACHE})
 
 
 @app.delete("/api/pets/{pet_id}")
