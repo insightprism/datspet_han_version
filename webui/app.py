@@ -138,6 +138,11 @@ app.include_router(datsme_integration.router)
 import motion_admin
 app.include_router(motion_admin.router)
 
+# Design admin (SPEC_PET_DESIGN_AXES_ADMIN): the same three-layer pattern as the
+# motion admin, pointed at the design vocabulary + the catalog's design profiles.
+import design_admin
+app.include_router(design_admin.router)
+
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 ALLOWED_IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 
@@ -543,14 +548,19 @@ def _save_reference(png: bytes, *, owner: Optional[str], description: str,
                     display_name: str, motion_profile: Optional[str], source: str,
                     min_strength: Optional[float] = None,
                     generated: bool = False,
-                    surface: Optional[str] = None) -> dict:
+                    surface: Optional[str] = None,
+                    catalog_animal: Optional[str] = None,
+                    catalog_breed: Optional[str] = None) -> dict:
     """Mint one reference. EVERY door ends here, which is the whole design: past
     this point nothing downstream asks where the picture came from (§6).
 
     `surface` is the animal's resolved surface (fur/feathers/scales/None),
     resolved ONCE at fill time exactly like motion_profile and carried on the
     record (SPEC_PET_DESIGN_AXES §3) — /api/design-axes reads it to gate the
-    surface axis; step 2 never re-derives it."""
+    surface axis; step 2 never re-derives it. `catalog_animal`/`catalog_breed`
+    are the curated identity (catalog door only), carried so the design menu
+    can honor per-breed profile restrictions (SPEC_PET_DESIGN_AXES_ADMIN §3.2)
+    without re-deriving where the picture came from."""
     reference_id = uuid.uuid4().hex[:12]
     png_path, meta_path = _reference_paths(reference_id)
     meta = {
@@ -559,6 +569,7 @@ def _save_reference(png: bytes, *, owner: Optional[str], description: str,
         "motion_profile": motion_profile, "source": source,
         "min_strength": min_strength, "generated": generated,
         "surface": surface,
+        "catalog_animal": catalog_animal, "catalog_breed": catalog_breed,
     }
     png_path.write_bytes(png)
     meta_path.write_text(json.dumps(meta))
@@ -758,6 +769,7 @@ def create_reference(
             # Confident by construction (SPEC_PET_DESIGN_AXES §3.1): the breed's
             # authored surface tag, resolved like motion_profile is.
             surface=animal_catalog_mod.resolved_surface(catalog_animal, catalog_breed),
+            catalog_animal=catalog_animal, catalog_breed=catalog_breed,
             source="catalog", generated=False))
 
     if door == "txt2img":
@@ -839,13 +851,22 @@ def design_axes_menu(request: Request, reference_id: str = ""):
     reference. `prompt_fragment` is calibrated server-side wording and never
     reaches the browser, same posture as the tier table."""
     surface = None
+    restriction = None
     if reference_id.strip():
         owner = datsme_integration.resolve_launch_identity(request)
         try:
-            surface = _load_reference(reference_id, owner).get("surface")
+            ref = _load_reference(reference_id, owner)
         except HTTPException:
-            surface = None
-    return {"axes": design_axes_mod.axes_for_surface(surface)}
+            ref = {}
+        surface = ref.get("surface")
+        # A curated animal may restrict its surface vocabulary (the admin's
+        # Animals tab, SPEC_PET_DESIGN_AXES_ADMIN §3.2). The axis's own default
+        # is always offered regardless.
+        if ref.get("catalog_animal"):
+            options = animal_catalog_mod.resolved_surface_options(
+                ref["catalog_animal"], ref.get("catalog_breed"))
+            restriction = set(options) if options is not None else None
+    return {"axes": design_axes_mod.axes_for_surface(surface, restriction)}
 
 
 @app.get("/api/body-shapes")
@@ -936,10 +957,11 @@ def preview_design(
     return _reference_record(_save_reference(
         png, owner=owner, description=display_name.lower(),
         display_name=display_name,
-        # A design never changes the animal, so the profile — and the surface —
-        # ride along unchanged.
+        # A design never changes the animal, so the profile — and the surface,
+        # and the curated identity — ride along unchanged.
         motion_profile=ref.get("motion_profile"),
         surface=ref.get("surface"),
+        catalog_animal=ref.get("catalog_animal"), catalog_breed=ref.get("catalog_breed"),
         source="design", min_strength=min_strength, generated=True))
 
 

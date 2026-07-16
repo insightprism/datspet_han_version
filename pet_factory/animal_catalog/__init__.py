@@ -47,6 +47,16 @@ def load_catalog() -> dict:
     return _CATALOG
 
 
+def reload() -> None:
+    """Drop the in-memory catalog cache so the next read re-reads disk. Called
+    by the admin write path (animal_catalog.admin) after a design-profile write
+    (SPEC_PET_DESIGN_AXES_ADMIN §1.2) so /api/catalog and /api/design-axes
+    reflect the change with no restart."""
+    global _CATALOG
+    with _LOCK:
+        _CATALOG = None
+
+
 def list_animals() -> list[dict]:
     """The animal list (each with its breeds) — the source for /api/catalog and
     the landing-page tiles. Returns the raw catalog entries; the API layer shapes
@@ -95,6 +105,38 @@ def resolved_surface(animal_key: str, breed_key: Optional[str] = None) -> Option
         if breed and breed.get("surface"):
             return breed["surface"]
     return animal.get("surface")
+
+
+def resolved_surface_options(animal_key: str, breed_key: Optional[str] = None) -> Optional[list[str]]:
+    """The per-breed `surface_options` restriction (SPEC_PET_DESIGN_AXES_ADMIN
+    §3.2: "Sphynx offers only hairless"), most-specific-wins like the other
+    resolvers. None means unrestricted — the surface axis offers its full
+    vocabulary. The axis's own default is ALWAYS offered regardless (the read
+    layer enforces that; a menu must always offer "leave it alone")."""
+    animal = _animal(animal_key)
+    if animal is None:
+        return None
+    if breed_key:
+        breed = _breed(animal_key, breed_key)
+        if breed and breed.get("surface_options") is not None:
+            return breed["surface_options"]
+    return animal.get("surface_options")
+
+
+def resolved_surface_default(animal_key: str, breed_key: Optional[str] = None) -> Optional[str]:
+    """The per-breed `surface_default` ("Persian defaults to long-haired"),
+    most-specific-wins. PERSISTED and validated but READ-INERT for now: whether
+    a breed default means "preselect it" or "treat it as the no-op" is an
+    unresolved semantic (SPEC_PET_DESIGN_AXES_ADMIN §9.5) — the field exists so
+    resolving it later is a read-layer change, not a data migration."""
+    animal = _animal(animal_key)
+    if animal is None:
+        return None
+    if breed_key:
+        breed = _breed(animal_key, breed_key)
+        if breed and breed.get("surface_default"):
+            return breed["surface_default"]
+    return animal.get("surface_default")
 
 
 def base_image_path(animal_key: str, breed_key: str) -> Optional[Path]:

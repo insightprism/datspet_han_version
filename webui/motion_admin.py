@@ -17,6 +17,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+import admin_common
 import datsme_integration
 from pet_factory import animal_catalog as animal_catalog_mod
 from pet_factory import motion_profiles as mp
@@ -29,28 +30,17 @@ router = APIRouter(
 
 
 # ---------------------------------------------------------------------------
-# Writability (§7.1). Writes are allowed on a writable/dev instance; on the
-# deployed prod web tier (read-only --no-deps install) they refuse unless the
-# operator opts in with MOTION_ADMIN_WRITABLE=1. Reads/list always work.
+# Writability (§7.1) — the shared, parameterized policy (admin_common): writes
+# on a writable/dev instance; prod refuses 409 unless MOTION_ADMIN_WRITABLE=1
+# opts in. Reads/list always work. Kept as module-level functions so tests can
+# monkeypatch them, exactly as before the extraction.
 # ---------------------------------------------------------------------------
 def _writable() -> bool:
-    if os.environ.get("MOTION_ADMIN_WRITABLE", "").strip() == "1":
-        return True
-    # Default: writable only when the profiles dir is actually writable on disk
-    # AND we're not in pool (prod) mode. Local/dev instances author freely.
-    if os.environ.get("PET_GEN_BACKEND", "local").strip().lower() == "pool":
-        return False
-    return os.access(mp._DIR, os.W_OK)
+    return admin_common.writable(mp._DIR, "MOTION_ADMIN_WRITABLE")
 
 
 def _require_writable() -> None:
-    if not _writable():
-        raise HTTPException(
-            status_code=409,
-            detail=("this instance is read-only for motion profiles — author on a "
-                    "writable/dev instance and deploy (set MOTION_ADMIN_WRITABLE=1 "
-                    "to override)"),
-        )
+    admin_common.require_writable(_writable(), "MOTION_ADMIN_WRITABLE", "motion profiles")
 
 
 # ---------------------------------------------------------------------------

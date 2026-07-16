@@ -288,8 +288,9 @@ export interface MotionProfileDetail {
   writable: boolean;
 }
 
-// Thrown by the admin calls; carries the server's validation error list on a 422.
-export class MotionAdminError extends Error {
+// Thrown by every content-admin call (motions + design); carries the server's
+// validation error list on a 422.
+export class AdminApiError extends Error {
   status: number;
   errors: string[];
   constructor(message: string, status: number, errors: string[] = []) {
@@ -299,8 +300,8 @@ export class MotionAdminError extends Error {
   }
 }
 
-async function adminFetch(path: string, init?: RequestInit) {
-  const r = await fetch(`${API_URL}/api/admin/motions${path}`, {
+async function adminApiFetch(base: string, path: string, init?: RequestInit) {
+  const r = await fetch(`${API_URL}${base}${path}`, {
     credentials: "include",
     cache: "no-store",
     headers: init?.body ? { "Content-Type": "application/json" } : undefined,
@@ -313,20 +314,112 @@ async function adminFetch(path: string, init?: RequestInit) {
   const errors = detail && typeof detail === "object" ? detail.errors ?? [] : [];
   const msg = detail && typeof detail === "object" ? (detail.error ?? "request failed")
     : (detail ?? "request failed");
-  throw new MotionAdminError(String(msg), r.status, errors);
+  throw new AdminApiError(String(msg), r.status, errors);
 }
 
+const motionFetch = (path: string, init?: RequestInit) =>
+  adminApiFetch("/api/admin/motions", path, init);
+
 export const motionAdmin = {
-  list: (): Promise<MotionAdminList> => adminFetch(""),
-  get: (key: string): Promise<MotionProfileDetail> => adminFetch(`/${encodeURIComponent(key)}`),
+  list: (): Promise<MotionAdminList> => motionFetch(""),
+  get: (key: string): Promise<MotionProfileDetail> => motionFetch(`/${encodeURIComponent(key)}`),
   create: (profile: MotionProfileFile, label: string) =>
-    adminFetch("", { method: "POST", body: JSON.stringify({ profile, label }) }),
+    motionFetch("", { method: "POST", body: JSON.stringify({ profile, label }) }),
   update: (key: string, profile: MotionProfileFile, label: string) =>
-    adminFetch(`/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ profile, label }) }),
+    motionFetch(`/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ profile, label }) }),
   remove: (key: string) =>
-    adminFetch(`/${encodeURIComponent(key)}`, { method: "DELETE" }),
+    motionFetch(`/${encodeURIComponent(key)}`, { method: "DELETE" }),
   duplicate: (key: string, new_key: string, new_label: string): Promise<{ profile: MotionProfileFile }> =>
-    adminFetch(`/${encodeURIComponent(key)}/duplicate`, { method: "POST", body: JSON.stringify({ new_key, new_label }) }),
+    motionFetch(`/${encodeURIComponent(key)}/duplicate`, { method: "POST", body: JSON.stringify({ new_key, new_label }) }),
+};
+
+// ---------------------------------------------------------------------------
+// Design admin (SPEC_PET_DESIGN_AXES_ADMIN §2) — the motion admin, applied to
+// design: the axis vocabulary (Features) + per-animal profiles (Animals). This
+// gated surface is the one place fragments DO reach the browser: editing the
+// calibrated wording is its job.
+// ---------------------------------------------------------------------------
+export interface DesignAxisOptionFile {
+  key: string;
+  label: string;
+  prompt_fragment: string;
+}
+export interface DesignAxisFile {
+  _doc?: string;
+  axis: string;
+  label: string;
+  kind: "universal" | "surface";
+  applies_to?: string;
+  default: string;
+  clause_slot: number;
+  position: "prefix" | "suffix";
+  min_strength: number | null;
+  options: DesignAxisOptionFile[];
+}
+export interface DesignAxisSummary {
+  key: string;
+  label: string;
+  kind: "universal" | "surface";
+  applies_to: string | null;
+  default: string;
+  option_count: number;
+  clause_slot: number | null;
+  position: string | null;
+  min_strength: number | null;
+  used_by: string[];
+}
+export interface DesignAdminAxisList {
+  writable: boolean;
+  max_concurrent_strong: number | null;
+  axes: DesignAxisSummary[];
+}
+export interface DesignAxisDetail {
+  axis: DesignAxisFile;
+  used_by: string[];
+  writable: boolean;
+}
+export interface DesignProfileFields {
+  surface: string | null;
+  surface_default: string | null;
+  surface_options: string[] | null;
+}
+export interface DesignBreedProfile extends DesignProfileFields {
+  key: string;
+  label: string;
+  resolved_surface: string | null;
+}
+export interface DesignAnimalProfile extends DesignProfileFields {
+  key: string;
+  label: string;
+  breeds: DesignBreedProfile[];
+}
+export interface DesignAdminAnimals {
+  writable: boolean;
+  surfaces: string[];
+  surface_axis_options: Record<string, DesignAxisOption[]>;
+  animals: DesignAnimalProfile[];
+}
+
+const designFetch = (path: string, init?: RequestInit) =>
+  adminApiFetch("/api/admin/design", path, init);
+
+export const designAdmin = {
+  listAxes: (): Promise<DesignAdminAxisList> => designFetch("/axes"),
+  getAxis: (key: string): Promise<DesignAxisDetail> => designFetch(`/axes/${encodeURIComponent(key)}`),
+  createAxis: (axis: DesignAxisFile) =>
+    designFetch("/axes", { method: "POST", body: JSON.stringify({ axis }) }),
+  updateAxis: (key: string, axis: DesignAxisFile) =>
+    designFetch(`/axes/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ axis }) }),
+  removeAxis: (key: string) =>
+    designFetch(`/axes/${encodeURIComponent(key)}`, { method: "DELETE" }),
+  animals: (): Promise<DesignAdminAnimals> => designFetch("/animals"),
+  setProfile: (animal: string, breed: string | null, profile: Partial<DesignProfileFields>) =>
+    designFetch(
+      breed
+        ? `/animals/${encodeURIComponent(animal)}/${encodeURIComponent(breed)}`
+        : `/animals/${encodeURIComponent(animal)}`,
+      { method: "PUT", body: JSON.stringify(profile) },
+    ),
 };
 
 // ── The reference layer (SPEC_PET_DESIGNER_FLOW §7.4) ────────────────────────

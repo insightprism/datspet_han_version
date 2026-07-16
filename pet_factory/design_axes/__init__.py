@@ -54,8 +54,6 @@ from pathlib import Path
 from typing import Optional
 
 _DIR = Path(__file__).resolve().parent
-_REGISTRY_FILE = _DIR / "registry.json"
-_SURFACE_KEYWORDS_FILE = _DIR / "surface_keywords.json"
 
 _LOCK = threading.Lock()
 _CACHE: Optional[dict] = None
@@ -69,7 +67,9 @@ def _load() -> dict:
     if _CACHE is None:
         with _LOCK:
             if _CACHE is None:
-                registry = json.loads(_REGISTRY_FILE.read_text())
+                # Paths resolve from _DIR at CALL time, not import time, so the
+                # admin tests' monkeypatched temp dir governs every read.
+                registry = json.loads((_DIR / "registry.json").read_text())
                 order: list[str] = []
                 axes: dict[str, dict] = {}
                 for entry in registry.get("axes", []):
@@ -85,6 +85,18 @@ def _load() -> dict:
                     order.append(key)
                 _CACHE = {"registry": registry, "axes": axes, "order": order}
     return _CACHE
+
+
+def reload() -> None:
+    """Drop the in-memory caches so the next read re-reads disk. Called by the
+    admin write path (design_axes.admin) after every successful file mutation so
+    /api/design-axes and the next compose reflect the change with no restart
+    (SPEC_PET_DESIGN_AXES_ADMIN §1.1). Safe to call any time; the caches simply
+    re-warm lazily on the next access."""
+    global _CACHE, _KEYWORDS
+    with _LOCK:
+        _CACHE = None
+        _KEYWORDS = None
 
 
 def _axis(key: Optional[str]) -> Optional[dict]:
@@ -121,18 +133,34 @@ def public_axis(key: str) -> Optional[dict]:
     return _public(a) if a else None
 
 
-def axes_for_surface(surface: Optional[str]) -> list[dict]:
+def axes_for_surface(surface: Optional[str],
+                     surface_option_keys: Optional[set] = None) -> list[dict]:
     """The §4 server-owned filter: the universal axes plus the ONE surface axis
     whose applies_to matches, in menu order. surface=None (uncatalogued,
     unmatched, or upload — §3.3) returns only the universal axes: never a wrong
-    surface, never an error."""
+    surface, never an error.
+
+    `surface_option_keys` is the catalog's per-breed restriction
+    (`surface_options`, SPEC_PET_DESIGN_AXES_ADMIN §3.2): when set, the surface
+    axis offers only those options — plus its file default, ALWAYS, because a
+    menu must always offer "leave it alone". Unknown keys in the restriction are
+    ignored (the catalog guard blocks them at build; runtime degrades)."""
     data = _load()
     out = []
     for key in data["order"]:
         a = data["axes"][key]
-        if a.get("kind") == "surface" and (not surface or a.get("applies_to") != surface):
-            continue
-        out.append(_public(a))
+        if a.get("kind") == "surface":
+            if not surface or a.get("applies_to") != surface:
+                continue
+            public = _public(a)
+            if surface_option_keys is not None:
+                public["options"] = [
+                    o for o in public["options"]
+                    if o["is_default"] or o["key"] in surface_option_keys
+                ]
+            out.append(public)
+        else:
+            out.append(_public(a))
     return out
 
 
@@ -238,7 +266,7 @@ def _keywords() -> dict:
     if _KEYWORDS is None:
         with _LOCK:
             if _KEYWORDS is None:
-                _KEYWORDS = json.loads(_SURFACE_KEYWORDS_FILE.read_text())
+                _KEYWORDS = json.loads((_DIR / "surface_keywords.json").read_text())
     return _KEYWORDS
 
 

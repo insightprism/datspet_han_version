@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  motionAdmin, getDatsmeSession, MotionAdminError,
+  motionAdmin, getDatsmeSession, AdminApiError,
   CANONICAL_POSES, REQUIRED_POSES, POSE_ROLES,
   type MotionAdminList, type MotionProfileFile, type MotionProfileSummary,
 } from "@/lib/api";
@@ -52,7 +52,7 @@ export default function MotionAdminPage() {
   // Gate on mount. A 401 → bounce to the host admin-launch (return here).
   useEffect(() => {
     refresh().catch(async (e) => {
-      if (e instanceof MotionAdminError && (e.status === 401 || e.status === 403)) {
+      if (e instanceof AdminApiError && (e.status === 401 || e.status === 403)) {
         const s = await getDatsmeSession().catch(() => null);
         // signin_url gives us the DatsMe origin; swap login-launch → admin-launch.
         const origin = s?.signin_url ? new URL(s.signin_url).origin : "";
@@ -94,7 +94,7 @@ export default function MotionAdminPage() {
       setDraft(null);
       await refresh();
     } catch (e) {
-      if (e instanceof MotionAdminError) {
+      if (e instanceof AdminApiError) {
         setErrors(e.errors.length ? e.errors : [e.message]);
       } else {
         setErrors(["Save failed."]);
@@ -113,7 +113,7 @@ export default function MotionAdminPage() {
       setNotice(`Duplicated to "${newKey}" — add its keywords, then Save.`);
       setDraft({ profile: res.profile, label: `Copy of ${key}`, editingKey: newKey });
     } catch (e) {
-      setNotice(e instanceof MotionAdminError ? e.message : "Duplicate failed.");
+      setNotice(e instanceof AdminApiError ? e.message : "Duplicate failed.");
     }
   }
 
@@ -125,7 +125,7 @@ export default function MotionAdminPage() {
       setNotice(`Deleted "${key}".`);
       await refresh();
     } catch (e) {
-      setNotice(e instanceof MotionAdminError ? e.message : "Delete failed.");
+      setNotice(e instanceof AdminApiError ? e.message : "Delete failed.");
     }
   }
 

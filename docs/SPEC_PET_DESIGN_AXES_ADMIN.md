@@ -221,6 +221,22 @@ like `/admin/motions`). Phase B adds the catalog write path — the genuinely ne
 gates on the allowed-field guard so it can never scratch a curated base. Both depend on
 `SPEC_PET_DESIGN_AXES` Phases 1–2 existing (there must be axes and a `surface` field to edit).
 
+**Implemented 2026-07-16 (Phases A + B), with three as-built deviations, each recorded where
+it lives:**
+
+1. **Duplicate is CLIENT-side** (prefill the editor as a create), not motion's server-side
+   clone: a surface axis's `applies_to` is unique, so a written clone would be invalid until
+   edited — prefill lets the admin fix it before the file exists. Same UX, no invalid
+   intermediate state.
+2. **`surface_default` is persisted + validated but READ-INERT, and the Animals tab does not
+   offer it yet** — its semantics are genuinely unresolved (§9.5). Writing a field nothing
+   reads would gaslight the look owner; the schema slot exists so resolving it later is a
+   read-layer change, not a migration.
+3. **The allowed-field guard has two layers:** structurally at the write path (explicit
+   keyword args + whole-entry preservation) and `extra="forbid"` on the HTTP body, so an
+   unknown field dies at parse. The shared `_writable()` was extracted to
+   `webui/admin_common.py` (dir + override env parameterized), exactly per rev.2 §2.
+
 ---
 
 ## 8. Guard tests
@@ -253,6 +269,14 @@ gates on the allowed-field guard so it can never scratch a curated base. Both de
    catalog; a "set all cat breeds to fur" bulk action is a nicety if the catalog grows large.
 4. **Who authors vocabulary vs profiles?** The look owner likely owns both, but the two tabs
    could carry different sub-permissions later; the single adm gate is enough for now.
+5. **`surface_default` semantics — OPEN, and blocking its UI.** "Persian defaults to
+   long-haired" can mean (a) *preselect* long-haired (it then composes words and counts as a
+   design — violating "the default is the absence of a choice"), or (b) *treat it as the
+   no-op* (its curated base already looks long-haired — but then picking "natural" is a
+   selectable option that changes nothing, the §12 dead-control class inverted). Neither is
+   right yet, which is exactly why `SPEC_PET_DESIGN_AXES` §11.1 deferred it. The field is
+   persisted, validated (a typo still can't ship), and read-inert; the Animals tab omits it
+   until this is decided.
 
 ---
 

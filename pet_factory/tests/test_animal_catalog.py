@@ -88,24 +88,25 @@ def test_missing_breed_resolves_to_none_not_a_crash():
 
 
 # --- the design-surface contract (SPEC_PET_DESIGN_AXES §1/§3.1) --------------
-def test_every_resolved_surface_matches_a_surface_axis():
-    """Catalog surface integrity (SPEC_PET_DESIGN_AXES §10): every catalog
-    entry's RESOLVED surface must match a design_axes surface axis's
-    applies_to — a typo can't ship a breed whose surface axis silently never
-    appears. Every entry must also BE tagged: the catalog door is the confident
-    tier (§3.1), and an untagged curated breed would degrade a vetted animal to
-    the unknown-animal posture."""
-    from pet_factory import design_axes as da
-    known = da.known_surfaces()
+def test_every_design_profile_passes_the_admin_validator():
+    """Catalog surface integrity (SPEC_PET_DESIGN_AXES §10), asserted through
+    the SAME function the admin's Animals tab calls before writing
+    (SPEC_PET_DESIGN_AXES_ADMIN §0.2): every entry's resolved surface matches a
+    surface axis, and any surface_default / surface_options name real option
+    keys. The admin is blocked at save, the build is blocked here, by one rule.
+    Every entry must also resolve SOME surface: the catalog door is the
+    confident tier (§3.1)."""
+    from pet_factory.animal_catalog import admin as cat_admin
     for a in _all_animals():
-        for b in a["breeds"]:
-            surface = cat.resolved_surface(a["key"], b["key"])
-            assert surface, (
-                f"{a['key']}/{b['key']}: no surface tag — a curated breed must "
-                f"resolve one (SPEC_PET_DESIGN_AXES §3.1)")
-            assert surface in known, (
-                f"{a['key']}/{b['key']}: surface {surface!r} matches no surface "
-                f"axis's applies_to ({sorted(known)})")
+        for level_key, entry in ((None, a), *((b["key"], b) for b in a["breeds"])):
+            errors = cat_admin.validate_design_profile(
+                surface=entry.get("surface"),
+                surface_default=entry.get("surface_default"),
+                surface_options=entry.get("surface_options"),
+                effective_surface=cat.resolved_surface(a["key"], level_key),
+            )
+            ref = f"{a['key']}/{level_key}" if level_key else a["key"]
+            assert errors == [], f"{ref}: validate_design_profile reported {errors}"
 
 
 def test_surface_resolver_prefers_the_breed_tag_over_the_animal_tag():

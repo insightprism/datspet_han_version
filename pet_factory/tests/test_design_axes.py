@@ -45,45 +45,51 @@ def test_registry_and_axis_files_are_one_to_one():
         f"axis files and registry entries disagree: {on_disk ^ set(registered)}"
 
 
-def test_every_axis_is_fully_formed():
-    for a in _axes():
-        key = a.get("axis")
-        assert key, "an axis file has no 'axis' key"
-        assert (_DIR / f"{key}.json").is_file(), \
-            f"axis {key!r} does not match its filename"
-        assert a.get("label"), f"{key} has no label"
-        assert a.get("kind") in VALID_KINDS, f"{key}: kind must be one of {VALID_KINDS}"
-        if a["kind"] == "surface":
-            assert a.get("applies_to"), f"{key}: a surface axis must declare applies_to"
-        assert isinstance(a.get("clause_slot"), int), f"{key}: clause_slot must be an int"
-        assert a.get("position") in VALID_POSITIONS, \
-            f"{key}: position must be one of {VALID_POSITIONS}"
-        ms = a.get("min_strength")
-        assert ms is None or isinstance(ms, (int, float)), \
-            f"{key}: min_strength must be a number or null"
-        assert a.get("_doc"), f"{key}: content files carry their own rationale"
+# ── validator parity (SPEC_PET_DESIGN_AXES_ADMIN §0.2/§8 — the load-bearing one)
+
+def test_every_shipped_axis_passes_the_admin_validator():
+    """The admin's validate_axis IS the definition of a valid axis, and this
+    build guard calls THAT function — one rule for the editor and the build,
+    so they can never drift. Everything the per-field tests used to assert
+    inline (fully-formed axis, one default, empty default fragment, no dead
+    options, applies_to uniqueness) lives in the validator now."""
+    from pet_factory.design_axes import admin
+
+    registry = admin.load_registry()
+    for entry in registry.get("axes", []):
+        raw = json.loads((_DIR / f"{entry['key']}.json").read_text())
+        assert raw.get("axis") == entry["key"], \
+            f"{entry['key']}.json's axis field does not match its registry key"
+        errors = admin.validate_axis(raw, registry=registry, existing_key=entry["key"])
+        assert errors == [], f"{entry['key']}: validate_axis reported {errors}"
 
 
-# ── options (generalized from test_body_shapes) ──────────────────────────────
+def test_validator_catches_the_half_formed_entry_classes():
+    """The validator must actually FAIL the failure classes the old inline
+    tests covered — a validator that passes everything would green the parity
+    test above while guarding nothing."""
+    from pet_factory.design_axes import admin
 
-def test_exactly_one_default_per_axis_and_it_exists():
-    for a in _axes():
-        keys = [o["key"] for o in a["options"]]
-        assert len(keys) == len(set(keys)), f"{a['axis']}: duplicate option keys"
-        assert a["default"] in keys, \
-            f"{a['axis']}: default names an option that isn't in the list"
+    registry = admin.load_registry()
 
+    def errs(mutate):
+        raw = json.loads((_DIR / "pattern.json").read_text())
+        mutate(raw)
+        return admin.validate_axis(raw, registry=registry, existing_key="pattern")
 
-def test_every_option_is_fully_formed():
-    """A half-formed entry fails the build, not a user's design."""
-    for a in _axes():
-        for o in a["options"]:
-            assert o.get("key"), f"{a['axis']}: an option has no key"
-            assert o.get("label"), f"{a['axis']}/{o['key']} has no label"
-            assert "prompt_fragment" in o, f"{a['axis']}/{o['key']} has no prompt_fragment"
-            assert isinstance(o["prompt_fragment"], str)
-            assert o["prompt_fragment"] == o["prompt_fragment"].strip(), \
-                f"{a['axis']}/{o['key']}'s fragment has loose whitespace — it composes verbatim"
+    assert errs(lambda r: r.__setitem__("kind", "vibes"))
+    assert errs(lambda r: r.__setitem__("position", "middle"))
+    assert errs(lambda r: r.__setitem__("clause_slot", "twenty"))
+    assert errs(lambda r: r.__setitem__("default", "no_such_option"))
+    assert errs(lambda r: r["options"][0].__setitem__("prompt_fragment", "sneaky words"))  # default gains words
+    assert errs(lambda r: r["options"][1].__setitem__("prompt_fragment", ""))  # dead control
+    assert errs(lambda r: r.__setitem__("min_strength", 1.5))  # unreachable clamp
+    assert errs(lambda r: r.__setitem__("applies_to", "fur"))  # universal claiming a surface
+    # A second axis claiming an already-served surface:
+    def claim_feathers(r):
+        r["kind"] = "surface"
+        r["applies_to"] = "feathers"
+    assert errs(claim_feathers)
 
 
 def test_default_fragment_is_exactly_empty():
@@ -171,6 +177,19 @@ def test_unknown_surface_gets_universal_axes_only():
     universal = {a["axis"] for a in _axes() if a["kind"] == "universal"}
     for surface in (None, "", "granite"):
         assert {a["axis"] for a in da.axes_for_surface(surface)} == universal
+
+
+def test_axes_for_surface_honors_the_catalog_restriction():
+    """The Animals tab's surface_options read side (SPEC_PET_DESIGN_AXES_ADMIN
+    §3.2): the surface axis offers only the restricted options — plus its file
+    default, ALWAYS, because a menu must always offer 'leave it alone'."""
+    axes = {a["axis"]: a for a in da.axes_for_surface("fur", {"fluffy"})}
+    assert [o["key"] for o in axes["coat"]["options"]] == ["natural", "fluffy"]
+    # Unknown keys in the restriction are ignored, never an error.
+    axes = {a["axis"]: a for a in da.axes_for_surface("fur", {"no_such_option"})}
+    assert [o["key"] for o in axes["coat"]["options"]] == ["natural"]
+    # Universal axes are never restricted by it.
+    assert len(axes["pattern"]["options"]) == 6
 
 
 def test_filter_picks_drops_unknown_axes_and_surface_mismatches():
