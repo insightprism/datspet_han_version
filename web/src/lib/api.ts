@@ -87,6 +87,23 @@ export async function listPets(): Promise<PetSummary[]> {
   return r.json();
 }
 
+// The caller's house shape (SPEC house-scaling): the cap, the display page size,
+// and their current saved count. Config, not collection — separate from listPets
+// because it changes for a different reason (an ops knob vs a new pet). Drives the
+// "N / max" readout and the client-side pager. Server-owned so page size / cap are
+// never client constants.
+export interface HouseConfig {
+  max_pets: number;
+  page_size: number;
+  count: number;
+}
+
+export async function getHouseConfig(): Promise<HouseConfig> {
+  const r = await fetch(`${API_URL}/api/house`, { cache: "no-store" });
+  if (!r.ok) throw new Error("Could not load house settings");
+  return r.json();
+}
+
 // A pose offered by the motion menu (SPEC_MOTION_PROFILES §4.1). `required` poses
 // (walk+idle) are always built and render locked-on in the selector.
 export interface MotionPose {

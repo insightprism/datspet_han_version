@@ -1012,6 +1012,9 @@ def adopt_sample(animal: str, sample: str, request: Request):
     if bundle_path is None:
         raise HTTPException(404, "sample not found")
     owner = datsme_integration.resolve_launch_identity(request)
+    # Adopt is instant, but it still adds a pet — block at the cap so the user
+    # isn't handed a draft they can't keep (SPEC house-scaling).
+    _enforce_house_not_full(owner)
 
     zip_bytes = bundle_path.read_bytes()
     sheet_png, manifest_json, package_json, display_name, breed_id = _unpack_bundle(
@@ -1073,6 +1076,9 @@ async def start_job(
     # This scopes the generated pet and the draft purge, so one user's Generate never
     # touches another user's (or the local) pets.
     owner = datsme_integration.resolve_launch_identity(request)
+    # Fail fast, before ~3 min of GPU: a full house can't accept the pet this
+    # build would produce, so don't build it (SPEC house-scaling).
+    _enforce_house_not_full(owner)
     name = name.strip()[:60]
     if not reference_id.strip():
         # No base at all — a bad request, not a missing reference. This is also what a
@@ -1183,6 +1189,51 @@ _purge_drafts()        # startup cleanup — "__all__" scope
 _reattach_pool_jobs()  # Opt-1: resume pool jobs orphaned by a restart
 
 
+# House-scaling config (SPEC house-scaling). Env-var knobs, read at call time so
+# they are tunable without a restart — same posture as DATSPET_DESIGN_COST. The
+# house grows forever, and the cost is on the CLIENT (a phone decodes a full
+# sprite sheet per card + PetStage actor), so these bound what a mobile tab must
+# hold: the cap bounds total pets (and disk), the page size bounds what is mounted
+# at once. Neither is a client constant — the browser reads both from /api/house.
+def _house_max_pets() -> int:
+    try:
+        return max(1, int(os.environ.get("PETMAKER_HOUSE_MAX_PETS", "50")))
+    except ValueError:
+        return 50
+
+
+def _house_page_size() -> int:
+    try:
+        return max(1, int(os.environ.get("PETMAKER_HOUSE_PAGE_SIZE", "10")))
+    except ValueError:
+        return 10
+
+
+def _enforce_house_not_full(owner: Optional[str]) -> None:
+    """Block a new pet from joining a full house (SPEC house-scaling). We BLOCK,
+    never evict — a pet's bundle is irreplaceable, so the user removes one by
+    hand. Counted against the caller's own visible house."""
+    cap = _house_max_pets()
+    if db.count_saved_pets(owner) >= cap:
+        raise HTTPException(
+            409, f"Your pet house is full ({cap} pets). Remove one to make room.")
+
+
+@app.get("/api/house")
+def house_config(request: Request):
+    """The caller's house shape: the cap, the display page size, and how many
+    saved pets they currently hold (SPEC house-scaling). Drives the "N / max"
+    readout, the client-side pager, and the disabled state when full. Config, not
+    collection — the pets themselves come from /api/pets, which changes for a
+    different reason (a new pet) than these knobs (an ops tuning)."""
+    owner = datsme_integration.resolve_launch_identity(request)
+    return {
+        "max_pets": _house_max_pets(),
+        "page_size": _house_page_size(),
+        "count": db.count_saved_pets(external_user_id=owner),
+    }
+
+
 @app.get("/api/pets")
 def list_pets(request: Request):
     """Every SAVED pet the caller may see, newest first. A DatsMe-launched
@@ -1224,6 +1275,14 @@ def keep_pet(pet_id: str, request: Request):
     if not pet_id.isalnum():
         raise HTTPException(404, "pet not found")
     owner = datsme_integration.resolve_launch_identity(request)
+    # The true cap chokepoint: this is the moment a pet joins the house. Enforce
+    # ONLY for a draft actually joining — re-keeping an already-saved pet is
+    # idempotent and must not 409 a house that is legitimately at its cap. Access
+    # is checked first (_require_pet 404s, no existence leak) so the cap 409 can
+    # never reveal another user's pet (SPEC house-scaling).
+    row = _require_pet(pet_id, owner)
+    if row["draft"]:
+        _enforce_house_not_full(owner)
     record = db.keep_pet(pet_id, external_user_id=owner)
     if record is None:
         raise HTTPException(404, "pet not found")

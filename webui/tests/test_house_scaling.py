@@ -55,3 +55,69 @@ def test_pet_assets_are_immutably_cacheable(app_client, dpp_env, suffix):
     assert "immutable" in cc and "max-age=" in cc
     # Ownership-scoped content must never land in a shared proxy cache.
     assert "private" in cc and "public" not in cc
+
+
+# ---------------------------------------------------------------------------
+# 2. The cap + config
+# ---------------------------------------------------------------------------
+
+def test_house_config_reports_cap_page_size_and_count(app_client, dpp_env, monkeypatch):
+    monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "3")
+    monkeypatch.setenv("PETMAKER_HOUSE_PAGE_SIZE", "2")
+    for i in range(2):
+        make_pet(dpp_env["db"], pet_id=f"cfgpet{i:06}", external_user_id=None, draft=False)
+    cfg = app_client.get("/api/house").json()
+    assert cfg == {"max_pets": 3, "page_size": 2, "count": 2}
+
+
+def test_config_falls_back_on_garbage_env(app_client, monkeypatch):
+    monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "not-a-number")
+    monkeypatch.setenv("PETMAKER_HOUSE_PAGE_SIZE", "")
+    cfg = app_client.get("/api/house").json()
+    assert cfg["max_pets"] == 50 and cfg["page_size"] == 10
+
+
+def test_keep_blocks_at_the_cap_but_never_evicts(app_client, dpp_env, monkeypatch):
+    """A full house rejects the pet trying to join. The existing pets are
+    untouched — we block, never evict (a bundle is irreplaceable)."""
+    monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "2")
+    db = dpp_env["db"]
+    make_pet(db, pet_id="full00000001", external_user_id=None, draft=False)
+    make_pet(db, pet_id="full00000002", external_user_id=None, draft=False)
+    make_pet(db, pet_id="draft0000001", external_user_id=None, draft=True)  # wants in
+
+    r = app_client.post("/api/pets/draft0000001/keep")
+    assert r.status_code == 409 and "full" in r.json()["detail"].lower()
+    assert db.count_saved_pets(None) == 2          # nothing evicted
+    assert db.get_pet("draft0000001")["draft"] == 1  # still a draft
+
+
+def test_rekeeping_a_saved_pet_at_the_cap_is_not_blocked(app_client, dpp_env, monkeypatch):
+    """The cap gate fires only for a DRAFT joining. Re-keeping a pet already in a
+    full house is idempotent and must not 409."""
+    monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "1")
+    db = dpp_env["db"]
+    make_pet(db, pet_id="saved0000001", external_user_id=None, draft=False)
+    r = app_client.post("/api/pets/saved0000001/keep")
+    assert r.status_code == 200
+
+
+def test_generate_prechecks_the_cap_before_burning_gpu(app_client, dpp_env, monkeypatch):
+    """A full house 409s /api/generate up front, so no ~3-min build is wasted on
+    a pet that could never be kept."""
+    monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "1")
+    make_pet(dpp_env["db"], pet_id="full00000001", external_user_id=None, draft=False)
+    r = app_client.post("/api/generate", data={"reference_id": "whatever"})
+    assert r.status_code == 409 and "full" in r.json()["detail"].lower()
+
+
+def test_cap_gate_does_not_leak_another_users_pet(app_client, dpp_env, monkeypatch):
+    """A standalone caller keeping another user's draft gets 404 (not a cap 409),
+    so the gate can't be used to probe existence."""
+    monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "1")
+    db = dpp_env["db"]
+    make_pet(db, pet_id="mine00000001", external_user_id=None, draft=False)  # fills the cap
+    make_pet(db, pet_id="theirs000001", external_user_id="user-B", draft=True)
+    # standalone caller (no cookie) cannot access user-B's pet -> 404, never 409
+    r = app_client.post("/api/pets/theirs000001/keep")
+    assert r.status_code == 404

@@ -392,6 +392,19 @@ def export_pets(external_user_id: str) -> list[dict]:
     return out
 
 
+def count_saved_pets(external_user_id: Optional[str] = None) -> int:
+    """How many saved (non-draft) pets the caller's house holds — the number the
+    cap is enforced against (SPEC house-scaling). Same visibility rule as
+    list_saved_pets, so the count equals what the user sees: a standalone caller
+    counts the local pets; a launched user counts their own AND unclaimed local
+    ones."""
+    clause, params = _scope_clause(external_user_id)
+    with _lock:
+        row = _connect().execute(
+            f"SELECT COUNT(*) FROM pets WHERE draft=0 AND {clause}", params).fetchone()
+    return row[0]
+
+
 def claim_unowned_pets(pet_ids: list[str], external_user_id: str,
                        activity_id: Optional[str]) -> list[str]:
     """Bind unclaimed (external_user_id IS NULL) pets to a DatsMe user. Returns the
