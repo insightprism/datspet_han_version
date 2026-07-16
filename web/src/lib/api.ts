@@ -37,6 +37,28 @@ export interface PetSummary {
   breed_id: string;
   display_name: string;
   created_at: number;
+  // Already in the caller's DatsMe house — stamped by a push Accept or by the
+  // host's post-import ack. Information, not a gate: re-importing is free and
+  // updates in place (SPEC_DPP_DATA_TRANSFER_CHANNEL §3.3).
+  in_datsme: boolean;
+  // Visible to this caller but not yet owned by them (an unclaimed local pet).
+  // The house shows these; /partner/export/{user_id} is exact-match and does not,
+  // so they must be claimed before we hand the user to DatsMe's import page or
+  // they silently vanish from it (SPEC_DATSPET_HOUSE_ADOPT §2).
+  claimable: boolean;
+}
+
+// Bind unclaimed local pets to the launched caller. Called with the ids the user
+// selected before linking out to the import page — never speculatively.
+export async function claimPets(petIds: string[]): Promise<{ claimed: string[] }> {
+  const r = await fetch(`${API_URL}/api/pets/claim`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pet_ids: petIds }),
+  });
+  if (!r.ok) throw new Error("Could not prepare those pets for DatsMe");
+  return r.json();
 }
 
 export async function generatePet(form: FormData): Promise<{ job_id: string }> {
@@ -412,6 +434,10 @@ export interface DatsmeSession {
   integrated?: boolean;         // wired to a DatsMe host? false = standalone (no DatsMe buttons)
   signin_url?: string | null;   // where "Sign in with DatsMe" points (host login-launch bounce)
   signup_url?: string | null;   // where "Create a DatsMe account" points (host /signup)
+  // Where the house's Adopt action hands off: `${import_url}?items=a,b,c`. Built
+  // server-side — the partner slug is env-overridable, so the browser must never
+  // assemble this itself (SPEC_DATSPET_HOUSE_ADOPT §0.6).
+  import_url?: string | null;
   admin?: boolean;              // a valid admin session is present (show the Admin toolbar link)
 }
 

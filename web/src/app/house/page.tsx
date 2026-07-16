@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { deletePet, listPets, petZipUrl, type PetSummary } from "@/lib/api";
+import {
+  claimPets,
+  deletePet,
+  getDatsmeSession,
+  listPets,
+  petZipUrl,
+  type DatsmeSession,
+  type PetSummary,
+} from "@/lib/api";
 import PetStage from "@/components/PetStage";
 import PetThumbnail from "@/components/PetThumbnail";
 import ConfirmModal from "@/components/ConfirmModal";
@@ -11,17 +19,67 @@ import ConfirmModal from "@/components/ConfirmModal";
  * The Pet House — every pet ever generated on this machine, alive at
  * once. The engine's auto state machine wanders them along the bottom
  * of the page; click anywhere to call one over, click a pet to excite it.
+ *
+ * Adopting is a LINK, not an API call (SPEC_DATSPET_HOUSE_ADOPT §0.1). A launch
+ * nonce authorizes exactly ONE writeback, so a house of Accept buttons cannot
+ * work over the push path at any key or batch size. Instead the user selects
+ * here — where the pets are visible — and we hand the selection to DatsMe's
+ * import page, which pulls from our export. That page treats `?items=` as a
+ * PRESELECTION, so the picking done here survives the trip.
+ *
+ * Selection, not per-card buttons (§0.2): adopting navigates away, so a per-card
+ * link would cost one full-page bounce PER PET — exactly the posture the pull
+ * channel exists to replace. One selection, one bounce.
  */
 export default function HousePage() {
   const [pets, setPets] = useState<PetSummary[] | null>(null);
+  const [session, setSession] = useState<DatsmeSession | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [adopting, setAdopting] = useState(false);
   const [error, setError] = useState("");
   const [petToRemove, setPetToRemove] = useState<PetSummary | null>(null);
 
   useEffect(() => {
+    // Independent — fire together, don't chain.
     listPets()
       .then(setPets)
       .catch((e) => setError(e instanceof Error ? e.message : "Could not load pets"));
+    getDatsmeSession().then(setSession).catch(() => setSession({ launched: false }));
   }, []);
+
+  const canAdopt = Boolean(session?.launched && session?.import_url);
+
+  function toggle(petId: string) {
+    setSelected((cur) => {
+      const next = new Set(cur);
+      if (next.has(petId)) next.delete(petId);
+      else next.add(petId);
+      return next;
+    });
+  }
+
+  async function adoptSelected() {
+    if (!session?.import_url || selected.size === 0) return;
+    setError("");
+    setAdopting(true);
+    const ids = (pets ?? []).filter((p) => selected.has(p.id)).map((p) => p.id);
+    try {
+      // Claim first, navigate second. An unclaimed pet is visible here but
+      // invisible to /partner/export, so handing it over unclaimed lands the user
+      // on an import page where it silently isn't listed (§2). Only bother when
+      // something actually needs it.
+      const needClaim = (pets ?? [])
+        .filter((p) => selected.has(p.id) && p.claimable)
+        .map((p) => p.id);
+      if (needClaim.length > 0) await claimPets(needClaim);
+      window.location.href = `${session.import_url}?items=${ids.join(",")}`;
+    } catch (e) {
+      setAdopting(false);
+      setError(
+        e instanceof Error ? e.message : "Could not hand those pets to DatsMe",
+      );
+    }
+  }
 
   async function confirmRemove() {
     if (!petToRemove) return;
@@ -68,11 +126,68 @@ export default function HousePage() {
         </div>
       )}
 
+      {canAdopt && pets && pets.length > 0 && (
+        <div
+          className="card mb-4 flex flex-wrap items-center justify-between gap-3 p-3"
+          style={{ borderColor: selected.size ? "rgba(52,211,153,0.4)" : undefined }}
+        >
+          <div className="text-sm" style={{ color: "var(--muted)" }}>
+            {selected.size === 0
+              ? "Pick the pets you want in your DatsMe house."
+              : `${selected.size} pet${selected.size > 1 ? "s" : ""} selected`}
+            {/* No price here on purpose. The cost is a function of each pet's pose
+                count AND DatsMe's own credit config; anything we render is a guess
+                that would disagree with the confirm page. DatsMe quotes, and it
+                quotes exactly. */}
+            <span className="ml-1" style={{ color: "var(--faint)" }}>
+              You&apos;ll see the exact cost on DatsMe before anything is charged.
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={selected.size === 0 || adopting}
+            onClick={adoptSelected}
+            className="rounded-lg border px-4 py-2 text-sm font-semibold transition hover:opacity-85 disabled:opacity-40"
+            style={{
+              background: "rgba(52,211,153,0.12)",
+              color: "var(--green)",
+              borderColor: "rgba(52,211,153,0.4)",
+            }}
+          >
+            {adopting
+              ? "Handing over…"
+              : `✓ Adopt ${selected.size || ""} to DatsMe`.replace("  ", " ")}
+          </button>
+        </div>
+      )}
+
       {pets && pets.length > 0 && (
         <>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
             {pets.map((p) => (
-              <div key={p.id} className="card p-4 text-center">
+              <div
+                key={p.id}
+                className="card p-4 text-center"
+                style={
+                  selected.has(p.id)
+                    ? { borderColor: "var(--green)", boxShadow: "0 0 0 1px var(--green)" }
+                    : undefined
+                }
+              >
+                {canAdopt && (
+                  <label className="mb-1 flex cursor-pointer items-center justify-center gap-2 text-xs"
+                         style={{ color: "var(--muted)" }}>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(p.id)}
+                      onChange={() => toggle(p.id)}
+                      style={{ accentColor: "var(--green)" }}
+                    />
+                    {/* in_datsme is informational, never a gate: re-importing is
+                        free and updates the pet in place. */}
+                    {p.in_datsme ? "✓ In DatsMe" : "Select"}
+                  </label>
+                )}
                 <div className="mx-auto w-fit">
                   <PetThumbnail petId={p.id} size={88} />
                 </div>
