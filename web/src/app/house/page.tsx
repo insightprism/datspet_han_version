@@ -1,53 +1,97 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   claimPets,
   deletePet,
   getDatsmeSession,
+  getHouseConfig,
   listPets,
   petZipUrl,
   type DatsmeSession,
+  type HouseConfig,
   type PetSummary,
 } from "@/lib/api";
 import PetStage from "@/components/PetStage";
 import PetThumbnail from "@/components/PetThumbnail";
 import ConfirmModal from "@/components/ConfirmModal";
 
+// On a phone, showing fewer pets per page is the memory fix that matters: each
+// mounted card decodes a sprite sheet and each PetStage actor RETAINS one
+// (~16 MB decoded), so a full page of them can crash a mobile tab (iOS caps a
+// tab well under a gigabyte). The server page size is the desktop value; a narrow
+// viewport clamps to this ceiling. A commented constant, not config — the two
+// tunable knobs are the cap and the (desktop) page size; this is just "don't
+// mount a desktop-sized page on a phone."
+const MOBILE_PAGE_CEILING = 6;
+
 /**
- * The Pet House — every pet ever generated on this machine, alive at
- * once. The engine's auto state machine wanders them along the bottom
- * of the page; click anywhere to call one over, click a pet to excite it.
+ * The Pet House — the pets you've made, wandering the page.
+ *
+ * Paged, and the paging is a MEMORY bound, not a nicety (SPEC house-scaling).
+ * The house grows without limit, and every rendered card + PetStage actor holds
+ * a decoded sprite sheet, so we mount only ONE page at a time — the card grid AND
+ * the wandering stage both get just the current page. The animation loop already
+ * pauses when the tab is hidden (useAnimationLoop), so a backgrounded house costs
+ * nothing. Page size comes from the server (/api/house), clamped down on mobile.
  *
  * Adopting is a LINK, not an API call (SPEC_DATSPET_HOUSE_ADOPT §0.1). A launch
  * nonce authorizes exactly ONE writeback, so a house of Accept buttons cannot
  * work over the push path at any key or batch size. Instead the user selects
  * here — where the pets are visible — and we hand the selection to DatsMe's
  * import page, which pulls from our export. That page treats `?items=` as a
- * PRESELECTION, so the picking done here survives the trip.
- *
- * Selection, not per-card buttons (§0.2): adopting navigates away, so a per-card
- * link would cost one full-page bounce PER PET — exactly the posture the pull
- * channel exists to replace. One selection, one bounce.
+ * PRESELECTION, so the picking done here survives the trip. Selection is by id,
+ * so it spans pages: a pet picked on page 1 stays picked on page 2.
  */
 export default function HousePage() {
   const [pets, setPets] = useState<PetSummary[] | null>(null);
+  const [house, setHouse] = useState<HouseConfig | null>(null);
   const [session, setSession] = useState<DatsmeSession | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adopting, setAdopting] = useState(false);
   const [error, setError] = useState("");
   const [petToRemove, setPetToRemove] = useState<PetSummary | null>(null);
+  const [page, setPage] = useState(0);
+  const [isNarrow, setIsNarrow] = useState(false);
 
   useEffect(() => {
     // Independent — fire together, don't chain.
     listPets()
       .then(setPets)
       .catch((e) => setError(e instanceof Error ? e.message : "Could not load pets"));
+    getHouseConfig().then(setHouse).catch(() => { /* pager falls back to a default */ });
     getDatsmeSession().then(setSession).catch(() => setSession({ launched: false }));
   }, []);
 
+  // Track a narrow viewport so mobile mounts fewer sheets. matchMedia (not a
+  // width guess) so it tracks rotation and resize; read in an effect so the
+  // static export doesn't touch window during render.
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const sync = () => setIsNarrow(mq.matches);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+
   const canAdopt = Boolean(session?.launched && session?.import_url);
+
+  const pageSize = Math.max(
+    1,
+    isNarrow
+      ? Math.min(house?.page_size ?? 10, MOBILE_PAGE_CEILING)
+      : house?.page_size ?? 10,
+  );
+  const total = pets?.length ?? 0;
+  const pageCount = Math.max(1, Math.ceil(total / pageSize));
+  // Clamp rather than store-and-sync: a removal can shrink the list under the
+  // current page, so the page shown is always derived, never stale.
+  const safePage = Math.min(page, pageCount - 1);
+  const pagedPets = useMemo(
+    () => (pets ?? []).slice(safePage * pageSize, safePage * pageSize + pageSize),
+    [pets, safePage, pageSize],
+  );
 
   function toggle(petId: string) {
     setSelected((cur) => {
@@ -163,8 +207,28 @@ export default function HousePage() {
 
       {pets && pets.length > 0 && (
         <>
+          <div className="mb-3 flex items-center justify-between text-sm" style={{ color: "var(--muted)" }}>
+            <span>
+              {house ? (
+                <>
+                  <strong style={{ color: total >= house.max_pets ? "#f87171" : "var(--heading)" }}>
+                    {total}
+                  </strong>{" "}
+                  / {house.max_pets} pets
+                  {total >= house.max_pets && (
+                    <span className="ml-2" style={{ color: "#f87171" }}>
+                      house full — remove one to make room
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>{total} pets</>
+              )}
+            </span>
+          </div>
+
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-            {pets.map((p) => (
+            {pagedPets.map((p) => (
               <div
                 key={p.id}
                 className="card p-4 text-center"
@@ -233,8 +297,35 @@ export default function HousePage() {
             ))}
           </div>
 
-          {/* All pets, alive. Fixed to the viewport floor by the engine. */}
-          <PetStage pets={pets.map((p) => ({ id: p.id, display_name: p.display_name }))} />
+          {pageCount > 1 && (
+            <div className="mt-5 flex items-center justify-center gap-4">
+              <button
+                type="button"
+                disabled={safePage <= 0}
+                onClick={() => setPage(safePage - 1)}
+                className="rounded-lg border px-4 py-2 text-sm font-semibold transition hover:opacity-85 disabled:opacity-40"
+                style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}
+              >
+                ← Prev
+              </button>
+              <span className="mono text-sm" style={{ color: "var(--muted)" }}>
+                Page {safePage + 1} of {pageCount}
+              </span>
+              <button
+                type="button"
+                disabled={safePage >= pageCount - 1}
+                onClick={() => setPage(safePage + 1)}
+                className="rounded-lg border px-4 py-2 text-sm font-semibold transition hover:opacity-85 disabled:opacity-40"
+                style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}
+              >
+                Next →
+              </button>
+            </div>
+          )}
+
+          {/* Only THIS page's pets are alive — mounting all of them is the memory
+              blowout we're avoiding. Fixed to the viewport floor by the engine. */}
+          <PetStage pets={pagedPets.map((p) => ({ id: p.id, display_name: p.display_name }))} />
         </>
       )}
 
