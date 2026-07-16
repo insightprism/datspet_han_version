@@ -416,6 +416,8 @@ export interface DesignCalibrationStatus {
   reason?: string;
   reviewed: { at: string; notes: string } | null;
   unreviewed_render_count: number;
+  substrate_mismatch?: string[];
+  orphans?: { animal: string; cell: string }[];
   cells: DesignCalibrationCell[];
 }
 

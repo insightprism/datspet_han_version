@@ -193,3 +193,131 @@ def test_predicate_never_imports_the_ml_factory(monkeypatch):
     dc.check()                       # the full predicate path
     dc.effective_strength({"coat": "fluffy"}, "purple", "blue jay")
     assert "pet_factory.factory" not in sys.modules
+
+
+# ── Finding 1: the curated baseline rides on every cell ──────────────────────
+def test_base_rides_on_expected_cells():
+    """The bug: expected_cells dropped rep['base'], making the render tool's
+    catalog-copy branch dead code — a --full/fresh heal would txt2img the tabby
+    base instead of the vetted catalog one, invisibly changing what the fur row
+    measures against."""
+    cells = {(c["animal"], c["cell"]): c for c in dc.expected_cells()}
+    assert cells[("tabby", "_base")]["base"] == "catalog:cat/tabby"
+    assert cells[("tabby", "coat-fluffy")]["base"] == "catalog:cat/tabby"  # designed too
+    assert cells[("bluejay", "_base")]["base"] is None                      # txt2img row
+
+
+def _load_tool():
+    spec = importlib.util.spec_from_file_location(
+        "calibrate_design_axes_tool", os.path.join(REPO, "scripts", "calibrate_design_axes.py"))
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    return tool
+
+
+def test_render_base_takes_catalog_branch_for_tabby_txt2img_for_bluejay(monkeypatch, tmp_path):
+    """The fix, exercised without a GPU: _render_base copies the catalog file for
+    the fur representative and txt2img-renders for the featherless one. Both the
+    ML render_design_still and shutil.copyfile are stubbed — nothing renders."""
+    import pet_factory
+    tool = _load_tool()
+    calls = {"copy": 0, "txt2img": 0}
+    # Setting the attribute directly means `from pet_factory import
+    # render_design_still` finds it WITHOUT triggering the lazy factory import.
+    monkeypatch.setattr(pet_factory, "render_design_still",
+                        lambda *a, **k: (calls.__setitem__("txt2img", calls["txt2img"] + 1) or b"png"),
+                        raising=False)
+    monkeypatch.setattr(tool.shutil, "copyfile",
+                        lambda src, dst: calls.__setitem__("copy", calls["copy"] + 1))
+    monkeypatch.setattr(tool.animal_catalog_mod, "base_image_path",
+                        lambda a, b: tmp_path / "catalog_base.png")
+    (tmp_path / "catalog_base.png").write_bytes(b"x")
+    monkeypatch.setattr(tool, "_RENDERS_DIR", tmp_path / "renders")
+
+    tool._render_base({"animal": "tabby", "species": "tabby", "base": "catalog:cat/tabby"}, 1)
+    assert calls == {"copy": 1, "txt2img": 0}, "fur baseline must COPY the catalog file"
+
+    tool._render_base({"animal": "bluejay", "species": "blue jay", "base": None}, 1)
+    assert calls == {"copy": 1, "txt2img": 1}, "featherless baseline must txt2img"
+
+
+# ── Finding 2: substrate-header drift is CPU-detectable ──────────────────────
+def test_substrate_seed_drift_stales_the_whole_record():
+    matrix = copy.deepcopy(dc.load_matrix())
+    matrix["substrate"]["seed"] = 99999999
+    result = dc.check(matrix, dc.load_manifest())
+    assert result["all_current"] is False
+    assert result["substrate_mismatch"] == ["seed 20260716 → 99999999"]
+    assert all("substrate changed: seed" in c["reason"]
+               for c in result["cells"] if c["verdict"] == "stale")
+
+
+def test_substrate_base_strength_drift_stales_and_names_the_field():
+    """Doubles as the Finding-3 coverage: base_strength is passed as the matrix
+    ARGUMENT (not written to disk), so a predicate that recomputed strength from
+    disk would miss it."""
+    matrix = copy.deepcopy(dc.load_matrix())
+    matrix["substrate"]["base_strength"] = 0.5
+    result = dc.check(matrix, dc.load_manifest())
+    assert result["all_current"] is False
+    assert any("base_strength" in d for d in result["substrate_mismatch"])
+
+
+def test_guard_message_would_name_the_substrate_change():
+    matrix = copy.deepcopy(dc.load_matrix())
+    matrix["substrate"]["zimage_unet"] = "someOtherModel.safetensors"
+    result = dc.check(matrix, dc.load_manifest())
+    stale = [c for c in result["cells"] if c["verdict"] == "stale"]
+    assert stale and "substrate changed" in stale[0]["reason"]
+
+
+# ── Finding 4a: orphans are advice, not a freshness failure ──────────────────
+def test_orphan_manifest_entry_is_reported_but_does_not_fail_freshness():
+    manifest = copy.deepcopy(dc.load_manifest())
+    manifest["cells"].append({
+        "animal": "tabby", "cell": "coat-removed_option", "description": "x",
+        "strength": 0.9, "picks": {"coat": "removed_option"}, "color": "",
+        "accessories": [], "rendered_at": "2026-07-16T00:00:00Z"})
+    result = dc.check(dc.load_matrix(), manifest)
+    assert {"animal": "tabby", "cell": "coat-removed_option"} in result["orphans"]
+    assert result["all_current"] is True, "a removed control is a valid edit, not stale"
+
+
+# ── Finding 4b: ComfyUI version recorded best-effort at render time ──────────
+def test_comfyui_version_helper_reads_system_stats(monkeypatch):
+    """The header records the ComfyUI version at render time (§3). Mock the HTTP
+    call so the LOGIC is provable without a live ComfyUI; a failure yields None
+    (absence stays honest) rather than raising."""
+    import urllib.request
+    tool = _load_tool()
+
+    class _Resp:
+        def __init__(self, body): self._b = body
+        def read(self): return self._b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    # _comfyui_version does a function-local `import urllib.request`, which binds
+    # the same cached module object we patch here.
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda url, timeout=0: _Resp(b'{"system": {"comfyui_version": "0.27.0"}}'))
+    assert tool._comfyui_version() == "0.27.0"
+
+    def _boom(*a, **k):
+        raise OSError("comfyui down")
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+    assert tool._comfyui_version() is None       # never raises; absence is honest
+
+
+# ── Finding 4d: the clamp-parity invariant (min_strength ≤ 0.9) ──────────────
+def test_no_axis_exceeds_the_strength_cap():
+    """Clamp parity: app.py raises by min_strength AFTER its 0.9 cap without
+    re-capping, while effective_strength caps at 0.9 LAST — they diverge only if
+    an axis declares min_strength > 0.9. The admin validator already forbids it;
+    this pins the calibration side of the same bound so the parity can't silently
+    break under a future axis."""
+    from pet_factory import design_axes as da
+    for key in da._load()["order"]:
+        ms = da.axis_composition(key)["min_strength"]
+        assert ms is None or ms <= 0.9, \
+            f"{key}: min_strength {ms} > 0.9 would diverge effective_strength from /api/preview"

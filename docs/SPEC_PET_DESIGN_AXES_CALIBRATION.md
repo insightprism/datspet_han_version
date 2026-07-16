@@ -1,10 +1,45 @@
 # SPEC — Design-Axes Recalibration (the re-runnable pass, and the reminder that tells you when)
 
-**Status:** proposed, rev.4 (2026-07-16)
+**Status:** proposed, rev.5 (2026-07-16)
 **Extends:** `SPEC_PET_DESIGN_AXES` §8 Phase 3 (the one-time calibration pass) — this spec makes
 that pass a permanent, incremental, self-reminding tool instead of a one-shot script.
 **Integrates with:** `SPEC_PET_DESIGN_AXES_ADMIN` (implemented 2026-07-16) — §6 gives the admin
 surface one endpoint + one badge so a look-owner edit surfaces its own recalibration need.
+
+**Rev.5 changelog (post-implementation review — defects found against the shipped code,
+each verified to reproduce before the fix):**
+1. **Substrate drift is now actually CPU-detectable** (§1 substrate row). rev.2 promised
+   "manifest header ≠ matrix.json declaration → everything stale," but `check()` never
+   compared them — a seed edit read `all_current: True`. `check()` now diffs the header
+   against the declaration field-by-field (`seed`, `base_strength`, `zimage_unet`) and,
+   on any mismatch, stales every measured cell with a `substrate changed: …` reason and a
+   top-level `substrate_mismatch`. All three surfaces show it (`--check`, guard test,
+   admin banner). The render tool refuses an *incremental* run on a header mismatch and
+   points at `--full` — a substrate change is a full-re-render event — closing the
+   compounding bug where `cmd_render` blindly stamped the new substrate onto old renders.
+2. **The curated baseline rides on every cell** (§3). `expected_cells()` dropped
+   `rep["base"]`, so the render tool's `catalog:` copy branch was dead code: a `--full` or
+   fresh-checkout heal (renders are gitignored) would txt2img the tabby baseline instead
+   of copying the vetted `cat/tabby/base.png` — invisible to the predicate (a `_base`
+   composes to species/null either way) but it changes what the fur row *measures* fragments
+   against. `base` now rides on every expected cell.
+3. **The strength recompute honors the passed matrix** (§0.1). `check(matrix=…)` fed
+   `matrix` to `expected_cells` but `effective_strength` re-read `base_strength` from disk,
+   so a caller varying the substrate as an argument got a mixed answer. `base_strength`
+   now threads through `compose_cell`/`effective_strength` (disk fallback preserved,
+   signature backward-compatible so the render tool's import and the identity-parity test
+   still hold). The redundant per-axis loop in `effective_strength` is gone —
+   `compose_design`'s returned `min_strength` already folds every non-default picked axis's
+   minimum, so the loop only duplicated it.
+4. **Smaller gaps:** orphan manifest cells (an option/axis removed) are now reported as
+   cleanup advice — never failing the freshness gate — and pruned (row + PNG) on the next
+   render (§1 gets an "option/axis removed" row); the ComfyUI version is recorded
+   best-effort from `/system_stats` at render time (§3), informational and never compared;
+   the admin banner now fires on ANY non-current cell, so a stale combo/`_base` (which
+   carries no axis and lights no per-axis pill) is still surfaced; a guard test pins every
+   axis's `min_strength ≤ 0.9` (the clamp-parity bound `effective_strength` and
+   `/api/preview` share); and the review-stamp key is documented as `{at, notes}` to match
+   the code (§2).
 
 **Rev.4 changelog (pre-implementation — the strength-recompute gap):**
 1. **The cell strength is a TWO-SOURCE formula, and it is the predicate's — not the render
@@ -123,7 +158,8 @@ not assumed):**
 | New **axis** (Tier 2: material, aura, …) | all that axis's option cells *missing* | one column of the matrix (~minutes) |
 | New **surface class** (e.g. `shell` for turtles) | `known_surfaces()` has a surface with no `matrix.json` representative → **check fails with "add a representative"**; once added, all its cells *missing* | one row of the matrix (~minutes) |
 | **Fragment / clause_slot / position / min_strength edit** | affected cells *stale* (recomposed description or strength differs from manifest) | just the touched cells |
-| **Substrate change** — seed, base strength, expected `zimage_unet` (all `matrix.json` edits), or a `compose_design` ordering change | manifest header ≠ `matrix.json` declaration (CPU-detectable), or mass description drift → **everything stale**. A ComfyUI upgrade is recorded in the header at render time but is NOT CPU-detectable — the render tool warns on its next run | full matrix (~13 min GPU) + full human re-review |
+| **Option / axis REMOVED** | its manifest entry is now an *orphan* (no expected cell) — reported as cleanup advice, NOT a freshness failure; the next render prunes the row + PNG | zero (auto-pruned) |
+| **Substrate change** — seed, base strength, or `zimage_unet` (all `matrix.json` edits), or a `compose_design` ordering change | manifest header ≠ `matrix.json` declaration → `check()` stales **every** measured cell with a `substrate changed: …` reason + a top-level `substrate_mismatch` (CPU-detectable, shown on all three surfaces); a `compose_design` change instead shows as mass description drift. A ComfyUI upgrade is recorded in the header at render time but is NOT CPU-comparable — it surfaces after the fact | full matrix (~13 min GPU) via `--full` + full human re-review |
 | New **animal or breed** on an existing surface | **nothing** — axes are calibrated per surface, not per animal; a corgi is a catalog tag | zero |
 | Features that never reach the composed prompt | **nothing** | zero |
 
@@ -153,9 +189,10 @@ records. Modes:
 - **`--sheet`** — build one contact-sheet PNG per animal from the current renders (PIL
   montage, labels from cell keys) — the artifact the human actually reviews; §8 Phase 3
   said it from the start: the GPU is cheap, the eyeballing is the real cost.
-- **`--mark-reviewed`** — stamp the manifest header (`reviewed: {date, notes}`) after the
-  human has eyeballed the sheet against the Tier C bar (`SPEC_PET_DESIGN_AXES` §12.4).
-  Renders newer than the stamp ⇒ `--check` reports "rendered but unreviewed."
+- **`--mark-reviewed`** — stamp the manifest header (`reviewed: {at, notes}`, `at` being
+  the ISO-8601 UTC-Z time) after the human has eyeballed the sheet against the Tier C bar
+  (`SPEC_PET_DESIGN_AXES` §12.4). Renders (per-cell `rendered_at`) newer than the stamp's
+  `at` ⇒ `--check` reports "rendered but unreviewed."
 
 The staleness predicate, the expected-matrix builder, and the strength function
 (`effective_strength`, rev.4) are **importable pure functions in
@@ -206,11 +243,14 @@ it runs on the GPU dev box) to refuse a render whose live model disagrees with
   the recipe, and a re-derived one that composes even one word differently marks every
   combo cell stale on day one.
 - **`pet_factory/design_axes/calibration/manifest.json`** (committed) — the record:
-  substrate header (seed, base strength, `zimage_unet` and the ComfyUI version as observed
-  at render time — the version is informational: fixed-seed determinism doesn't survive a
-  sampler change, and the header is where that shows up after the fact), `reviewed` stamp,
-  and one entry per cell: `{animal, cell, description, strength, picks, color, accessories,
-  file, rendered_at}`. `rendered_at` (rev.2) is what makes "rendered but unreviewed"
+  substrate header (seed, base strength, `zimage_unet`, and — best-effort — `comfyui`, the
+  version read from `/system_stats` at render time. The first three are COMPARED against
+  `matrix.json` by `check()`; `comfyui` is informational only: fixed-seed determinism
+  doesn't survive a sampler change, and the header is where that shows up after the fact.
+  `comfyui` is absent until the next real render answers — never faked into the committed
+  record), `reviewed` stamp, and one entry per cell: `{animal, cell, description, strength,
+  picks, color, accessories, file, rendered_at}`. `rendered_at` (rev.2) is what makes
+  "rendered but unreviewed"
   computable against the review stamp; its format is ISO-8601 UTC with the `Z` suffix
   (rev.3, `%Y-%m-%dT%H:%M:%SZ`). Small (tens of KB) — this is what CI diffs against.
 - **`_base` cells are expected cells** (rev.3). Each representative (and the unknown
@@ -289,14 +329,18 @@ same reason, so they live (and land) together.
 - **`GET /api/admin/design/calibration-status`** (rev.2 — the implemented router's prefix,
   mounted on `webui/design_admin.py`'s existing router, same gate) — returns the §2
   predicate's output shaped for the badge mapping:
-  `{reviewed: {...}|null, unreviewed_render_count, cells: [{animal, axis, option, cell,
-  verdict, reason}]}` — `axis`/`option` split out per cell (not just the joined cell key)
-  so the Features tab can aggregate verdicts per option without parsing. It imports
-  `design_calibration` **lazily inside the endpoint** (§2's import discipline; the router
-  is imported by `app.py` before `compose_design` exists). No new logic.
+  `{available, reviewed: {at, notes}|null, unreviewed_render_count, substrate_mismatch: […],
+  orphans: […], cells: [{animal, axis, option, cell, verdict, reason}]}` — `axis`/`option`
+  split out per cell (not just the joined cell key) so the Features tab can aggregate
+  verdicts per option without parsing. It imports `design_calibration` **lazily inside the
+  endpoint** (§2's import discipline; the router is imported by `app.py` before
+  `compose_design` exists) and degrades to `{available: false, cells: []}` when the record
+  is absent (a fresh checkout) rather than 500-ing the admin list.
 - The axes admin list renders an **"uncalibrated" badge** on any option with a missing or
-  stale cell, and a page-level banner naming the §5 command. The badge is read-time
-  derived state — the admin never sets or clears it by hand (decision 0.2).
+  stale cell, and a page-level banner that fires on ANY non-current cell — including a
+  stale combo or `_base`, which carry no axis and so light no per-axis pill (rev.5) — and
+  on a `substrate_mismatch`. The badge is read-time derived state — the admin never sets
+  or clears it by hand (decision 0.2).
 - Prod is read-only for this surface (mirrors motion admin), and the pool/prod boxes have
   no local GPU path — recalibration is a dev-box act; prod only ever *displays* status.
 
@@ -323,8 +367,16 @@ same reason, so they live (and land) together.
 - **Strength parity (rev.4):** the render tool and the predicate compute a cell's strength
   through the *same* `design_calibration.effective_strength` — asserted by importing the
   symbol in both, the way the admin/guard validator parity is asserted. A test pins the
-  colour-word case (`effective_strength({}, "purple", "blue jay") == 0.9`) so the
-  two-source formula can't regress to the axis-only half.
+  colour-word case (`effective_strength({}, "purple", "blue jay") == 0.9`) so the formula
+  can't regress. **Clamp-parity bound (rev.5):** a guard test pins every registry axis's
+  `min_strength ≤ 0.9` — the point where `effective_strength`'s final `min(0.9, …)` and
+  `/api/preview`'s post-cap `max` would diverge.
+- **Substrate + baseline + orphans (rev.5):** a seed/base_strength edit passed as the
+  matrix ARGUMENT stales the whole record and names the field (also proving
+  `effective_strength` honors the argument, not disk); `expected_cells` carries `base` on
+  every cell and `_render_base` takes the catalog branch for the fur representative and
+  txt2img for the featherless one (both render calls stubbed — CPU-only); an orphan
+  manifest entry is reported but does not fail freshness.
 - **Manifest schema:** header requires seed + base strength + `zimage_unet` (matching
   `matrix.json`'s declaration); every cell entry carries description + strength (the two
   staleness inputs) and `rendered_at` (the review-stamp input) — a cell without them

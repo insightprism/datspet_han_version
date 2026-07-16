@@ -57,32 +57,38 @@ def load_manifest() -> dict:
 # ---------------------------------------------------------------------------
 # The strength formula (§0.1 / rev.4) — the ONE definition, imported by the tool.
 # ---------------------------------------------------------------------------
-def effective_strength(picks: Optional[dict], color: str, species: str) -> float:
-    """Replicate /api/preview's clamp exactly: start at base_strength, raise to
-    any picked axis's declared min_strength (ignoring default picks), then max
-    with compose_design's returned min_strength (the colour-word/species
-    conflict), clamped to ≤ 0.9. Pure-CPU."""
+def effective_strength(picks: Optional[dict], color: str, species: str,
+                       base_strength: Optional[float] = None) -> float:
+    """Replicate /api/preview's clamp: start at base_strength, then max with
+    compose_design's returned min_strength, clamped to ≤ 0.9. Pure-CPU.
+
+    compose_design's min_strength ALREADY folds every non-default picked axis's
+    declared min_strength (it maxes them as it composes, skipping default picks)
+    AND the colour-word/species conflict — so ONE max covers both. An earlier
+    version also looped the picked axes here to re-derive the axis half; that
+    duplicated compose_design's own folding (Finding 4e) and is gone.
+
+    `base_strength` overrides the disk matrix's value — the caller (check) passes
+    the matrix it was handed, so a test can vary the substrate as an ARGUMENT
+    without writing to disk (Finding 3); None falls back to the disk matrix."""
     import app  # lazy — see the module docstring
-    base = load_matrix()["substrate"]["base_strength"]
-    strength = float(base)
-    for axis_key, option_key in (picks or {}).items():
-        ms = da.axis_composition(axis_key)["min_strength"]
-        if ms and not da.is_default(axis_key, option_key):
-            strength = max(strength, float(ms))
-    # The colour-word/species conflict lives in compose_design, not the axis data.
+    base = base_strength if base_strength is not None else load_matrix()["substrate"]["base_strength"]
     _, _, conflict = app.compose_design(species, color, [], picks or {}, "")
+    strength = float(base)
     if conflict:
         strength = max(strength, float(conflict))
     return min(0.9, strength)
 
 
-def compose_cell(species: str, color: str, accessories: list, picks: dict) -> tuple[str, float]:
+def compose_cell(species: str, color: str, accessories: list, picks: dict,
+                 base_strength: Optional[float] = None) -> tuple[str, float]:
     """The (description, strength) a cell composes to under the current code —
     the two staleness inputs. compose_design owns the description; effective_
-    strength owns the clamp."""
+    strength owns the clamp. `base_strength` threads the caller's matrix through
+    (Finding 3) rather than re-reading disk."""
     import app  # lazy
     description, _, _ = app.compose_design(species, color, list(accessories), picks or {}, "")
-    return description, effective_strength(picks, color, species)
+    return description, effective_strength(picks, color, species, base_strength)
 
 
 # ---------------------------------------------------------------------------
@@ -158,12 +164,18 @@ def expected_cells(matrix: Optional[dict] = None) -> list[dict]:
 
     cells: list[dict] = []
     for rep in reps:
-        animal, species, surface = rep["animal"], rep["species"], rep["surface"]
+        animal, species, surface, base = rep["animal"], rep["species"], rep["surface"], rep["base"]
+        # `base` rides on EVERY cell (Finding 1): the render tool reads it off the
+        # cell dict to choose the baseline (a curated catalog copy vs a txt2img
+        # archetype). Dropping it here made the tool's `catalog:` branch dead code,
+        # so a --full/fresh heal would txt2img the tabby base instead of the vetted
+        # one — invisible to the predicate (a _base composes to species/null either
+        # way), but it changes what the fur row MEASURES against.
         # The undesigned baseline (§3): no composition ran, so description is the
         # species verbatim and strength is null — the one place a null is legal.
         cells.append({"animal": animal, "cell": "_base", "species": species,
-                      "surface": surface, "picks": {}, "color": "", "accessories": [],
-                      "is_base": True})
+                      "surface": surface, "base": base, "picks": {}, "color": "",
+                      "accessories": [], "is_base": True})
         # Every non-default option of every axis this animal is offered.
         for axis in da.axes_for_surface(surface):
             for opt in axis["options"]:
@@ -171,7 +183,7 @@ def expected_cells(matrix: Optional[dict] = None) -> list[dict]:
                     continue
                 cells.append({
                     "animal": animal, "cell": f"{axis['axis']}-{opt['key']}",
-                    "species": species, "surface": surface,
+                    "species": species, "surface": surface, "base": base,
                     "picks": {axis["axis"]: opt["key"]},
                     "color": "", "accessories": [], "is_base": False})
         # The combos.
@@ -179,8 +191,9 @@ def expected_cells(matrix: Optional[dict] = None) -> list[dict]:
             spec = combo_spec(combo, surface)
             cells.append({
                 "animal": animal, "cell": f"combo-{combo}", "species": species,
-                "surface": surface, "picks": spec["picks"], "color": spec["color"],
-                "accessories": spec["accessories"], "is_base": False})
+                "surface": surface, "base": base, "picks": spec["picks"],
+                "color": spec["color"], "accessories": spec["accessories"],
+                "is_base": False})
     return cells
 
 
@@ -193,31 +206,62 @@ def _strength_eq(a, b) -> bool:
     return abs(float(a) - float(b)) < _EPS
 
 
+_SUBSTRATE_FIELDS = ("seed", "base_strength", "zimage_unet")
+
+
+def substrate_mismatch(manifest: dict, matrix: dict) -> list[str]:
+    """Field-by-field diff of the manifest's substrate header against
+    matrix.json's declaration (Finding 2). Non-empty ⇒ the record was measured
+    on a different substrate; spec §1 says that stales EVERYTHING, and — unlike
+    the render-tool's live-model check — it is CPU-detectable, so the predicate,
+    the guard test, and the admin badge all see it here (one knower)."""
+    header = manifest.get("substrate", {}) or {}
+    decl = matrix.get("substrate", {}) or {}
+    return [f"{f} {header.get(f)} → {decl.get(f)}"
+            for f in _SUBSTRATE_FIELDS if header.get(f) != decl.get(f)]
+
+
 def check(matrix: Optional[dict] = None, manifest: Optional[dict] = None) -> dict:
-    """The whole verdict: per-cell current/missing/stale + the review-stamp
-    status. CPU-only. Shape (§6): {reviewed, unreviewed_render_count, all_current,
+    """The whole verdict: per-cell current/missing/stale + orphans + the
+    substrate/review status. CPU-only. Shape (§6): {reviewed,
+    unreviewed_render_count, all_current, substrate_mismatch, orphans,
     cells: [{animal, axis, option, cell, verdict, reason}]}."""
     matrix = matrix or load_matrix()
     manifest = manifest if manifest is not None else load_manifest()
     by_key = {(c["animal"], c["cell"]): c for c in manifest.get("cells", [])}
     reviewed = manifest.get("reviewed")
     reviewed_at = reviewed.get("at") if isinstance(reviewed, dict) else None
+    base_strength = matrix.get("substrate", {}).get("base_strength")
+
+    # A substrate change stales every measured cell at once (§1). It reads from
+    # the passed matrix, so a caller can vary the substrate as an argument.
+    sub_diffs = substrate_mismatch(manifest, matrix)
+    sub_reason = f"substrate changed: {'; '.join(sub_diffs)}" if sub_diffs else ""
 
     results = []
+    expected_keys = set()
     unreviewed = 0
     for exp in expected_cells(matrix):
         key = (exp["animal"], exp["cell"])
+        expected_keys.add(key)
         axis, option = _split_cell(exp["cell"])
         got = by_key.get(key)
         if got is None:
             results.append({**_ident(exp, axis, option), "verdict": "missing",
                             "reason": "never measured"})
             continue
+        if sub_diffs:
+            # The whole record was measured on a different substrate — every
+            # present cell is stale regardless of its recomposed values.
+            results.append({**_ident(exp, axis, option), "verdict": "stale",
+                            "reason": sub_reason})
+            continue
         if exp["is_base"]:
             exp_desc, exp_strength = exp["species"], None
         else:
             exp_desc, exp_strength = compose_cell(
-                exp["species"], exp["color"], exp["accessories"], exp["picks"])
+                exp["species"], exp["color"], exp["accessories"], exp["picks"],
+                base_strength)
         reasons = []
         if got.get("description") != exp_desc:
             reasons.append(f"description: {got.get('description')!r} → {exp_desc!r}")
@@ -229,9 +273,19 @@ def check(matrix: Optional[dict] = None, manifest: Optional[dict] = None) -> dic
         results.append({**_ident(exp, axis, option), "verdict": verdict,
                         "reason": "; ".join(reasons)})
 
+    # Orphans (Finding 4a): manifest entries with no expected cell — a removed
+    # option/axis leaves dead weight (+ a zombie in the sheet). Reported as
+    # cleanup advice; NOT counted against freshness (removing a control is a
+    # valid edit, not a stale measurement). cmd_render prunes them.
+    orphans = [{"animal": c["animal"], "cell": c["cell"]}
+               for c in manifest.get("cells", [])
+               if (c["animal"], c["cell"]) not in expected_keys]
+
     return {
         "reviewed": reviewed,
         "unreviewed_render_count": unreviewed,
+        "substrate_mismatch": sub_diffs,
+        "orphans": orphans,
         "all_current": all(r["verdict"] == "current" for r in results),
         "cells": results,
     }

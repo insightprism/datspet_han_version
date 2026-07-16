@@ -47,6 +47,18 @@ function staleAxisKeys(status: DesignCalibrationStatus | null): Set<string> {
   return stale;
 }
 
+/**
+ * Whether ANYTHING needs recalibration — including combo and _base cells, which
+ * carry no axis and so never light a per-axis pill (Finding 4c). Without this,
+ * a stale combo would leave the page with no reminder at all. A substrate change
+ * (whole-record stale) also lands here.
+ */
+function anyStale(status: DesignCalibrationStatus | null): boolean {
+  if (!status?.available) return false;
+  return (status.substrate_mismatch?.length ?? 0) > 0
+    || status.cells.some((c) => c.verdict !== "current");
+}
+
 function blankAxis(): DesignAxisFile {
   return {
     _doc: "",
@@ -181,6 +193,7 @@ export default function DesignAdminPage() {
 
   const writable = !!list?.writable;
   const stale = staleAxisKeys(calibration);
+  const needsRecal = anyStale(calibration);
 
   return (
     <main>
@@ -217,11 +230,15 @@ export default function DesignAdminPage() {
 
       {notice && <div className="mono mb-4 text-sm" style={{ color: "var(--green)" }}>{notice}</div>}
 
-      {tab === "features" && stale.size > 0 && (
+      {tab === "features" && needsRecal && (
         <div className="mono mb-4 rounded-lg border p-3 text-xs" style={{ background: "rgba(251,146,60,0.1)", color: "var(--orange)", borderColor: "rgba(251,146,60,0.35)" }}>
           <div className="mb-1 font-semibold">
-            {stale.size} {stale.size > 1 ? "axes need" : "axis needs"} recalibration —
-            an option was added or a fragment changed since the last render.
+            {calibration?.substrate_mismatch?.length
+              ? "The render substrate changed — the whole calibration record is stale."
+              : stale.size > 0
+                ? `${stale.size} ${stale.size > 1 ? "axes need" : "axis needs"} recalibration — `
+                  + "an option was added or a fragment changed since the last render."
+                : "A combo or baseline cell needs recalibration since the last render."}
           </div>
           <div style={{ color: "var(--muted)" }}>Re-measure on a dev box, then review the sheets:</div>
           <code className="mt-1 block select-all rounded px-2 py-1" style={{ background: "#0c0c0c", color: "var(--heading)" }}>{HEAL_COMMAND}</code>

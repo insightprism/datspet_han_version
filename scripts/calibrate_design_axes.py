@@ -34,6 +34,7 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 REPO = Path(__file__).resolve().parent.parent
 for p in (str(REPO / "webui"), str(REPO)):
@@ -60,6 +61,12 @@ def _write_manifest(manifest: dict) -> None:
 # ---------------------------------------------------------------------------
 def cmd_check() -> int:
     result = dc.check()
+    if result["substrate_mismatch"]:
+        print("SUBSTRATE CHANGED — the whole record is stale:")
+        for d in result["substrate_mismatch"]:
+            print(f"    {d}")
+        print("  Re-render everything: "
+              ".venv/bin/python scripts/calibrate_design_axes.py --full\n")
     order = {"stale": 0, "missing": 1, "current": 2}
     cells = sorted(result["cells"], key=lambda c: (order[c["verdict"]], c["animal"], c["cell"]))
     n_bad = sum(1 for c in cells if c["verdict"] != "current")
@@ -74,6 +81,11 @@ def cmd_check() -> int:
         print("    source pet_env.sh && .venv/bin/python scripts/calibrate_design_axes.py")
     else:
         print(f"all {len(cells)} cells current.")
+    # Orphans are cleanup advice, not a freshness failure (§4a).
+    if result["orphans"]:
+        names = ", ".join(f"{o['animal']}/{o['cell']}" for o in result["orphans"])
+        print(f"{len(result['orphans'])} orphan cell(s) (option/axis removed): {names}")
+        print("    a render run prunes them; or delete their rows + PNGs by hand.")
     stamp = result["reviewed"]
     if not stamp:
         print("NOT REVIEWED — after healing, eyeball the sheets and run --mark-reviewed.")
@@ -97,6 +109,35 @@ def _require_matching_model() -> None:
         sys.exit(f"live model {factory.ZIMAGE_UNET!r} != matrix.json declaration "
                  f"{declared!r} — a model swap is a --full substrate change; edit "
                  f"matrix.json's zimage_unet deliberately, then re-render everything.")
+
+
+def _require_matching_substrate(manifest: dict, matrix: dict) -> None:
+    """Refuse an INCREMENTAL render when the manifest's substrate header
+    disagrees with matrix.json (Finding 2): a substrate change stales the whole
+    record, so incrementally healing a few cells against a new seed/strength
+    would leave a mixed-substrate manifest. --full is the substrate-change path
+    (it rebuilds the header from the declaration)."""
+    diffs = dc.substrate_mismatch(manifest, matrix)
+    if diffs:
+        sys.exit("manifest substrate != matrix.json declaration: "
+                 + "; ".join(diffs)
+                 + "\n  a substrate change is a full re-render — run with --full.")
+
+
+def _comfyui_version() -> Optional[str]:
+    """Best-effort ComfyUI version from /system_stats, recorded in the header at
+    render time (§3) — purely informational (the predicate never compares it;
+    fixed-seed determinism can't survive a sampler change, and this is where
+    that shows up after the fact). None on any failure, so it never breaks a
+    render; absence stays honest until a reachable ComfyUI answers."""
+    import os
+    import urllib.request
+    url = os.environ.get("PET_FACTORY_COMFY_URL", "http://localhost:19953")
+    try:
+        with urllib.request.urlopen(f"{url}/system_stats", timeout=4) as r:
+            return json.loads(r.read()).get("system", {}).get("comfyui_version")
+    except Exception:
+        return None
 
 
 def _base_png_path(animal: str) -> Path:
@@ -129,7 +170,10 @@ def _render_designed(exp: dict, seed: int):
     from pet_factory import render_design_still
     base_png = _base_png_path(exp["animal"])
     if not base_png.is_file():
-        # The base is the reference every design redraws; render it first.
+        # Belt-and-braces: the render loop already processes _base cells first
+        # (is_base sorts ahead), so in normal flow the base exists by now. If it
+        # somehow doesn't, render it — `exp` now carries `base` (Finding 1), so
+        # this takes the correct catalog/txt2img branch rather than the dead one.
         _render_base(exp, seed)
     description, _, _ = app.compose_design(
         exp["species"], exp["color"], list(exp["accessories"]), exp["picks"], "")
@@ -152,6 +196,7 @@ def cmd_render(full: bool) -> int:
         manifest = _fresh_manifest(matrix)
     else:
         manifest = dc.load_manifest()
+        _require_matching_substrate(manifest, matrix)   # Finding 2
 
     verdicts = {(c["animal"], c["cell"]): c for c in dc.check(matrix, manifest)["cells"]}
     cells_by_key = {(c["animal"], c["cell"]): c for c in manifest["cells"]}
@@ -159,6 +204,7 @@ def cmd_render(full: bool) -> int:
     # _base cells first — every designed cell redraws off its animal's base.
     expected = dc.expected_cells(matrix)
     expected.sort(key=lambda e: (e["animal"], 0 if e["is_base"] else 1))
+    expected_keys = {(e["animal"], e["cell"]) for e in expected}
 
     n = 0
     for exp in expected:
@@ -180,10 +226,26 @@ def cmd_render(full: bool) -> int:
         n += 1
         print(f"  rendered {exp['animal']}/{exp['cell']}  s={strength}  «{desc}»")
 
+    # Prune orphans (Finding 4a): a manifest entry with no expected cell is a
+    # removed option/axis — drop its row AND its PNG so the record and the
+    # sheets stop carrying a zombie.
+    pruned = 0
+    for key in [k for k in cells_by_key if k not in expected_keys]:
+        row = cells_by_key.pop(key)
+        png = REPO / row.get("file", "")
+        if png.is_file():
+            png.unlink()
+        pruned += 1
+        print(f"  pruned orphan {key[0]}/{key[1]}")
+
     manifest["cells"] = sorted(cells_by_key.values(), key=lambda c: (c["animal"], c["cell"]))
-    manifest["substrate"] = matrix["substrate"]
+    # The header now provably matches the declaration (full rebuilt it; incremental
+    # refused otherwise), so recording it is safe — plus the observed ComfyUI
+    # version (§3, best-effort informational).
+    manifest["substrate"] = {**matrix["substrate"], "comfyui": _comfyui_version()}
     _write_manifest(manifest)
-    print(f"\nrendered {n} cell(s); manifest updated.")
+    print(f"\nrendered {n} cell(s)" + (f", pruned {pruned} orphan(s)" if pruned else "")
+          + "; manifest updated.")
     return 0
 
 
