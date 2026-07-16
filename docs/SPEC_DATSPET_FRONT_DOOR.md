@@ -158,6 +158,17 @@ GET /api/integrations/login-launch?activity=<activity_id>&return=<path>
 - **CSRF note:** this is a state-light GET (it inserts an `IntegrationNonce`, as every mint
   does) reachable by top-level navigation — the same shape as an OAuth authorize endpoint. The
   worst a forced navigation achieves is launching the victim into *their own* DatsPet session.
+
+**Amendment (2026-07-16) — `POST /launch` gained the `return` path too.** The JSON body now
+accepts an optional `return_path` (e.g. `"/house"`), validated by the same `_safe_return` and
+appended by a shared `_append_return(launch_url, return_path)` helper that the GET
+login-launch/admin-launch bounces also use — one place for validation + encoding, no drift.
+Invalid/absent → param omitted, partner default landing, identical to the GET semantics. First
+consumer: the DatsMe pet-settings **“🏠 Visit Pet House”** button (`return_path: "/house"`),
+which reuses the Design-a-pet button's mint + in-place consent-dialog flow and lands the user
+signed-in on their own house. No DatsPet-side change — §3.1 already honors `return=/house`
+(covered by `webui/tests/test_front_door.py`). Host test:
+`api/tests/test_front_door_launch.py::test_post_launch_honors_return_path`.
   Accepted; documented here so it isn't "discovered" later.
 
 ### 2.2 `web/src/app/integrations/consent/page.tsx` (new, partner-generic)
