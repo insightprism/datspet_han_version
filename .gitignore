@@ -25,3 +25,4 @@ pet_env.local.sh
 # Reference material, not source — keep on disk, out of git.
 docs/*.html
 docs/*_files/
+calibration_snapshot_*/

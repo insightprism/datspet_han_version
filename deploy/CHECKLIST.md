@@ -97,6 +97,16 @@ See **A5**. This is the sharpest edge in the whole procedure.
       handler calls: **the fleet rolls FIRST, and the engine rolls WITH the handler.**
       Each node imports `pet_factory` from its **own clone**, so shipping the handler
       alone leaves nodes on the old signature.
+
+      ⚠️ **ARMED for the first deploy carrying `ca46e38` (design axes).** Both handlers'
+      param schema widened (`animal`/`description` maxLength 250 → **600**) because axis
+      picks make composed prompts longer than 250. A node still on the old handler will
+      **reject a maximal design as schema-invalid** — 100%-green gates, per-job failures,
+      the exact 2026-07-15 shape. The widening is backward-compatible (600 accepts
+      everything 250 did), so the safe order is: `pool-install-handler` on **every** node
+      any time BEFORE the web tier ships — then verify per A6's own rule: the unit is
+      actually up AND a real job of the new shape (a 3-axis design preview) succeeds.
+      Delete this block after that deploy's C1 passes.
       *(2026-07-15: `pet_preview` v2 went out; `omen-pet`'s clone was stale; 100% of jobs
       died with `render_design_still() missing 2 required positional arguments` while the
       gate stayed green. And `pool-install-handler --restart` printed "restarted" when the
