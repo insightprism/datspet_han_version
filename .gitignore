@@ -26,3 +26,4 @@ pet_env.local.sh
 docs/*.html
 docs/*_files/
 calibration_snapshot_*/
+calibration_renders/

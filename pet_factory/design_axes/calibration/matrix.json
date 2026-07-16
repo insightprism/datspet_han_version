@@ -1,0 +1,15 @@
+{
+  "_doc": "The calibration matrix as data (SPEC_PET_DESIGN_AXES_CALIBRATION §3). Maps each design surface to one representative animal the axes are measured on, plus the fixed unknown-surface probe. The expected matrix is DERIVED from this + the live registry: every non-default option of every axis applicable to a representative's surface, one _base baseline per animal, and the combo cells. A surface in design_axes.known_surfaces() with no representative here fails the freshness check — the half-formed-entry rule applied to calibration (add a representative when you add a surface class). The `substrate` block is the render substrate DECLARED as data so the CPU-only gate can detect a change without importing the ML stack: changing the seed, base strength, or zimage_unet is a deliberate stale-the-world edit, and the render tool refuses to run when the live factory.ZIMAGE_UNET disagrees with the declaration here. Combo recipes are lifted verbatim from the preserved scratchpad script (calibration_snapshot_20260716/calibrate_axes.py); their names live here, their composition lives in design_calibration.combo_spec.",
+  "substrate": {
+    "seed": 20260716,
+    "base_strength": 0.85,
+    "zimage_unet": "zImageTurbo_turbo.safetensors"
+  },
+  "representatives": {
+    "fur":      { "key": "tabby",   "species": "tabby",     "base": "catalog:cat/tabby" },
+    "feathers": { "key": "bluejay", "species": "blue jay" },
+    "scales":   { "key": "python",  "species": "python" }
+  },
+  "unknown_probe": { "key": "unknown", "species": "a clockwork octopus" },
+  "combos": ["color_only", "stack", "stack_strong"]
+}

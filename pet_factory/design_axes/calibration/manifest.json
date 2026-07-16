@@ -1,0 +1,1095 @@
+{
+ "substrate": {
+  "seed": 20260716,
+  "base_strength": 0.85,
+  "zimage_unet": "zImageTurbo_turbo.safetensors"
+ },
+ "reviewed": {
+  "at": "2026-07-16T18:01:41Z",
+  "notes": "Phase 3 (2026-07-16) adopted + 3-cell 0.9 heal (scales-patterned, tabby/python combo-stack). All 76 cells reviewed against Tier C: live, non-destructive, subject-preserving."
+ },
+ "cells": [
+  {
+   "animal": "bluejay",
+   "cell": "_base",
+   "description": "blue jay",
+   "strength": null,
+   "picks": {},
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/_base.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "body-fat",
+   "description": "chubby and round blue jay",
+   "strength": 0.9,
+   "picks": {
+    "body": "fat"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/body-fat.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "body-thin",
+   "description": "slender and slim blue jay",
+   "strength": 0.9,
+   "picks": {
+    "body": "thin"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/body-thin.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "combo-color_only",
+   "description": "vivid purple blue jay, recolored entirely purple",
+   "strength": 0.9,
+   "picks": {},
+   "color": "purple",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/combo-color_only.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "combo-stack",
+   "description": "spotted vivid purple blue jay, with iridescent shimmering plumage, with a grumpy scowling expression wearing a wizard hat, recolored entirely purple",
+   "strength": 0.9,
+   "picks": {
+    "pattern": "spotted",
+    "expression": "grumpy",
+    "plumage": "iridescent"
+   },
+   "color": "purple",
+   "accessories": [
+    "wizard hat"
+   ],
+   "extra": "",
+   "file": "calibration_renders/bluejay/combo-stack.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "combo-stack_strong",
+   "description": "spotted chubby and round vivid purple blue jay, with iridescent shimmering plumage, with a grumpy scowling expression wearing a wizard hat, recolored entirely purple",
+   "strength": 0.9,
+   "picks": {
+    "pattern": "spotted",
+    "expression": "grumpy",
+    "plumage": "iridescent",
+    "body": "fat"
+   },
+   "color": "purple",
+   "accessories": [
+    "wizard hat"
+   ],
+   "extra": "",
+   "file": "calibration_renders/bluejay/combo-stack_strong.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "expression-grumpy",
+   "description": "blue jay, with a grumpy scowling expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "grumpy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/expression-grumpy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "expression-happy",
+   "description": "blue jay, with a happy smiling expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "happy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/expression-happy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "expression-mischievous",
+   "description": "blue jay, with a mischievous grinning expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "mischievous"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/expression-mischievous.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "expression-sleepy",
+   "description": "blue jay, with sleepy half-closed eyes",
+   "strength": 0.85,
+   "picks": {
+    "expression": "sleepy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/expression-sleepy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "expression-wide_eyed",
+   "description": "blue jay, with big wide curious eyes",
+   "strength": 0.85,
+   "picks": {
+    "expression": "wide_eyed"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/expression-wide_eyed.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "pattern-ombre",
+   "description": "ombre-shaded blue jay",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "ombre"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/pattern-ombre.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "pattern-patches",
+   "description": "patch-patterned blue jay",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "patches"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/pattern-patches.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "pattern-spotted",
+   "description": "spotted blue jay",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "spotted"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/pattern-spotted.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "pattern-striped",
+   "description": "striped blue jay",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "striped"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/pattern-striped.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "pattern-tuxedo",
+   "description": "tuxedo-patterned blue jay",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "tuxedo"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/pattern-tuxedo.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "plumage-downy",
+   "description": "blue jay, with soft downy feathers",
+   "strength": 0.9,
+   "picks": {
+    "plumage": "downy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/plumage-downy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "plumage-glossy",
+   "description": "blue jay, with glossy sleek feathers",
+   "strength": 0.9,
+   "picks": {
+    "plumage": "glossy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/plumage-glossy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "plumage-iridescent",
+   "description": "blue jay, with iridescent shimmering plumage",
+   "strength": 0.9,
+   "picks": {
+    "plumage": "iridescent"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/plumage-iridescent.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "bluejay",
+   "cell": "plumage-ruffled",
+   "description": "blue jay, with ruffled feathers",
+   "strength": 0.9,
+   "picks": {
+    "plumage": "ruffled"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/bluejay/plumage-ruffled.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "_base",
+   "description": "python",
+   "strength": null,
+   "picks": {},
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/_base.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "body-fat",
+   "description": "chubby and round python",
+   "strength": 0.9,
+   "picks": {
+    "body": "fat"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/body-fat.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "body-thin",
+   "description": "slender and slim python",
+   "strength": 0.9,
+   "picks": {
+    "body": "thin"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/body-thin.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "combo-color_only",
+   "description": "vivid purple python, recolored entirely purple",
+   "strength": 0.85,
+   "picks": {},
+   "color": "purple",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/combo-color_only.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "combo-stack",
+   "description": "spotted vivid purple python, with glossy polished scales, with a grumpy scowling expression wearing a wizard hat, recolored entirely purple",
+   "strength": 0.9,
+   "picks": {
+    "pattern": "spotted",
+    "expression": "grumpy",
+    "scales": "glossy"
+   },
+   "color": "purple",
+   "accessories": [
+    "wizard hat"
+   ],
+   "extra": "",
+   "file": "calibration_renders/python/combo-stack.png",
+   "rendered_at": "2026-07-16T18:00:39Z"
+  },
+  {
+   "animal": "python",
+   "cell": "combo-stack_strong",
+   "description": "spotted chubby and round vivid purple python, with glossy polished scales, with a grumpy scowling expression wearing a wizard hat, recolored entirely purple",
+   "strength": 0.9,
+   "picks": {
+    "pattern": "spotted",
+    "expression": "grumpy",
+    "scales": "glossy",
+    "body": "fat"
+   },
+   "color": "purple",
+   "accessories": [
+    "wizard hat"
+   ],
+   "extra": "",
+   "file": "calibration_renders/python/combo-stack_strong.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "expression-grumpy",
+   "description": "python, with a grumpy scowling expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "grumpy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/expression-grumpy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "expression-happy",
+   "description": "python, with a happy smiling expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "happy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/expression-happy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "expression-mischievous",
+   "description": "python, with a mischievous grinning expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "mischievous"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/expression-mischievous.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "expression-sleepy",
+   "description": "python, with sleepy half-closed eyes",
+   "strength": 0.85,
+   "picks": {
+    "expression": "sleepy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/expression-sleepy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "expression-wide_eyed",
+   "description": "python, with big wide curious eyes",
+   "strength": 0.85,
+   "picks": {
+    "expression": "wide_eyed"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/expression-wide_eyed.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "pattern-ombre",
+   "description": "ombre-shaded python",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "ombre"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/pattern-ombre.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "pattern-patches",
+   "description": "patch-patterned python",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "patches"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/pattern-patches.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "pattern-spotted",
+   "description": "spotted python",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "spotted"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/pattern-spotted.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "pattern-striped",
+   "description": "striped python",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "striped"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/pattern-striped.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "pattern-tuxedo",
+   "description": "tuxedo-patterned python",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "tuxedo"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/pattern-tuxedo.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "scales-glossy",
+   "description": "python, with glossy polished scales",
+   "strength": 0.9,
+   "picks": {
+    "scales": "glossy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/scales-glossy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "scales-matte",
+   "description": "python, with matte textured scales",
+   "strength": 0.9,
+   "picks": {
+    "scales": "matte"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/scales-matte.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "python",
+   "cell": "scales-patterned",
+   "description": "python, with intricately patterned scales",
+   "strength": 0.9,
+   "picks": {
+    "scales": "patterned"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/python/scales-patterned.png",
+   "rendered_at": "2026-07-16T18:00:30Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "_base",
+   "description": "tabby",
+   "strength": null,
+   "picks": {},
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/_base.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "body-fat",
+   "description": "chubby and round tabby",
+   "strength": 0.9,
+   "picks": {
+    "body": "fat"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/body-fat.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "body-thin",
+   "description": "slender and slim tabby",
+   "strength": 0.9,
+   "picks": {
+    "body": "thin"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/body-thin.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "coat-curly",
+   "description": "tabby, with curly fur",
+   "strength": 0.9,
+   "picks": {
+    "coat": "curly"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/coat-curly.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "coat-fluffy",
+   "description": "tabby, with fluffy fur",
+   "strength": 0.9,
+   "picks": {
+    "coat": "fluffy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/coat-fluffy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "coat-long_haired",
+   "description": "tabby, with long flowing fur",
+   "strength": 0.9,
+   "picks": {
+    "coat": "long_haired"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/coat-long_haired.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "coat-shaggy",
+   "description": "tabby, with shaggy unkempt fur",
+   "strength": 0.9,
+   "picks": {
+    "coat": "shaggy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/coat-shaggy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "coat-sleek",
+   "description": "tabby, with sleek smooth fur",
+   "strength": 0.9,
+   "picks": {
+    "coat": "sleek"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/coat-sleek.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "combo-color_only",
+   "description": "vivid purple tabby, recolored entirely purple",
+   "strength": 0.85,
+   "picks": {},
+   "color": "purple",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/combo-color_only.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "combo-stack",
+   "description": "spotted vivid purple tabby, with fluffy fur, with a grumpy scowling expression wearing a wizard hat, recolored entirely purple",
+   "strength": 0.9,
+   "picks": {
+    "pattern": "spotted",
+    "expression": "grumpy",
+    "coat": "fluffy"
+   },
+   "color": "purple",
+   "accessories": [
+    "wizard hat"
+   ],
+   "extra": "",
+   "file": "calibration_renders/tabby/combo-stack.png",
+   "rendered_at": "2026-07-16T18:00:49Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "combo-stack_strong",
+   "description": "spotted chubby and round vivid purple tabby, with fluffy fur, with a grumpy scowling expression wearing a wizard hat, recolored entirely purple",
+   "strength": 0.9,
+   "picks": {
+    "pattern": "spotted",
+    "expression": "grumpy",
+    "coat": "fluffy",
+    "body": "fat"
+   },
+   "color": "purple",
+   "accessories": [
+    "wizard hat"
+   ],
+   "extra": "",
+   "file": "calibration_renders/tabby/combo-stack_strong.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "expression-grumpy",
+   "description": "tabby, with a grumpy scowling expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "grumpy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/expression-grumpy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "expression-happy",
+   "description": "tabby, with a happy smiling expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "happy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/expression-happy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "expression-mischievous",
+   "description": "tabby, with a mischievous grinning expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "mischievous"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/expression-mischievous.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "expression-sleepy",
+   "description": "tabby, with sleepy half-closed eyes",
+   "strength": 0.85,
+   "picks": {
+    "expression": "sleepy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/expression-sleepy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "expression-wide_eyed",
+   "description": "tabby, with big wide curious eyes",
+   "strength": 0.85,
+   "picks": {
+    "expression": "wide_eyed"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/expression-wide_eyed.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "pattern-ombre",
+   "description": "ombre-shaded tabby",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "ombre"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/pattern-ombre.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "pattern-patches",
+   "description": "patch-patterned tabby",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "patches"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/pattern-patches.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "pattern-spotted",
+   "description": "spotted tabby",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "spotted"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/pattern-spotted.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "pattern-striped",
+   "description": "striped tabby",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "striped"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/pattern-striped.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "tabby",
+   "cell": "pattern-tuxedo",
+   "description": "tuxedo-patterned tabby",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "tuxedo"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/tabby/pattern-tuxedo.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "_base",
+   "description": "a clockwork octopus",
+   "strength": null,
+   "picks": {},
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/_base.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "body-fat",
+   "description": "chubby and round a clockwork octopus",
+   "strength": 0.9,
+   "picks": {
+    "body": "fat"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/body-fat.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "body-thin",
+   "description": "slender and slim a clockwork octopus",
+   "strength": 0.9,
+   "picks": {
+    "body": "thin"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/body-thin.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "combo-color_only",
+   "description": "vivid purple a clockwork octopus, recolored entirely purple",
+   "strength": 0.85,
+   "picks": {},
+   "color": "purple",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/combo-color_only.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "combo-stack",
+   "description": "spotted vivid purple a clockwork octopus, with a grumpy scowling expression wearing a wizard hat, recolored entirely purple",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "spotted",
+    "expression": "grumpy"
+   },
+   "color": "purple",
+   "accessories": [
+    "wizard hat"
+   ],
+   "extra": "",
+   "file": "calibration_renders/unknown/combo-stack.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "combo-stack_strong",
+   "description": "spotted chubby and round vivid purple a clockwork octopus, with a grumpy scowling expression wearing a wizard hat, recolored entirely purple",
+   "strength": 0.9,
+   "picks": {
+    "pattern": "spotted",
+    "expression": "grumpy",
+    "body": "fat"
+   },
+   "color": "purple",
+   "accessories": [
+    "wizard hat"
+   ],
+   "extra": "",
+   "file": "calibration_renders/unknown/combo-stack_strong.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "expression-grumpy",
+   "description": "a clockwork octopus, with a grumpy scowling expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "grumpy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/expression-grumpy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "expression-happy",
+   "description": "a clockwork octopus, with a happy smiling expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "happy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/expression-happy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "expression-mischievous",
+   "description": "a clockwork octopus, with a mischievous grinning expression",
+   "strength": 0.85,
+   "picks": {
+    "expression": "mischievous"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/expression-mischievous.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "expression-sleepy",
+   "description": "a clockwork octopus, with sleepy half-closed eyes",
+   "strength": 0.85,
+   "picks": {
+    "expression": "sleepy"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/expression-sleepy.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "expression-wide_eyed",
+   "description": "a clockwork octopus, with big wide curious eyes",
+   "strength": 0.85,
+   "picks": {
+    "expression": "wide_eyed"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/expression-wide_eyed.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "pattern-ombre",
+   "description": "ombre-shaded a clockwork octopus",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "ombre"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/pattern-ombre.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "pattern-patches",
+   "description": "patch-patterned a clockwork octopus",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "patches"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/pattern-patches.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "pattern-spotted",
+   "description": "spotted a clockwork octopus",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "spotted"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/pattern-spotted.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "pattern-striped",
+   "description": "striped a clockwork octopus",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "striped"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/pattern-striped.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  },
+  {
+   "animal": "unknown",
+   "cell": "pattern-tuxedo",
+   "description": "tuxedo-patterned a clockwork octopus",
+   "strength": 0.85,
+   "picks": {
+    "pattern": "tuxedo"
+   },
+   "color": "",
+   "accessories": [],
+   "extra": "",
+   "file": "calibration_renders/unknown/pattern-tuxedo.png",
+   "rendered_at": "2026-07-16T00:00:00Z"
+  }
+ ]
+}
