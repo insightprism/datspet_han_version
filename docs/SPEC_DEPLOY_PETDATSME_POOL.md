@@ -204,7 +204,7 @@ Three network hops matter and all are already proven individually:
 ## 2. Non-goals / explicit scope guards
 
 - **No new GPU-sharing system.** We use the deployed `shared_gpu_cpu` pool. The older
-  `DESIGN_SPEC_HETZNER_LOCAL_GPU.md` (a bespoke queue) is **superseded for this deployment** —
+  `archive/DESIGN_SPEC_HETZNER_LOCAL_GPU.md` (a bespoke queue) is **superseded for this deployment** —
   do not build it. (It remains valid history; this spec chooses the pool per the 2026-07-12
   decision.)
 - **No change to `shared_gpu_cpu`.** DatsPet is a *client* of the pool. The independence
@@ -837,4 +837,4 @@ page.) These are the mechanics §C.5 codifies for the online tiers.
 - DNS (all → `5.161.70.13`, incl. `pet.datsme.me`): `dig`.
 - DPP integration (built + hardened): `docs/SPEC_DATSPET_DPP_INTEGRATION.md`,
   `docs/RUNBOOK_DPP_E2E.md`.
-- Superseded bespoke-queue design: `docs/DESIGN_SPEC_HETZNER_LOCAL_GPU.md` (do not build).
+- Superseded bespoke-queue design: `docs/archive/DESIGN_SPEC_HETZNER_LOCAL_GPU.md` (do not build).

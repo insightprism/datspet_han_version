@@ -23,7 +23,7 @@ code.
 A UX consolidation of the designer surface. Sits under
 **`docs/SPEC_PET_DESIGNER_PLATFORM.md`** (the umbrella — landing, themed pages, base
 catalog, tiers) and reuses the movement layer of **`docs/SPEC_MOTION_PROFILES.md`**
-(implemented) and the fleet-cutover discipline of **`docs/SPEC_V3_FLEET_ROLLOUT.md`**.
+(implemented) and the fleet-cutover discipline of **`docs/archive/SPEC_V3_FLEET_ROLLOUT.md`**.
 Grounded against the working tree at `3c2c071`; line numbers cited below were verified
 against that tree and predate this spec's own changes.
 
@@ -1471,7 +1471,7 @@ file I/O, no GPU, no fleet gate); (d) the long-tail txt2img branch last, behind 
 **This blocks *deploying* the long-tail branch, not *building* it.** Dev is `PET_GEN_BACKEND=local`, so
 steps 1–7 are fully buildable and testable without it. Curated animals never need it at all.
 
-Clone `docs/SPEC_V3_FLEET_ROLLOUT.md`. v2 ⊇ v1 for existing b64 traffic (so rollback is safe), but
+Clone `docs/archive/SPEC_V3_FLEET_ROLLOUT.md`. v2 ⊇ v1 for existing b64 traffic (so rollback is safe), but
 **new no-b64 traffic hard-fails 422 on a v1 node** — the same mixed-window 422 hazard v3 had
 (runbook `:53-55`), with a *smaller* blast radius: the failure is a visible error on the long-tail
 path, never a wrong pet. The real mitigation is **ordering, not a freeze** — no no-b64 traffic exists

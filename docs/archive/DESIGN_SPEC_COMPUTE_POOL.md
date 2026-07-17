@@ -1,3 +1,8 @@
+> **ARCHIVED 2026-07-16 — implemented; authority moved to the pool's own repo.** The compute pool
+> was built as the sibling `../shared_gpu_cpu` project, whose own docs are the authority. The
+> DatsPet-side contract lives in `webui/pool_client.py` (the one adapter) and
+> `docs/SPEC_DEPLOY_PETDATSME_POOL.md`. Kept as the origin design study.
+
 # Design Spec — Compute Pool: an app-callable GPU/CPU pool over your own machines
 
 **Status:** design. Generalizes the proven pet_factory queue+worker pattern into a

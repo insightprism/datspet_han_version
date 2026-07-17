@@ -1,3 +1,9 @@
+> **ARCHIVED 2026-07-16 — never built; superseded.** This isolation-first plan to embed pet
+> generation *inside* the DatsMe host was never implemented. The shipped architecture inverts it:
+> DatsPet is a standalone DPP partner app that DatsMe launches and receives writebacks from — see
+> `docs/SPEC_DATSPET_DPP_INTEGRATION.md` (live, E2E-verified) and `docs/SPEC_DATSPET_HOUSE_ADOPT.md`.
+> Kept for historical reference; do not implement from this document.
+
 # Integrating pet_factory into DatsMe — cleanly and safely
 
 A concrete plan for a **"Make your own pet"** feature, written against DatsMe's

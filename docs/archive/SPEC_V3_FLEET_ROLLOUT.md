@@ -1,3 +1,8 @@
+> **ARCHIVED 2026-07-16 — executed to completion 2026-07-13.** One-shot runbook for the v3
+> handler fleet cutover; the rollout is done and live. The *living* fleet-roll-first discipline
+> it instantiated is `deploy/CHECKLIST.md` item A6 (with `docs/SPEC_DEPLOY_PETDATSME_POOL.md`
+> §B.1 as the hazard log). Kept as the record of that rollout.
+
 # SPEC — v3 `pet_factory` handler fleet rollout (the motion-profiles cutover)
 
 **Status:** Design — **Rev.1** (2026-07-13), **execution-ready**. Grounded against the live fleet.

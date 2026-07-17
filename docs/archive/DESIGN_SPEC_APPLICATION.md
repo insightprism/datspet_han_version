@@ -1,3 +1,10 @@
+> **ARCHIVED 2026-07-16 — point-in-time snapshot, no longer current.** Descriptive spec of the
+> v1.0.0 library; the code has evolved past it (three-function public API, `pose_frames`
+> generalization, `motion_profiles/`/`animal_catalog/`/`design_axes/`/`tiers/` registries, the
+> design-axes designer). Current authority: `docs/SPEC_MOTION_PROFILES.md`,
+> `docs/SPEC_PET_DESIGNER_FLOW.md`, `docs/SPEC_PET_DESIGN_AXES.md`, and the CLAUDE.md
+> architecture section. Kept for historical reference.
+
 # Design Spec — the pet_factory application
 
 **Status:** descriptive spec of the application as it exists today (v1.0.0). Written

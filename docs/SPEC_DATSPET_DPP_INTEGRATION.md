@@ -499,7 +499,7 @@ scheduler, monitoring.
 4. Draft retention when launched: per-user drafts currently purged on next
    generation — keep, or give DatsMe users a small persistent workshop?
 5. Where DatsPet runs in production (Hetzner CPU box can't generate — the GPU
-   queue/worker split from `DESIGN_SPEC_HETZNER_LOCAL_GPU.md` applies to the
+   queue/worker split from `archive/DESIGN_SPEC_HETZNER_LOCAL_GPU.md` applies to the
    generation path; the partner endpoints themselves are CPU-only).
 
 ## 10. Consistency checks (global engineering rules)

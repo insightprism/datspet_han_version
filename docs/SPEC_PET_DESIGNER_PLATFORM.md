@@ -350,7 +350,7 @@ pool app key (server-side secrets never reach the client, deploy spec Finding 9)
 
 ## 8. Build order (Rev.4 — synced to the implemented motion layer; General never regresses)
 
-0. **PREREQUISITE — v3 fleet rollout** per **`docs/SPEC_V3_FLEET_ROLLOUT.md`** (the standalone
+0. **PREREQUISITE — v3 fleet rollout** per **`docs/archive/SPEC_V3_FLEET_ROLLOUT.md`** (the standalone
    runbook; distills SPEC_DEPLOY_PETDATSME_POOL §B.1 to the exact node commands + gate). **Note
    (Rev.5 correction):** the fleet is now **two pet nodes already live** — `omen-pet` AND
    `dual-nvidia-pet` both serve `pet_factory` today (verified `GET /api/pool`), NOT "Omen first then
@@ -423,5 +423,5 @@ pool app key (server-side secrets never reach the client, deploy spec Finding 9)
 - Credit charge point: `docs/SPEC_DATSPET_DPP_INTEGRATION.md` (`credit_pet_design_cost`, at Accept).
 - Motion/pose layer: `docs/SPEC_MOTION_PROFILES.md`.
 - Fleet cutover discipline: `docs/SPEC_DEPLOY_PETDATSME_POOL.md` §B.1; the concrete v3 runbook (step 0):
-  `docs/SPEC_V3_FLEET_ROLLOUT.md`.
+  `docs/archive/SPEC_V3_FLEET_ROLLOUT.md`.
 - DPP launch deep-link (survives navigation to themed pages): `webui/datsme_integration.py` (`/launch`).

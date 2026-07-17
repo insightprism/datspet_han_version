@@ -1,3 +1,8 @@
+> **ARCHIVED 2026-07-16 — superseded; do not build.** `docs/SPEC_DEPLOY_PETDATSME_POOL.md` §2
+> explicitly supersedes this bespoke-queue deployment design ("do not build") — the shipped
+> deployment routes generation through the shared_gpu_cpu pool instead. Kept as valid history
+> behind that decision.
+
 # Design Spec — Hosting pet_factory: Hetzner front door + local GPU workers
 
 **Status:** design (no code in this repo changes to satisfy it; it specifies how to

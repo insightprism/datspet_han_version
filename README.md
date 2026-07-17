@@ -31,10 +31,10 @@ ways to integrate:
   [`examples/`](examples/). Your backend enqueues `{animal}`; a small worker on
   a GPU box polls the queue, runs `make_pet_zip()`, and uploads the `.zip` back.
 
-> **Full isolation-first integration plan:** see
-> **[DATSME_INTEGRATION.md](DATSME_INTEGRATION.md)** — concrete file layout,
-> route stubs, the feature flag, and a failure-mode table showing DatsMe keeps
-> running normally if this feature breaks, is off, or the GPU box is down.
+> **The shipped DatsMe integration** is the DPP partner architecture — see
+> **[docs/SPEC_DATSPET_DPP_INTEGRATION.md](docs/SPEC_DATSPET_DPP_INTEGRATION.md)**.
+> (An earlier, never-built plan to embed generation inside DatsMe is archived at
+> [docs/archive/DATSME_INTEGRATION.md](docs/archive/DATSME_INTEGRATION.md).)
 
 ### Wiring the result into DatsMe
 
