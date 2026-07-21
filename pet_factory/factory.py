@@ -78,20 +78,36 @@ _REMBG = None
 
 
 def _rembg():
-    """Lazily create the birefnet cutout session. Prefers the GPU (CUDA, ~12x
-    faster) and falls back to CPU automatically if the CUDA libraries aren't
-    available — so it never breaks, just runs slower."""
+    """Lazily create the birefnet cutout session. Prefers the GPU (CUDA, ~12x faster). On a node
+    that declares itself a GPU node (PET_FACTORY_REQUIRE_GPU=1) a SILENT CPU fallback is a
+    misconfiguration, not an acceptable slow path — CPU birefnet blows the pool's watchdog (the
+    2026-07-21 incident; shared_gpu_cpu spec §4.B). onnxruntime does NOT raise when a provider
+    can't load, it just drops it — so we inspect the ACTUAL providers and fail fast, ONCE at
+    session init (never inside prep()'s per-frame try/except, which would swallow it). CPU-only
+    nodes (flag unset) keep the graceful fallback."""
     global _REMBG
     if _REMBG is None:
-        from rembg import new_session
+        import onnxruntime as ort
         try:
-            _REMBG = new_session("birefnet-general-lite",
-                                 providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
-            print(f"[pet_factory] rembg providers: {_REMBG.inner_session.get_providers()}", flush=True)
-            return _REMBG
-        except Exception as e:
-            print(f"[pet_factory] CUDA cutout unavailable ({e}); using CPU", flush=True)
-        _REMBG = new_session("birefnet-general-lite")
+            # onnxruntime 1.22+ ships CUDA/cuDNN as separate nvidia-*-cu12 wheels but does NOT
+            # add them to the loader path on import — without this preload the CUDA provider .so
+            # cannot dlopen libcublasLt.so.12 etc. and silently falls back to CPU (§4.A). No-op /
+            # harmless on a CPU-only node where those wheels aren't installed.
+            ort.preload_dlls()
+        except Exception:
+            pass
+        from rembg import new_session
+        session = new_session("birefnet-general-lite",
+                              providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+        providers = session.inner_session.get_providers()
+        print(f"[pet_factory] rembg providers: {providers}", flush=True)
+        require_gpu = os.environ.get("PET_FACTORY_REQUIRE_GPU", "").strip() in ("1", "true", "on")
+        if require_gpu and "CUDAExecutionProvider" not in providers:
+            raise RuntimeError(
+                f"birefnet CUDA provider failed to load on a GPU node (providers={providers}); "
+                "check onnxruntime CUDA libs, e.g. libcublasLt.so.12 — refusing to run the cutout "
+                "on CPU where it would exceed the pool watchdog")
+        _REMBG = session
     return _REMBG
 
 
@@ -312,7 +328,8 @@ def _remix_prompt(animal: str) -> str:
 
 def pack_datsme_bundle(pose_frames, breed_id, display_name,
                        frame_size=256, columns=8, fps=12,
-                       pose_roles=None, movement_class="mammalian_quadruped") -> bytes:
+                       pose_roles=None, movement_class="mammalian_quadruped",
+                       on_frame=None) -> bytes:
     """Pack an ordered {pose_name: frame_list} dict into a DatsMe breed bundle
     (.zip bytes): a transparent sprite sheet + manifest.json + package.json.
 
@@ -322,8 +339,13 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
     `animations` map carries each pose's declared `runtime_role` (pose_roles).
     Returns the .zip as bytes — post it to DatsMe's /api/pets/me/upload."""
     pose_roles = pose_roles or {}
+    _rembg()   # eager init so a GPU-required-but-CPU-only node fails fast HERE (§4.B item A),
+               # before the loop — where prep()'s per-frame try/except cannot swallow the error.
+    total_frames = sum(len(f) for f in pose_frames.values()) or 1
+    done_frames = 0
 
     def prep(frames):
+        nonlocal done_frames
         out = []
         for fr in frames:
             orig = fr.convert("RGB")
@@ -336,6 +358,9 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
             cell = _fit_square(result, frame_size)
             cell.putalpha(_fill_holes_alpha(cell.split()[3]))      # close interior holes
             out.append(cell)
+            done_frames += 1
+            if on_frame:                                           # B: per-frame progress so the
+                on_frame(done_frames, total_frames)                # bar moves + the stall timer resets
         return out
 
     # Lay each pose on its own row band; compute its frame indices. Preserves the
@@ -571,6 +596,9 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
     zip_bytes = pack_datsme_bundle(pose_frames, breed_id,
                                    display_name or animal.title(),
                                    pose_roles=pose_roles,
-                                   movement_class=profile.movement_class)
+                                   movement_class=profile.movement_class,
+                                   on_frame=lambda done, total: prog(
+                                       "Cutting out backgrounds & packing…",
+                                       round(0.85 + 0.14 * done / total, 3)))
     prog("Done!", 1.0)
     return breed_id, zip_bytes

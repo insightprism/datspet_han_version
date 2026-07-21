@@ -168,7 +168,7 @@ class Job:
     # time (§7.3), so nothing has written a job scratch file since — the field was set
     # twice and read nowhere, and /api/generate was mkdir'ing an empty directory on
     # every single build for a 24 h sweep to find.
-    status: str = "queued"          # queued | running | done | error
+    status: str = "queued"          # queued | running | done | error | canceled
     progress: float = 0.0           # 0..1
     message: str = "Waiting for the GPU…"
     breed_id: Optional[str] = None
@@ -180,6 +180,8 @@ class Job:
     # request AT SUBMIT-HANDLER TIME — generation runs on a background thread
     # where the request (and its User-Agent) is gone, so it must be carried here.
     pool_labels: dict = field(default_factory=dict)
+    pool_job_id: Optional[str] = None            # §11: the underlying pool job (set at submit) — for Stop
+    last_client_poll_at: Optional[float] = None  # §C: last GET /api/job = the device-liveness beat
 
     def to_dict(self) -> dict:
         return {
@@ -192,6 +194,7 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 JOBS_LOCK = threading.Lock()
+_CLIENT_IDLE_TTL_S = 20.0   # §C: no /api/job poll for this long → user gone → stop renewing the lease
 
 
 # Accessories that read as plural/paired — no "a/an" article in the prompt.
@@ -348,12 +351,28 @@ def _generate_via_pool(job: Job, *, description: str, reference_image: Optional[
     # mid-generation, startup reattaches to the still-running pool job instead
     # of orphaning it. The row is deleted at either terminal state.
     pool_job_id = pool_client.submit("pet_factory", params, labels=job.pool_labels or None)
+    with JOBS_LOCK:
+        job.pool_job_id = pool_job_id            # §11: enable Stop for this build
+        job.last_client_poll_at = time.time()    # §C: assume the user is present at submit
     db.record_pool_job(
         job_id=job.id, pool_job_id=pool_job_id, description=description,
         display_name=display_name, created_at=job.created_at,
         external_user_id=job.external_user_id)
+
+    def on_tick():
+        # §C decision D-1: renew the pool consumer lease while the user's device is still polling
+        # /api/job; when they go quiet, STOP renewing → the pool lease lapses → consumer_abandoned.
+        with JOBS_LOCK:
+            last = job.last_client_poll_at or job.created_at
+        if time.time() - last < _CLIENT_IDLE_TTL_S:
+            try:
+                pool_client.keepalive(pool_job_id)
+            except pool_client.PoolError:
+                pass
+
     zip_bytes = pool_client.drive_to_result(
-        pool_job_id, on_progress=on_progress, poll_interval=4.0, timeout_s=900.0)
+        pool_job_id, on_progress=on_progress, on_tick=on_tick,
+        poll_interval=4.0, timeout_s=900.0)
     # The bundle carries the breed_id in its manifest; the finalize reads it
     # back, so return "" and let the unpack fill it in.
     return "", zip_bytes
@@ -399,6 +418,12 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
 
         _finalize_pet_from_zip(job, description=description, breed_id=breed_id,
                                zip_bytes=zip_bytes)
+    except pool_client.PoolCanceled:
+        with JOBS_LOCK:
+            job.status = "canceled"
+            job.message = "Stopped."
+            job.finished_at = time.time()
+        db.delete_pool_job(job.id)   # web-terminal → drop the reattach row
     except Exception as e:
         with JOBS_LOCK:
             job.status = "error"
@@ -1281,7 +1306,33 @@ def job_status(job_id: str):
         job = JOBS.get(job_id)
         if not job:
             raise HTTPException(404, "job not found")
+        job.last_client_poll_at = time.time()   # §C: this poll IS the device-liveness heartbeat
         return job.to_dict()
+
+
+@app.post("/api/job/{job_id}/stop")
+def stop_job(job_id: str, request: Request):
+    """§11 user Stop — cancel a build the caller owns. Owner-scoped by DatsMe identity (D-3): a
+    job with no owner (standalone) is stoppable by the standalone caller. Best-effort + idempotent;
+    the drive loop also observes 'canceled' and exits cleanly (mapped to a canceled job)."""
+    owner = datsme_integration.resolve_launch_identity(request)
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if job is None:
+            raise HTTPException(404, "job not found")
+        if job.external_user_id is not None and job.external_user_id != owner:
+            raise HTTPException(403, "not your build")
+        pool_job_id = job.pool_job_id
+    if pool_job_id:
+        try:
+            pool_client.cancel(pool_job_id, reason="user_stopped")
+        except pool_client.PoolError:
+            pass
+    with JOBS_LOCK:
+        if job.status in ("queued", "running"):
+            job.status = "canceled"
+            job.message = "Stopping…"
+    return {"ok": True, "status": "canceled"}
 
 
 def _can_access(row, owner: Optional[str]) -> bool:

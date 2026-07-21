@@ -49,6 +49,11 @@ class PoolError(RuntimeError):
     """Any pool-side failure the web tier should surface as a job error."""
 
 
+class PoolCanceled(PoolError):
+    """The pool job was canceled (user Stop, admin, or consumer-abandonment, §14.1) — a clean
+    stop, NOT a failure. The web tier maps this to a 'canceled' job, never 'error'."""
+
+
 def _req(method: str, path: str, *, body: Optional[dict] = None, timeout: int = 60):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
@@ -89,16 +94,29 @@ def poll(job_id: str) -> dict:
     conversion happens in run_to_result's callback (R5-1)."""
     s = json.load(_req("GET", f"/api/jobs/{job_id}"))
     status = s.get("status", "")
-    if status == "dead":
+    if status == "dead":                     # the web tier's Job has no 'dead' state (Finding 7)
         status = "error"
         if not s.get("error"):
             s["error"] = "the pool gave up on this job (node died and it was not reclaimed)"
     return {
-        "status": status,
+        "status": status,                    # 'canceled' passes through as its own distinct state
         "pct": float(s.get("pct", 0.0)),
         "msg": s.get("msg", ""),
         "error": s.get("error"),
+        "cancel_reason": s.get("cancel_reason"),
     }
+
+
+def cancel(job_id: str, reason: str = "user_stopped") -> None:
+    """Ask the pool to cancel a job we submitted (§14.1). Best-effort & idempotent — a job that has
+    already finished returns its terminal state, which is fine."""
+    _req("POST", f"/api/jobs/{job_id}/cancel", body={"reason": reason})
+
+
+def keepalive(job_id: str) -> None:
+    """Renew the pool consumer lease for a job we own (§10.6). Call while the end user's session is
+    alive; stop calling it (or cancel) when they leave, and the pool abandonment-cancels the job."""
+    _req("POST", f"/api/jobs/{job_id}/keepalive")
 
 
 def result_bytes(job_id: str) -> bytes:
@@ -136,16 +154,24 @@ def drive_to_result(
     job_id: str,
     *,
     on_progress: Optional[Callable[[str, float], None]] = None,
+    on_tick: Optional[Callable[[], None]] = None,
     poll_interval: float = 4.0,
     timeout_s: float = 900.0,
 ) -> bytes:
     """Poll an ALREADY-SUBMITTED pool job to completion and return its bytes.
     Split out of run_to_result so the web tier can persist the pool job id
     between submit and drive — that persisted id is what lets a restarted web
-    tier REATTACH to a job still generating on a worker (Opt-1, spec §A.6)."""
+    tier REATTACH to a job still generating on a worker (Opt-1, spec §A.6).
+
+    on_tick() runs once per poll iteration (§C, decision D-1): the web tier uses it to renew the
+    pool consumer lease while the user is present and to cancel when they leave — all inside this
+    existing thread, no separate reaper. A `canceled` pool status raises PoolCanceled (a clean
+    stop, not an error)."""
     deadline = time.monotonic() + timeout_s
     last_beat = None
     while True:
+        if on_tick is not None:
+            on_tick()
         s = poll(job_id)
         # Beat on any (msg, pct) change — a handler may hold one message while
         # its pct climbs, and gating on the message alone would freeze the bar.
@@ -157,6 +183,8 @@ def drive_to_result(
             last_beat = beat
         if s["status"] == "done":
             return result_bytes(job_id)
+        if s["status"] == "canceled":
+            raise PoolCanceled(s.get("error") or "the build was stopped")
         if s["status"] == "error":
             raise PoolError(s.get("error") or "generation failed on the pool")
         if time.monotonic() >= deadline:
