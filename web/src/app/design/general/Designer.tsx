@@ -50,7 +50,7 @@ import PoseStep from "./PoseStep";
 export default function Designer() {
   const flow = useDesignFlow();
   const { state, dispatch, axes, entitlement, maxPoses, fillReference, makePreview } = flow;
-  const { job, error: jobError, submit, reset, busy, done } = usePetJob();
+  const { job, error: jobError, submit, reset, stop, busy, done } = usePetJob();
   const [options, setOptions] = useState<CatalogBaseOption[] | null>(null);
   // The pending pick lives HERE, not in the dialog, because the dialog unmounts when
   // it closes — and §3.1 requires the chooser to reopen with the previous choice
@@ -110,6 +110,12 @@ export default function Designer() {
   // about to redraw — and only becomes the base when they press the button.
   function acceptPhoto(file: File | null | undefined) {
     if (!file) return;
+    // Drop and paste stay live after the lock (the box never unmounts), so a photo
+    // can arrive while step 1 is locked. Unlock first: otherwise the pending photo
+    // sits on a "🔒 locked in" box whose Draw button is unmounted — a preview of a
+    // decision the page claims is settled, with no way to draw it. Choosing a new
+    // source IS unlocking, the same rule referenceRequested applies.
+    if (state.baseConfirmed) dispatch({ type: "baseUnlocked" });
     choose({
       kind: "upload", file, url: URL.createObjectURL(file),
       strength: DEFAULT_UPLOAD_STRENGTH,
@@ -276,7 +282,13 @@ export default function Designer() {
             <button
               type="button"
               className="btn"
-              disabled={!state.reference || state.referenceBusy}
+              // Locked out while a draw is in flight AND while a pending pick sits
+              // undrawn (a chosen photo before its Draw press): in both states the
+              // box is not showing `state.reference`, and this button commits
+              // `state.reference` — it must never lock something other than what
+              // the user is looking at.
+              disabled={!state.reference || state.referenceBusy
+                        || Boolean(pending && !pendingDrawn)}
               onClick={() => dispatch({ type: "baseAccepted" })}
             >
               Use this animal →
@@ -509,7 +521,7 @@ export default function Designer() {
         artifact={job ? (
           // `bare`: <Step> already IS the card. PetJobResult carries the progress bar
           // too, so this covers the whole 3-minute build, not just its end.
-          <PetJobResult job={job} onReset={reset} bare resetLabel="Design another" />
+          <PetJobResult job={job} onReset={reset} onStop={stop} bare resetLabel="Design another" />
         ) : null}
       >
         {!job && (

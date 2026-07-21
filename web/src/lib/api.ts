@@ -25,7 +25,7 @@ export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
 export interface JobStatus {
   id: string;
   name: string;
-  status: "queued" | "running" | "done" | "error";
+  status: "queued" | "running" | "done" | "error" | "canceled";
   progress: number;
   message: string;
   breed_id: string | null;
@@ -79,6 +79,19 @@ export async function getJob(jobId: string): Promise<JobStatus> {
     throw new Error(data.detail || "Job not found");
   }
   return r.json();
+}
+
+// User-initiated Stop (§11). credentials: "include" so the DatsMe launch cookie travels for the
+// owner check. Best-effort/idempotent server-side — a job that already finished returns terminal.
+export async function stopJob(jobId: string): Promise<void> {
+  const r = await fetch(`${API_URL}/api/job/${encodeURIComponent(jobId)}/stop`, {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.detail || "Could not stop the build");
+  }
 }
 
 export async function listPets(): Promise<PetSummary[]> {

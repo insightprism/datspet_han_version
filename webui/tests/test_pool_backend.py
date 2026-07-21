@@ -439,3 +439,68 @@ def test_pet_preview_v2_leaves_the_gpu_profile_and_watchdog_alone():
     assert pv.METADATA["timeout_s"] == 180
     assert pv.METADATA["preemptible"] == "abort"
     assert pv.METADATA["result_kind"] == "bytes"
+
+
+# ---- Phase 4 — consumer heartbeat + user Stop (§C / §D / §11) ------------------------
+
+def test_pool_client_cancel_and_keepalive_hit_the_right_endpoints(monkeypatch):
+    import pool_client
+    calls = []
+    monkeypatch.setattr(pool_client, "_req",
+                        lambda method, path, **kw: calls.append((method, path, kw.get("body"))))
+    pool_client.cancel("abc123")
+    pool_client.keepalive("abc123")
+    assert calls[0] == ("POST", "/api/jobs/abc123/cancel", {"reason": "user_stopped"})
+    assert calls[1] == ("POST", "/api/jobs/abc123/keepalive", None)
+
+
+def test_drive_to_result_raises_pool_canceled_and_ticks(monkeypatch):
+    import pool_client
+    ticks = []
+    monkeypatch.setattr(pool_client, "poll",
+                        lambda jid: {"status": "canceled", "pct": 50.0, "msg": "Stopping…", "error": None})
+    with pytest.raises(pool_client.PoolCanceled):
+        pool_client.drive_to_result("abc123", on_tick=lambda: ticks.append(1), poll_interval=0)
+    assert ticks, "on_tick must run each poll iteration (the keepalive / abandonment hook)"
+
+
+def test_run_pet_job_maps_pool_canceled_to_canceled(pool_app, monkeypatch):
+    monkeypatch.setattr(pool_app.pool_client, "submit", lambda *a, **k: "pool-jid-cancel")
+
+    def fake_drive(pool_job_id, **kw):
+        raise pool_app.pool_client.PoolCanceled("the build was stopped")
+
+    monkeypatch.setattr(pool_app.pool_client, "drive_to_result", fake_drive)
+    job = pool_app.Job(id="jobcancel0001", name="X")
+    pool_app.run_pet_job(job, description="corgi", reference_image=None)
+    assert job.status == "canceled"          # a stop is a clean terminal state, NOT "error"
+    assert job.message == "Stopped."
+
+
+def test_stop_endpoint_cancels_owned_job(pool_app, monkeypatch):
+    from fastapi.testclient import TestClient
+    captured = {}
+    monkeypatch.setattr(pool_app.pool_client, "cancel",
+                        lambda jid, reason="user_stopped": captured.update(jid=jid, reason=reason))
+    monkeypatch.setattr(pool_app.datsme_integration, "resolve_launch_identity", lambda req: None)
+    job = pool_app.Job(id="jobstop000001", name="X")
+    job.pool_job_id = "pool-jid-stop"
+    job.status = "running"
+    with pool_app.JOBS_LOCK:
+        pool_app.JOBS[job.id] = job
+    r = TestClient(pool_app.app).post(f"/api/job/{job.id}/stop")
+    assert r.status_code == 200 and r.json()["status"] == "canceled"
+    assert captured == {"jid": "pool-jid-stop", "reason": "user_stopped"}
+    assert job.status == "canceled"
+
+
+def test_stop_endpoint_is_owner_scoped(pool_app, monkeypatch):
+    from fastapi.testclient import TestClient
+    monkeypatch.setattr(pool_app.datsme_integration, "resolve_launch_identity", lambda req: "user-Y")
+    job = pool_app.Job(id="jobstop000002", name="X", external_user_id="user-X")
+    job.pool_job_id = "p"
+    job.status = "running"
+    with pool_app.JOBS_LOCK:
+        pool_app.JOBS[job.id] = job
+    r = TestClient(pool_app.app).post(f"/api/job/{job.id}/stop")
+    assert r.status_code == 403

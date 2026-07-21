@@ -20,6 +20,7 @@ import {
 import PetStage from "@/components/PetStage";
 import PetThumbnail from "@/components/PetThumbnail";
 import PoseGallery from "@/components/PoseGallery";
+import ConfirmModal from "@/components/ConfirmModal";
 
 interface Props {
   job: JobStatus;
@@ -34,6 +35,8 @@ interface Props {
    * what that caller wants; the chrome is the caller's own business.
    */
   bare?: boolean;
+  /** User-initiated Stop (§11). When provided, a Stop button shows while the build runs. */
+  onStop?: () => void;
 }
 
 // Elapsed seconds → compact human string. Under a minute reads "12s"; past that,
@@ -45,7 +48,7 @@ function formatElapsed(sec: number): string {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
-export default function PetJobResult({ job, onReset, resetLabel = "Make another", bare = false }: Props) {
+export default function PetJobResult({ job, onReset, resetLabel = "Make another", bare = false, onStop }: Props) {
   const done = job.status === "done";
   // Live elapsed-time counter while the pet is being built. Anchored to when this
   // component first sees a given job.id (generation start, from the user's view) —
@@ -53,6 +56,8 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
   // visibly climbs (proof it's still working) and stops the instant it finishes
   // or errors. Reset per job.id so "Make another" starts the clock fresh.
   const running = job.status === "queued" || job.status === "running";
+  const canceled = job.status === "canceled";
+  const [confirmStop, setConfirmStop] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     setElapsed(0);
@@ -164,6 +169,35 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
           }}
         />
       </div>
+
+      {running && onStop && (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={() => setConfirmStop(true)}
+            className="mono rounded-lg border px-4 py-2 text-sm"
+            style={{ background: "#151515", color: "var(--muted)", borderColor: "var(--line)" }}
+          >
+            Stop
+          </button>
+        </div>
+      )}
+
+      {canceled && (
+        <div className="mt-4">
+          <div className="mono mb-3 text-sm" style={{ color: "var(--muted)" }}>Build stopped.</div>
+          <button type="button" onClick={onReset} className="btn">{resetLabel}</button>
+        </div>
+      )}
+
+      <ConfirmModal
+        open={confirmStop}
+        title="Stop this build?"
+        body="This cancels the pet that's generating — you'll lose what's rendered so far."
+        confirmLabel="Stop build"
+        onConfirm={() => { setConfirmStop(false); onStop?.(); }}
+        onCancel={() => setConfirmStop(false)}
+      />
 
       {done && (
         <>
