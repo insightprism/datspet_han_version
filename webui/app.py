@@ -153,6 +153,12 @@ app.include_router(design_admin.router)
 import ai_admin
 app.include_router(ai_admin.router)
 
+# Settings admin (SPEC_UPLOAD_LIKENESS §2.2, decision 6a): the fourth admin router — a
+# small typed switchboard of runtime feature flags. The first is `upload_isolate` (Phase 3
+# subject isolation, default OFF). DB-backed and runtime-writable, unlike the content admins.
+import settings_admin
+app.include_router(settings_admin.router)
+
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 ALLOWED_IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 
@@ -663,11 +669,11 @@ def _render_still(description: str, request: Request, owner: Optional[str],
         reference_path set  → img2img redraw        (step 1's upload door, step 2's preview)
 
     isolate (SPEC_UPLOAD_LIKENESS §2.2): cut the subject out before the redraw.
-    Only the upload door sets it; step 2's preview leaves it False (its reference is
-    already a clean sprite). LOCAL PATH ONLY in Phase 2 — the pool branch below does
-    NOT forward it yet, so pool-backed uploads are unchanged. Phase 3 adds the
-    `isolate_subject` param + handler v3 behind the §10.1 fleet gate; sending an
-    unknown param to a v2 node is a hard 422, not a no-op.
+    The upload door sets it from the runtime `upload_isolate` flag (default OFF); step 2's
+    preview leaves it False (its reference is already a clean sprite). BOTH backends honour
+    it: the local path passes `isolate=` to render_design_still; the pool path forwards
+    `params["isolate_subject"]` — but ONLY when `isolate` is on, so a default-OFF deploy
+    never sends the v3 param to a v2 node (the switch is the fleet gate — Phase 3).
 
     Both /api/reference and /api/preview call this. Callers must be sync `def`
     handlers (§5.3) — this blocks ~10 s and FastAPI runs sync paths in a threadpool;
@@ -689,6 +695,12 @@ def _render_still(description: str, request: Request, owner: Optional[str],
             # on a v1 node, which is why both nodes must be v2 first (§10.1).
             params["reference_image_b64"] = _encode_reference_image(reference_path)
             params["strength"] = strength
+        if isolate:
+            # Phase 3 (SPEC_UPLOAD_LIKENESS §2.2): the v3 param, sent ONLY when the
+            # `upload_isolate` switch is on. Default OFF means a default-OFF deploy never
+            # sends it — so a v2 node never 422s, and the switch IS the fleet gate. Roll
+            # pet_preview to v3 on every node before flipping the switch in prod.
+            params["isolate_subject"] = True
         try:
             return pool_client.run_to_result(
                 "pet_preview", params,
@@ -916,12 +928,15 @@ def create_reference(
     tmp = PREVIEW_DIR / f"_upload_{uuid.uuid4().hex[:12]}"
     tmp.write_bytes(body)
     try:
-        # isolate=True — the ONE call site that sets it (SPEC_UPLOAD_LIKENESS §2.2).
-        # A photo is a dog-in-a-garden; cut the subject out before the redraw so the
-        # img2img follows the animal, not the lawn. Step 2's preview leaves it False:
-        # its reference is already a clean sprite.
+        # isolate — the ONE call site that sets it (SPEC_UPLOAD_LIKENESS §2.2). A photo
+        # is a dog-in-a-garden; cutting the subject out before the redraw makes the
+        # img2img follow the animal, not the lawn. Gated by the runtime `upload_isolate`
+        # flag (decision 6a, default OFF): the switch is the A/B harness, the fleet gate
+        # (the pool param ships only when on), and the kill-switch. Step 2's preview never
+        # reaches here — its reference is already a clean sprite.
+        isolate = settings_admin.bool_setting("upload_isolate")
         png = _render_still(render_description, request, owner, reference_path=tmp,
-                            strength=redraw_strength, isolate=True)
+                            strength=redraw_strength, isolate=isolate)
     finally:
         tmp.unlink(missing_ok=True)
     # §3.4: a photo carries no reliable surface signal → universal axes only; but a

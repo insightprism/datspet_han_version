@@ -41,7 +41,7 @@ from pathlib import Path
 
 METADATA = {
     "task": "pet_preview",
-    "version": "2",
+    "version": "3",
     # SAME GPU profile as pet_factory, so the CPU-only worker can never claim a preview
     # (R3-3) — a preview redraws through the same ComfyUI img2img pipeline.
     "needs": {"gpu": 1, "vram_gb": 20, "gpu_backend": "cuda", "cpu": 2, "ram_gb": 8},
@@ -62,9 +62,16 @@ METADATA = {
             "description": {"type": "string", "maxLength": 600},
             # Only meaningful alongside a reference — how far the redraw drifts from it.
             "strength": {"type": "number", "minimum": 0.3, "maximum": 0.9},
+            # v3 (SPEC_UPLOAD_LIKENESS §2.2, Phase 3): cut the subject out of the
+            # reference photo before the redraw, so the img2img follows the animal (or
+            # person), not the background. The web tier sends this only when its
+            # `upload_isolate` switch is on, and only for the upload door — step 2's
+            # preview reference is already a clean sprite. Optional; default off. Must be
+            # DECLARED here or a request carrying it 422s (additionalProperties:false).
+            "isolate_subject": {"type": "boolean"},
         },
-        # v2: nothing is required. Neither param alone is nonsense — a bare
-        # description draws an archetype; a reference + description redraws it.
+        # Nothing is required — a bare description draws an archetype; a reference +
+        # description redraws it; isolate_subject only refines an upload redraw.
         "required": [],
         "additionalProperties": False,
     },
@@ -88,8 +95,13 @@ def run(params, ctx):
         ref = Path(ctx.result_dir) / "reference_image"
         ref.write_bytes(raw)
 
+        # v3: isolate the subject first when the web tier asked for it (upload door with
+        # the `upload_isolate` switch on). render_design_still runs the cutout on the
+        # worker's GPU and degrades to the raw photo on any failure — so a VRAM-tight node
+        # falls back rather than erroring (SPEC_UPLOAD_LIKENESS §2.2).
         ctx.progress(10.0, "redrawing your design…")
-        png_bytes = render_design_still(description, str(ref), params.get("strength", 0.85))
+        png_bytes = render_design_still(description, str(ref), params.get("strength", 0.85),
+                                        isolate=bool(params.get("isolate_subject", False)))
     else:
         # Draw the archetype from scratch — step 1's long-tail branch. No strength:
         # there is no source to drift from, and passing one would be a lie.

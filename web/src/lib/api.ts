@@ -554,6 +554,26 @@ export const aiAdmin = {
   test: (): Promise<AiTestResult> => aiFetch("/test", { method: "POST" }),
 };
 
+// ── Settings admin (SPEC_UPLOAD_LIKENESS §2.2, decision 6a) ──────────────────
+// The runtime feature-flag switchboard — one adapter, every flag typed the same.
+export interface AppSetting {
+  key: string;
+  type: "bool";
+  label: string;
+  description: string;
+  value: boolean;
+  default: boolean;
+}
+
+const settingsFetch = (path: string, init?: RequestInit) =>
+  adminApiFetch("/api/admin/settings", path, init);
+
+export const settingsAdmin = {
+  list: (): Promise<{ settings: AppSetting[] }> => settingsFetch(""),
+  set: (key: string, value: boolean): Promise<{ updated: AppSetting }> =>
+    settingsFetch(`/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ value }) }),
+};
+
 // ── The reference layer (SPEC_PET_DESIGNER_FLOW §7.4) ────────────────────────
 //
 // ONE record shape, three endpoints. Every way of starting a pet ends in the same

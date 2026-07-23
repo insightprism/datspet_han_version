@@ -412,15 +412,19 @@ def _load_pool_handler(fname, modname):
     return mod
 
 
-def test_pet_preview_handler_is_v2_with_reference_optional():
-    """SPEC_PET_DESIGNER_FLOW §7.5: v2 makes reference_image_b64 optional so the ONE
-    task serves both of the flow's stills — img2img redraw (step 3, "see my design")
-    and txt2img archetype (step 1's long-tail cache miss, "what does a blue jay look
-    like"). These two fields are exactly what the fleet gate (§10.1) probes for."""
-    pv = _load_pool_handler("pet_preview_handler.py", "pvh_v2")
-    assert pv.METADATA["version"] == "2"
+def test_pet_preview_handler_is_v3_with_isolate_subject():
+    """SPEC_UPLOAD_LIKENESS §2.2 (Phase 3): v3 adds the optional `isolate_subject` param.
+    reference_image_b64 stays optional (v2 ⊇ v1), so the ONE task still serves both stills.
+    additionalProperties:false is why the param must be DECLARED — an undeclared field 422s,
+    which is exactly the fleet gate (§10.1); the web tier sends it only when the
+    `upload_isolate` switch is on, so a default-OFF deploy never trips a v2 node."""
+    pv = _load_pool_handler("pet_preview_handler.py", "pvh_v3")
+    assert pv.METADATA["version"] == "3"
     assert pv.METADATA["params_schema"]["required"] == []
-    assert "reference_image_b64" in pv.METADATA["params_schema"]["properties"]
+    props = pv.METADATA["params_schema"]["properties"]
+    assert "reference_image_b64" in props
+    assert props.get("isolate_subject", {}).get("type") == "boolean"
+    assert pv.METADATA["params_schema"]["additionalProperties"] is False
 
 
 def test_pet_preview_v2_accepts_both_v1_shaped_and_reference_free_params():
@@ -439,6 +443,13 @@ def test_pet_preview_v2_accepts_both_v1_shaped_and_reference_free_params():
         {"reference_image_b64": "YWJj", "description": "purple corgi", "strength": 0.85},
         schema)
     jsonschema.validate({"description": "blue jay"}, schema)   # v2-only — the archetype
+    # v3 — the upload-with-isolation shape.
+    jsonschema.validate(
+        {"reference_image_b64": "YWJj", "description": "parakeet", "strength": 0.85,
+         "isolate_subject": True}, schema)
+    # An UNDECLARED key still 422s — additionalProperties:false survived the edit.
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate({"description": "x", "bogus": 1}, schema)
 
 
 def test_pet_preview_v2_leaves_the_gpu_profile_and_watchdog_alone():

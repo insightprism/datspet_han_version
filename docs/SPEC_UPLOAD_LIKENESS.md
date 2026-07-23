@@ -1,13 +1,13 @@
 # SPEC — "That's my dog": making the upload door produce a recognisable pet
 
-**Status:** proposed, 2026-07-23. **Rev.7 — the captioner comes back, as a consumer.** Rev.5
-sent the AI out of the plan ("fix the pipeline first, measure, then decide"); Phases 1–2 shipped
-and a real uploader's parakeet — redrawn as a mammal because the noun field was empty — supplied
-the evidence §8 asked for. So AI returns as **lever E / Phase 2.1 (§2.5): automate the noun.** It
-does not fold the AI engine into this spec — `SPEC_DATSPET_AI_ENGINE` stays a **separate** spec
-that this one merely consumes (two purposes + one call site). Rev.6 remains the record of the
-code-accurate corrections (the isolation function's real name, the raise-failure row, the no-GPU
-guard suite).
+**Status:** proposed, 2026-07-23. **Rev.8 — Phase 3 becomes a runtime toggle.** Rev.7 brought the
+captioner back as a consumer (Phase 2.1, now built + proven live). Rev.8 reshapes Phase 3: rather
+than hard-wire isolation on, it lands behind a runtime `upload_isolate` admin switch (default
+OFF) that is at once the A/B test harness, the fleet gate, and the kill-switch (§2.2, decision
+6a) — and it corrects the VRAM story from the Phase 3 review (the cutout is ~1 GB and fails soft;
+the OOM was build-model contention, not a requirement; the fix is an optional `WORKER_TASKS`
+partition, no pool code — decision 6b). Rev.5–7 remain the record of the AI decision and the
+code-accurate corrections.
 
 **Dependency is per-phase.** **Phases 1, 2, 3 depend on nothing new** — no model, no API key.
 **Phase 2.1 (E) depends on `SPEC_DATSPET_AI_ENGINE`** (built, and on `DATSPET_AI_API_KEY`); with
@@ -233,20 +233,28 @@ it is the reason the isolate step runs **exactly once per upload** and never per
 2026-07-21 incident was CPU birefnet across *every frame of every pose*; one call is a different
 order of magnitude. Measure the actual CPU latency in Phase 2 rather than inheriting the number.)
 
-**VRAM contention is real and was observed on the dev box (Phase 2 finding).** The isolate step
-runs *before* the img2img, so on a node where ComfyUI is already resident (~21 GB of a 24 GB
-3090 in the local dev stack), birefnet's ~800 MB allocation can **OOM** — and it did, on the
-first real-hardware run. The `try/except` caught it and degraded to the raw photo (exactly §2.2),
-so the door stayed up — **but a node that OOMs every time silently no-ops the whole lever via
-the fallback.** This is not a correctness bug; it is a *"did the benefit actually happen"*
-question, and it is Phase 2's to answer:
+**VRAM: a *contention* problem, not a *requirement* (corrected, Phase 3 review).** The cutout
+model is birefnet-general-lite — **214 MB on disk, ~1 GB in VRAM** — so isolation itself is
+cheap. What is expensive is what *shares* the card: a pool worker's ComfyUI can be holding the
+~28 GB of **Wan build-models** resident from a prior build, and *that* is what left no room when
+birefnet OOM'd on the dev box. A card doing *only* previews holds just Z-Image (~14 GB) + the
+cutout (~1 GB) ≈ 15 GB of 24 GB — it never OOMs. So the fix is **not** "a bigger card"; it is
+"don't run the ~1 GB cutout on a card that is also holding 28 GB of build-models."
 
-> Measure the **fallback rate** on a representative node, not just the visual quality. A cutout
-> that logs `subject isolation failed` on most uploads is a lever that isn't pulling. If the rate
-> is high, the levers are (in order): run the cutout on the second GPU where the box has one
-> (`CUDA_VISIBLE_DEVICES`, proven to work on the dev box); or free ComfyUI's VRAM around the
-> one-shot cutout; or accept CPU birefnet for this single call (one image, inside the 180 s
-> budget — unlike the 2026-07-21 per-frame case).
+**And it cannot destabilise the pool** — three reasons, each verified: the pool
+(`shared_gpu_cpu`) code is untouched; the handler change is additive (`v3 ⊇ v2`); and the cutout
+**degrades, never raises** (the `try/except` falls back to the raw photo). The worst case is
+"isolation silently skips on that request" — which is exactly today's prod behaviour, so the
+floor is "no worse than now," never "broken."
+
+**The mitigation already exists in the pool, and is optional/deferred.** The fleet is three
+RTX 3090s (`pool_handler/README.md`); each pool worker is pinned to one card by
+`CUDA_VISIBLE_DEVICES` and advertises only the tasks in its `WORKER_TASKS` filter
+(`shared_gpu_cpu/pool_worker`). So partitioning — `WORKER_TASKS=pet_preview` on one card
+(previews + cutout, never Wan), `pet_factory` on the others (builds) — is an **env-var change on
+worker launch, no pool code**, and it makes previews *faster* besides (a dedicated card, no
+queueing behind a 3-min build). Don't do it on faith: ship Phase 3, watch the
+`subject isolation failed` rate on a real preview worker, add the partition only if it is high.
 
 **The cost nobody has priced yet: cropping spends resolution.** The client already downscales
 uploads to 1024 px on the long edge (`prepareUpload.ts`), and the crop happens *after* that on
@@ -272,21 +280,30 @@ The caller knows it holds a photograph; the function must not guess. So `isolate
 exactly one path — `app.py`'s `door == "upload"` branch. This is the engine-vs-content rule
 applied: no branching on where the image came from inside the renderer.
 
-**Threading it, and the deployment gate.** The flag rides `render_design_still(...)` on the local
-path — an additive keyword on a signature that already ends in optionals
-(`description, reference_image=None, strength=None, seed=None`, `factory.py:450`) — and
-`params["isolate_subject"]` on the pool path. **A new pool param is a hard contract change**:
-`pet_preview_handler`'s `params_schema` sets `"additionalProperties": False`
-(`pet_preview_handler.py:69`), so an unknown param is a 422, not a silent no-op. The handler
-goes **v2 → v3** (`METADATA["version"]`, `:44`), and the flow spec records the lesson:
-*"Omitting these two IS the v2 shape — it hard-fails 422 on a v1 node, which is why both nodes
-must be v2 first"* (§10.1, quoted at `app.py:664`). So:
+**The runtime switch — isolation is an admin toggle (default OFF), and the toggle IS the fleet
+gate.** Rather than hard-wire `isolate=True` on the upload branch, Phase 3 reads a runtime flag,
+`upload_isolate`, from a small `app_settings` KV store (`db.py`), surfaced as a switch in a new
+**Settings** admin tab (gated by `require_admin_launch` like the other three tabs). It gates
+BOTH paths: the local `render_design_still(..., isolate=)` and the pool
+`params["isolate_subject"]`. Three things this buys:
 
-> **Build and validate on `PET_GEN_BACKEND=local` first** (direct call, dev box has the GPU),
-> **then** roll the handler to the fleet, **then** enable the pool path. Same fleet gate as §10.1.
+- **It is the A/B test harness.** Upload one photo, draw with the switch OFF, flip it, draw the
+  *same* photo ON, compare. That is the only honest way to measure what isolation is worth (§4),
+  and it works on the **local backend the moment Phase 3 lands** — no fleet deploy required.
+- **It is the fleet gate, for free.** `isolate_subject` is sent on the pool path *only when the
+  switch is on*. Default OFF means a v2 node never sees the new param until an admin deliberately
+  turns it on — so the ordered rollout (roll `pet_preview` to v3 on all three nodes, *then* flip
+  the switch in prod) falls out of the default instead of needing separate ceremony. `v3 ⊇ v2`,
+  so rollback stays safe.
+- **It is the kill-switch.** If isolation ever misbehaves in prod, an admin flips it off — no
+  deploy. This is `tiers/`'s `default_tier` posture (a one-line launch lever) applied to a
+  render-pipeline flag, and it is why the flag lives in the **DB** (always runtime-writable), not
+  a content file (deploy-gated like the other admin surfaces).
 
-v3 ⊇ v2 for existing traffic (the new param is optional and defaults to today's behaviour), so
-rollback is safe — but no `isolate_subject` traffic may ship until every node is v3.
+The handler still goes **v2 → v3** (`METADATA["version"]`): `params_schema` sets
+`additionalProperties: false`, so the new `isolate_subject` param must be *declared* or it 422s
+— the §10.1 lesson. Build and validate on `PET_GEN_BACKEND=local` first (the switch alone tests
+it end to end), roll the handler to the fleet, then flip the switch in prod.
 
 ### 2.3 C — say what a good photo is
 
@@ -487,8 +504,8 @@ over a handful of finalists, not over the corpus.
 |---|---|---|
 | **1** | ✅ **DONE** (`f81bb2c`, + the inline-field refinement — decision 3a). **A + C** — the animal is named in the upload door's **own** field (`uploadNoun`), with the quality line under it | anything else. Hours |
 | **2** | ✅ **CODE DONE.** **B (local)** — `_crop_to_subject`, `isolate=` on `_prep_reference_image` → `_base_sprite` → `render_design_still` → `_render_still`, upload branch sets `isolate=True`. 8 guard tests (§7) + the upload-isolates / preview-does-not assertions. Real-GPU verified: cat-in-grass → tight crop on white; a real OOM degraded to the raw photo. **Note: this is live on `PET_GEN_BACKEND=local` ONLY — prod runs `pool`, whose branch does not forward `isolate`, so uploads in prod are unchanged until Phase 3.** **Remaining: the corpus measurement — rows B/A/A+B + the fallback-rate finding above** | the fleet |
-| **2.1** | **E — the captioner (§2.5).** ***Requires `SPEC_DATSPET_AI_ENGINE` built (its phases 1–5) — a separate spec this one only consumes.*** Contribute `image_triage.json` + `pet_likeness.json`; call `call_purpose(image=…)` from `app.py`'s `door == "upload"` branch; prefill `uploadNoun` + extend the redraw prompt with the caption; degrade to the manual field (Phase 1) on any failure or not-an-animal; human's word wins on override. **Web-tier — reaches prod WITHOUT the Phase 3 fleet gate**, and independent of B and D | the AI engine (hard dependency); Phase 3; the fleet; B; D |
-| **3** | **B (pool)** — `isolate_subject` param → `pet_preview_handler` **v3** → roll to the fleet → enable. §10.1 fleet gate. **Before enabling: the §2.2 VRAM-contention decision is a fleet gate, not a Phase 2 note** — a pool worker runs birefnet on the same card as a resident Z-Image model (`vram_gb: 20` advertised), the exact shape that OOM'd on the dev box. Pick the mitigation (second GPU / free ComfyUI's VRAM / CPU birefnet for the one call) and confirm the fallback rate is low on a real worker, or every pool upload silently no-ops through the catch | — |
+| **2.1** | ✅ **DONE + proven live.** **E — the captioner (§2.5).** Contributed `image_triage.json` + `pet_likeness.json`; `_caption_upload` calls `call_purpose(image=…)` from the upload branch, triage-gates then names, prefills `uploadNoun`, extends the redraw prompt; degrades to the manual field on any failure / not-an-animal; the "AI enabled" toggle gates it; human's word wins. Live-verified: real Haiku call → `{subject:"dog", features:…}`, usage row + derived cost. **Web-tier — reached prod WITHOUT the Phase 3 fleet gate** | the AI engine (hard dependency); Phase 3; the fleet; B; D |
+| **3** | **B (pool) + the runtime toggle (§2.2).** A small `app_settings` KV store (`db.py`) + a new **Settings** admin tab with an `upload_isolate` switch (**default OFF**); `create_reference` reads it to gate `isolate` on BOTH the local and pool paths; `_render_still` forwards `params["isolate_subject"]` only when the switch is on; `pet_preview_handler` → **v3** accepts it. **The switch is the A/B harness (test on local now), the fleet gate (the param ships only when on), and the kill-switch.** The GPU partition (`WORKER_TASKS=pet_preview` on one 3090) is an **optional, deferred** env-var change — add it only if the measured `subject isolation failed` rate is high; the cutout fails soft, so nothing breaks without it | — |
 | **4** | **D** — the candidate strip | B |
 | **5** | **Measure** (§4) end to end, then decide whether anything **still** in §8 is warranted | — |
 
@@ -515,7 +532,9 @@ develop the two in parallel against the same reducer.
 | 5 | What if segmentation finds nothing? | **Return the input unchanged → today's pad-to-square** | An empty or 5%-of-frame bbox must never produce a blank or a 40 px upscale. "Return the input" also makes the byte-identity guard true by construction (§2.2) |
 | 5a | What if the cutout **raises**? | **Catch, log once, pad-to-square** | `_rembg()` raises on a GPU node whose CUDA provider failed to load (`factory.py:107-111`, the 2026-07-21 watchdog incident). B puts rembg on the upload door for the first time; without the catch, a misconfigured node turns a working door into a broken one (§2.2) |
 | 5b | Does the build path keep its eager fail-fast? | **Yes, unchanged at `factory.py:342`** | Ops must still learn about a bad node loudly, from the path where the incident bit. Degrade quietly on the door; fail fast on the build |
-| 6 | Can B ship straight to prod? | **No — local first, then the fleet, then the pool path** | `params_schema` sets `additionalProperties: false`, so a new param is a hard 422 on a v2 node. Handler goes v2 → v3; §10.1's fleet gate exists for exactly this (§2.2) |
+| 6 | Can B ship straight to prod? | **No — local first, then the fleet, then flip the switch** | `params_schema` sets `additionalProperties: false`, so a new param is a hard 422 on a v2 node. Handler goes v2 → v3. But the switch (6a) makes the gate free: the param ships only when isolation is ON, so a default-OFF deploy never sends it to a v2 node (§2.2, §10.1) |
+| 6a | On/off, and where? | **A runtime `upload_isolate` flag in `app_settings`, a new Settings admin tab, default OFF** | It is the A/B test harness (flip it on the same photo — the only honest measurement, §4), the fleet gate (the pool param ships only when on), and the kill-switch (flip off in prod, no deploy). DB-backed, not a content file, because a feature flag must be runtime-writable — the `default_tier` launch-lever posture (§2.2) |
+| 6b | Does B need a GPU-partition change to the pool to ship? | **No — optional and deferred** | The cutout is ~1 GB and fails soft, and `shared_gpu_cpu` is untouched, so a default-OFF deploy cannot destabilise the pool. `WORKER_TASKS=pet_preview` on one of the three 3090s is an env-var tweak added *only if* the measured `subject isolation failed` rate is high (§2.2) |
 | 7 | Best-of-N? | **Yes — by keeping rolls, not by rendering 3 up front** | The user re-rolls anyway; the candidates are already paid for. Zero extra GPU, and the owner is the right judge (§2.4) |
 | 7a | Is the roll strip per-door? | **No — source-agnostic, last N drawn references** | A per-door strip would empty itself on a re-roll from the other door. It holds "things you drew and might want back" (§2.4) |
 | 8 | Is the promise "your dog"? | **"Your dog, as a cartoon pet"** | Z-Image has no IP-Adapter; semantic identity is deliverable, visual identity is not (§3) |
@@ -565,6 +584,18 @@ Pool-side, one contract test with no fleet required:
 
 - `pet_preview_handler`'s `params_schema` accepts `isolate_subject` and still rejects an unknown
   key — i.e. `additionalProperties: false` survived the edit, and `METADATA["version"]` is `"3"`.
+
+The runtime toggle (Phase 3, §2.2):
+
+- `db.set_setting`/`get_setting` round-trips, and an unset key returns the supplied default —
+  the `app_settings` store is a plain KV, so this is the whole contract.
+- `create_reference` on the upload door passes `isolate=True` **only** when `upload_isolate` is
+  on, and `isolate=False` (today's behaviour) when it is off or unset — the default-OFF gate.
+- `_render_still`'s **pool** branch includes `isolate_subject` in the params **only** when
+  isolation is on; a default-OFF request sends no new param (so a v2 node never 422s — the gate
+  is the switch).
+- The settings admin PUT rejects an **unknown** key and a non-boolean value for `upload_isolate`
+  (only declared settings are writable — it is not an open KV from the web).
 
 ---
 

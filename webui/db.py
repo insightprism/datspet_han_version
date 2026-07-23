@@ -90,6 +90,17 @@ CREATE TABLE IF NOT EXISTS bundle_tokens (
     FOREIGN KEY (pet_id) REFERENCES pets(id) ON DELETE CASCADE
 );
 
+-- Runtime settings (SPEC_UPLOAD_LIKENESS §2.2, decision 6a) — a small key/value
+-- store for admin-toggleable feature flags (the first is `upload_isolate`). In the
+-- DB, not a content file, because a feature flag must be runtime-writable without a
+-- deploy — the `tiers/` `default_tier` launch-lever posture. Values are TEXT; the
+-- settings admin declares the type per known key and validates on write.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key                 TEXT PRIMARY KEY,
+    value               TEXT NOT NULL,
+    updated_at          REAL NOT NULL
+);
+
 -- AI engine usage ledger (SPEC_DATSPET_AI_ENGINE §5). Append-only: a re-run is a
 -- NEW row, never an UPDATE. Cost is NOT stored — it is derived at read time from
 -- the model catalog's cost_per_mtok, so a pricing correction stays fixable and a
@@ -592,6 +603,33 @@ def ai_usage_summary(since: Optional[float] = None) -> list[dict]:
                 GROUP BY purpose_key, model_id
                 ORDER BY MAX(ts) DESC""", params).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Runtime settings (SPEC_UPLOAD_LIKENESS §2.2, decision 6a). A tiny key/value
+# store for admin-toggleable flags. Values are TEXT; callers/settings-admin own
+# the typing. Runtime-writable (that is the point of a feature flag) — unlike the
+# file-based content admins, there is no writability env gate here.
+# ---------------------------------------------------------------------------
+def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    """The stored value for `key`, or `default` if unset. Never raises."""
+    with _lock:
+        row = _connect().execute(
+            "SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row is not None else default
+
+
+def set_setting(key: str, value: str) -> None:
+    """Upsert one setting (the value replaces any prior — a flag has one live
+    value, so this is the one UPDATE-in-place in db.py, deliberately)."""
+    with _lock:
+        conn = _connect()
+        conn.execute(
+            """INSERT INTO app_settings (key, value, updated_at) VALUES (?,?,?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value,
+                                              updated_at=excluded.updated_at""",
+            (key, value, time.time()))
+        conn.commit()
 
 
 def purge_expired_bundle_tokens(grace_s: float = 3600) -> int:

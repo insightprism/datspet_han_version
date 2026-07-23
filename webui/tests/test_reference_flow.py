@@ -156,9 +156,10 @@ def test_upload_reference_is_redrawn_not_animated_asis(client, no_gpu):
     assert len(no_gpu) == 1
     assert no_gpu[0]["reference_path"] is not None, "the upload must be the img2img source"
     assert no_gpu[0]["strength"] is not None, "as-is is the bug; a redraw needs a strength"
-    # SPEC_UPLOAD_LIKENESS §2.2 — the upload door is the ONE call site that isolates.
-    # A photo is a dog-in-a-garden; the redraw must follow the animal, not the lawn.
-    assert no_gpu[0]["isolate"] is True, "the upload door must cut the subject out"
+    # SPEC_UPLOAD_LIKENESS §2.2, decision 6a — isolation is gated by the `upload_isolate`
+    # flag, DEFAULT OFF. So a plain upload does not isolate; the gate is exercised in
+    # test_upload_isolation_is_gated_by_the_flag below.
+    assert no_gpu[0]["isolate"] is False, "isolation is off until an admin flips the flag"
 
 
 @pytest.mark.parametrize("sent,expected", [
@@ -220,7 +221,25 @@ def test_upload_empty_field_is_captioned_by_the_ai(client, no_gpu, app_mod, monk
     assert body["suggested_subject"] == "parakeet"
     assert body["description"] == "parakeet"                          # clean noun on the record
     assert no_gpu[-1]["description"] == "parakeet, green and yellow"  # noun + cue to the redraw
+    assert no_gpu[-1]["isolate"] is False                            # flag default OFF (decision 6a)
+
+
+def test_upload_isolation_is_gated_by_the_flag(client, no_gpu, app_mod):
+    """SPEC_UPLOAD_LIKENESS §2.2, decision 6a — the `upload_isolate` switch gates the
+    cutout on the upload door: OFF (default) → isolate=False; ON → isolate=True. This
+    is the A/B harness AND the fleet gate (the pool param ships only when on)."""
+    import db
+    # Default OFF → no isolation.
+    client.post("/api/reference", files=_upload())
+    assert no_gpu[-1]["isolate"] is False
+    # Flip the flag ON → the next upload isolates.
+    db.set_setting("upload_isolate", "true")
+    client.post("/api/reference", files=_upload())
     assert no_gpu[-1]["isolate"] is True
+    # Flip it back OFF → isolation stops.
+    db.set_setting("upload_isolate", "false")
+    client.post("/api/reference", files=_upload())
+    assert no_gpu[-1]["isolate"] is False
 
 
 def test_upload_of_a_person_is_captioned_not_rejected(client, no_gpu, app_mod, monkeypatch):
