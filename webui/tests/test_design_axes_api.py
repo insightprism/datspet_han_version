@@ -50,9 +50,10 @@ def client(app_mod):
 def no_gpu(app_mod, monkeypatch):
     calls = []
 
-    def fake_render(description, request, owner, reference_path=None, strength=None):
+    def fake_render(description, request, owner, reference_path=None, strength=None,
+                    isolate=False):
         calls.append({"description": description, "reference_path": reference_path,
-                      "strength": strength})
+                      "strength": strength, "isolate": isolate})
         buf = io.BytesIO()
         Image.new("RGB", (64, 64), (10, 20, 30)).save(buf, "PNG")
         return buf.getvalue()
@@ -133,6 +134,10 @@ def test_a_design_preview_keeps_the_surface(client, no_gpu):
     out = client.post("/api/preview", data={"reference_id": ref["reference_id"],
                                             "color": "purple"}).json()
     assert "plumage" in _axes_for(client, out["reference_id"])
+    # SPEC_UPLOAD_LIKENESS §2.2 — the OTHER half of "one call site": step 2's preview
+    # redraws an already-clean sprite, so it must NOT isolate (a cutout there is wasted
+    # work and a real risk of eating the subject). The preview call is the last one.
+    assert no_gpu[-1]["isolate"] is False, "the preview must not run subject isolation"
 
 
 # ── axis_picks on /api/preview (§4) ──────────────────────────────────────────

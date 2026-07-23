@@ -61,9 +61,10 @@ def no_gpu(app_mod, monkeypatch):
     assert on what WOULD have been rendered — including that nothing was."""
     calls = []
 
-    def fake_render(description, request, owner, reference_path=None, strength=None):
+    def fake_render(description, request, owner, reference_path=None, strength=None,
+                    isolate=False):
         calls.append({"description": description, "reference_path": reference_path,
-                      "strength": strength})
+                      "strength": strength, "isolate": isolate})
         buf = io.BytesIO()
         Image.new("RGB", (64, 64), (10, 20, 30)).save(buf, "PNG")
         return buf.getvalue()
@@ -155,6 +156,9 @@ def test_upload_reference_is_redrawn_not_animated_asis(client, no_gpu):
     assert len(no_gpu) == 1
     assert no_gpu[0]["reference_path"] is not None, "the upload must be the img2img source"
     assert no_gpu[0]["strength"] is not None, "as-is is the bug; a redraw needs a strength"
+    # SPEC_UPLOAD_LIKENESS §2.2 — the upload door is the ONE call site that isolates.
+    # A photo is a dog-in-a-garden; the redraw must follow the animal, not the lawn.
+    assert no_gpu[0]["isolate"] is True, "the upload door must cut the subject out"
 
 
 @pytest.mark.parametrize("sent,expected", [

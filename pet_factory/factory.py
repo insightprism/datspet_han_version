@@ -116,6 +116,44 @@ def _remove_bg(img: Image.Image) -> Image.Image:
     return remove(img.convert("RGB"), session=_rembg())
 
 
+# Subject-crop geometry (SPEC_UPLOAD_LIKENESS §2.2). Tuned so a cropped subject
+# still DOMINATES the frame — a 0.85-denoise redraw follows composition, so the
+# subject filling the frame is the entire point.
+_CROP_MARGIN = 0.05      # per side, as a fraction of the bbox. 5% keeps subject ≥ ~82% of
+                         # the result; the spec's illustrative "~8%" would drop that to ~74%.
+_CROP_MIN_FRAC = 0.05    # bbox area below this fraction of the frame → too small; upscaling
+                         # a sub-5%-area crop toward 1024 turns it to mush. Return the input.
+_CROP_MAX_FRAC = 0.95    # bbox already fills the frame → the crop is a no-op; skip the work.
+
+
+def _crop_to_subject(rgba: Image.Image) -> Image.Image:
+    """Crop an RGBA image to its alpha bounding box plus a margin — or return it
+    UNCHANGED in every failure case (SPEC_UPLOAD_LIKENESS §2.2).
+
+    Pure PIL, no GPU, no ML import: the failure rules live here precisely so they
+    are testable on this repo's no-GPU test gate (§7). It never composites and
+    never pads — `_prep_reference_image`'s tail already does both, so "return the
+    input" makes the caller byte-identical to today by construction.
+
+    Returns the input OBJECT (identity) on every non-crop path, so a guard test can
+    assert `result is rgba`.
+    """
+    w, h = rgba.size
+    bbox = rgba.getchannel("A").getbbox()      # alpha bounds, or None if fully transparent
+    if bbox is None:
+        return rgba                            # nothing found — a wall, a screenshot
+    left, top, right, bottom = bbox
+    frac = ((right - left) * (bottom - top)) / (w * h or 1)
+    if frac < _CROP_MIN_FRAC:
+        return rgba                            # too small — a tiny crop upscaled to 1024 is mush
+    if frac > _CROP_MAX_FRAC:
+        return rgba                            # already fills the frame — nothing to gain
+    mx = round((right - left) * _CROP_MARGIN)
+    my = round((bottom - top) * _CROP_MARGIN)
+    box = (max(0, left - mx), max(0, top - my), min(w, right + mx), min(h, bottom + my))
+    return rgba.crop(box)
+
+
 # ── ComfyUI workflows ────────────────────────────────────────────────────────
 
 def _static_image_wf(prompt, seed):
@@ -291,13 +329,34 @@ def _slug(animal: str) -> str:
     return ("".join(c for c in s if c.isalnum() or c in "_-")[:40]) or "pet"
 
 
-def _prep_reference_image(src) -> Path:
+def _prep_reference_image(src, *, isolate: bool = False) -> Path:
     """Normalize a caller-supplied reference image for the Wan I2V stage:
     flatten any transparency onto white and pad to a square canvas (the video
     canvas is square; padding preserves the animal's proportions where
     stretching would distort them). Returns the path of a PNG that ComfyUI can
-    load. `src` is a path or anything PIL.Image.open accepts."""
+    load. `src` is a path or anything PIL.Image.open accepts.
+
+    isolate (SPEC_UPLOAD_LIKENESS §2.2): when True, cut the subject out of its
+    background and crop to it BEFORE the flatten+pad — so an uploaded photo of a
+    dog-in-a-garden redraws as a dog, not a garden. OFF by default and opt-in per
+    call (never sniffed): step 2's preview reference is already a clean sprite,
+    where a cutout is wasted work and a real risk of eating the subject. Only the
+    upload door passes isolate=True.
+
+    A cutout FAILURE — including `_remove_bg` raising on a GPU-required node whose
+    CUDA provider didn't load (the 2026-07-21 watchdog incident, factory.py:107) —
+    degrades to the raw photo. Lever B is the first thing to put rembg on the
+    upload door; without this catch a misconfigured node would turn a working door
+    into a broken one. The eager build-time fail-fast (make_pet_zip) stays loud;
+    the door degrades quiet. Both are correct in their own place.
+    """
     img = Image.open(src).convert("RGBA")
+    if isolate:
+        try:
+            img = _crop_to_subject(_remove_bg(img).convert("RGBA"))
+        except Exception as e:
+            print(f"[pet_factory] subject isolation failed, using the raw photo: {e!r}",
+                  flush=True)
     side = max(img.size)
     canvas = Image.new("RGBA", (side, side), (255, 255, 255, 255))
     canvas.paste(img, ((side - img.width) // 2, (side - img.height) // 2), img)
@@ -404,7 +463,7 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
 
 
 def _base_sprite(animal, reference_image=None, remix_strength=None,
-                 seed=None, on_stage=None) -> Path:
+                 seed=None, on_stage=None, isolate=False) -> Path:
     """THE base-sprite selector — the one place the pipeline's starting image is
     decided (SPEC_PET_DESIGNER_FLOW §7.1).
 
@@ -423,6 +482,9 @@ def _base_sprite(animal, reference_image=None, remix_strength=None,
               reproducible; the parity pin (§10.2) needs that seam.
     on_stage: optional callback(msg) naming the branch that ran, for callers
               that report progress.
+    isolate:  cut the subject out of a photographic reference before the redraw
+              (SPEC_UPLOAD_LIKENESS §2.2). Only meaningful on the two reference
+              branches; the text branch has no reference to isolate.
     """
     def stage(msg):
         if on_stage:
@@ -433,7 +495,7 @@ def _base_sprite(animal, reference_image=None, remix_strength=None,
 
     if reference_image and remix_strength:
         stage("Redrawing your design…")
-        prepped = _prep_reference_image(reference_image)
+        prepped = _prep_reference_image(reference_image, isolate=isolate)
         denoise = min(0.9, max(0.3, float(remix_strength)))
         base = COMFY_OUTPUT_DIR / _run(_img2img_wf(_remix_prompt(animal), str(prepped), seed, denoise))
         _wait_stable(base)
@@ -441,7 +503,7 @@ def _base_sprite(animal, reference_image=None, remix_strength=None,
 
     if reference_image:
         stage("Preparing the reference image…")
-        return _prep_reference_image(reference_image)
+        return _prep_reference_image(reference_image, isolate=isolate)
 
     stage("Drawing the base sprite…")
     base = COMFY_OUTPUT_DIR / _run(_static_image_wf(_base_prompt(animal), seed))
@@ -450,7 +512,7 @@ def _base_sprite(animal, reference_image=None, remix_strength=None,
 
 
 def render_design_still(description: str, reference_image=None, strength=None,
-                        seed=None) -> bytes:
+                        seed=None, isolate=False) -> bytes:
     """Render one still and return it as PNG bytes — the design page's ~10 s step
     (SPEC_PET_DESIGNER_FLOW §2). Two shapes, both delegating to `_base_sprite`:
 
@@ -479,7 +541,7 @@ def render_design_still(description: str, reference_image=None, strength=None,
             "rendering a reference as-is would just return the caller's own bytes."
         )
     out = _base_sprite(description, reference_image=reference_image,
-                       remix_strength=strength, seed=seed)
+                       remix_strength=strength, seed=seed, isolate=isolate)
     return out.read_bytes()
 
 

@@ -67,7 +67,9 @@ def capture_workflow(monkeypatch, tmp_path):
 
         monkeypatch.setattr(factory, "_run", fake_run)
         monkeypatch.setattr(factory, "_wait_stable", lambda *a, **k: None)
-        monkeypatch.setattr(factory, "_prep_reference_image", lambda src: prepped)
+        # **kw absorbs the isolate= kwarg (SPEC_UPLOAD_LIKENESS §2.2). This capture
+        # harness is about the workflow SHAPE, not the prep step, so it ignores it.
+        monkeypatch.setattr(factory, "_prep_reference_image", lambda src, **kw: prepped)
         monkeypatch.setattr(factory.random, "randint", lambda a, b: FIXED_SEED)
         try:
             fn()

@@ -635,7 +635,8 @@ def _load_reference(reference_id: str, owner: Optional[str]) -> dict:
 
 def _render_still(description: str, request: Request, owner: Optional[str],
                   reference_path: Optional[Path] = None,
-                  strength: Optional[float] = None) -> bytes:
+                  strength: Optional[float] = None,
+                  isolate: bool = False) -> bytes:
     """Render one still — the ~10 s GPU step, and the ONE place that knows how to
     reach a renderer.
 
@@ -644,6 +645,13 @@ def _render_still(description: str, request: Request, owner: Optional[str],
 
         reference_path=None → txt2img an archetype  (step 1's long-tail door)
         reference_path set  → img2img redraw        (step 1's upload door, step 2's preview)
+
+    isolate (SPEC_UPLOAD_LIKENESS §2.2): cut the subject out before the redraw.
+    Only the upload door sets it; step 2's preview leaves it False (its reference is
+    already a clean sprite). LOCAL PATH ONLY in Phase 2 — the pool branch below does
+    NOT forward it yet, so pool-backed uploads are unchanged. Phase 3 adds the
+    `isolate_subject` param + handler v3 behind the §10.1 fleet gate; sending an
+    unknown param to a v2 node is a hard 422, not a no-op.
 
     Both /api/reference and /api/preview call this. Callers must be sync `def`
     handlers (§5.3) — this blocks ~10 s and FastAPI runs sync paths in a threadpool;
@@ -683,7 +691,8 @@ def _render_still(description: str, request: Request, owner: Optional[str],
     try:
         if reference_path is None:
             return render_design_still(description)
-        return render_design_still(description, str(reference_path), strength)
+        return render_design_still(description, str(reference_path), strength,
+                                   isolate=isolate)
     except Exception as e:
         # The local renderer drives ComfyUI over HTTP. When it isn't up — or is on a
         # port other than PET_FACTORY_COMFY_URL claims — this raises a bare
@@ -828,8 +837,12 @@ def create_reference(
     tmp = PREVIEW_DIR / f"_upload_{uuid.uuid4().hex[:12]}"
     tmp.write_bytes(body)
     try:
+        # isolate=True — the ONE call site that sets it (SPEC_UPLOAD_LIKENESS §2.2).
+        # A photo is a dog-in-a-garden; cut the subject out before the redraw so the
+        # img2img follows the animal, not the lawn. Step 2's preview leaves it False:
+        # its reference is already a clean sprite.
         png = _render_still(subject, request, owner, reference_path=tmp,
-                            strength=redraw_strength)
+                            strength=redraw_strength, isolate=True)
     finally:
         tmp.unlink(missing_ok=True)
     return _reference_record(_save_reference(

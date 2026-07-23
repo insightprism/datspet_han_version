@@ -219,6 +219,21 @@ it is the reason the isolate step runs **exactly once per upload** and never per
 2026-07-21 incident was CPU birefnet across *every frame of every pose*; one call is a different
 order of magnitude. Measure the actual CPU latency in Phase 2 rather than inheriting the number.)
 
+**VRAM contention is real and was observed on the dev box (Phase 2 finding).** The isolate step
+runs *before* the img2img, so on a node where ComfyUI is already resident (~21 GB of a 24 GB
+3090 in the local dev stack), birefnet's ~800 MB allocation can **OOM** — and it did, on the
+first real-hardware run. The `try/except` caught it and degraded to the raw photo (exactly §2.2),
+so the door stayed up — **but a node that OOMs every time silently no-ops the whole lever via
+the fallback.** This is not a correctness bug; it is a *"did the benefit actually happen"*
+question, and it is Phase 2's to answer:
+
+> Measure the **fallback rate** on a representative node, not just the visual quality. A cutout
+> that logs `subject isolation failed` on most uploads is a lever that isn't pulling. If the rate
+> is high, the levers are (in order): run the cutout on the second GPU where the box has one
+> (`CUDA_VISIBLE_DEVICES`, proven to work on the dev box); or free ComfyUI's VRAM around the
+> one-shot cutout; or accept CPU birefnet for this single call (one image, inside the 180 s
+> budget — unlike the 2026-07-21 per-frame case).
+
 **The cost nobody has priced yet: cropping spends resolution.** The client already downscales
 uploads to 1024 px on the long edge (`prepareUpload.ts`), and the crop happens *after* that on
 the worker. A dog occupying 30% of frame crops to ~300 px and is then loaded at 1024²
@@ -391,8 +406,8 @@ over a handful of finalists, not over the corpus.
 
 | Phase | | Ships without |
 |---|---|---|
-| **1** | **A + C** — send the noun, add the pending-state line (which also resolves §2.1's field ambiguity) | anything else. Hours |
-| **2** | **B (local)** — `_crop_to_subject`, `isolate=` on `_prep_reference_image`, wired through `render_design_still`, on `PET_GEN_BACKEND=local`. Guard tests (§7) land with it. Verify rows B/A/A+B against the corpus | the fleet |
+| **1** | ✅ **DONE** (`f81bb2c`). **A + C** — send the noun, add the pending-state line (which also resolves §2.1's field ambiguity) | anything else. Hours |
+| **2** | ✅ **CODE DONE.** **B (local)** — `_crop_to_subject`, `isolate=` on `_prep_reference_image` → `_base_sprite` → `render_design_still` → `_render_still`, upload branch sets `isolate=True`. 8 guard tests (§7) + the upload-isolates / preview-does-not assertions. Real-GPU verified: cat-in-grass → tight crop on white; a real OOM degraded to the raw photo. **Remaining: the corpus measurement — rows B/A/A+B + the fallback-rate finding above** | the fleet |
 | **3** | **B (pool)** — `isolate_subject` param → `pet_preview_handler` **v3** → roll to the fleet → enable. §10.1 fleet gate | — |
 | **4** | **D** — the candidate strip | B |
 | **5** | **Measure** (§4) end to end, then decide whether anything in §8 is warranted | — |
