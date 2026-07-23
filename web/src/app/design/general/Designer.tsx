@@ -172,6 +172,20 @@ export default function Designer() {
       // the server's own UPLOAD_REDRAW_STRENGTH default (app.py:155) governs. Sending a
       // copy of it from here would be a second owner of one number, free to drift.
       form.append("image", source.file);
+      // THE NOUN (SPEC_UPLOAD_LIKENESS §2.1). `animal` alongside an image is a HINT, not a
+      // second door — `_resolve_reference_door` (app.py:706) routes ["upload","txt2img"] to
+      // "upload" deliberately and documents exactly this. Without it the server falls back to
+      // `subject = animal or "pet"` (app.py:822) and the redraw prompt reads "a cute cartoon
+      // pet, exactly pet" — `_remix_prompt` repeats the subject to make it WIN over the
+      // source's colours, so the one thing it was winning against was the user's dog.
+      //
+      // It fixes TWO prompts, not one: `description` is saved as the subject, and step 2's
+      // redraw takes `species = ... or ref["description"]` (app.py:966). It also recovers the
+      // coat/plumage axis, which an upload with no animal silently loses (app.py:841).
+      //
+      // The user's own word beats any inference — nobody out-names an owner on their own dog.
+      const noun = typedDraft.trim();
+      if (noun) form.append("animal", noun);
     } else {
       form.append("animal", source.animal.trim());
     }

@@ -136,6 +136,31 @@ export default function SourceRail({
               </span>
             </span>
           </button>
+          {/* Two lines, two different jobs (SPEC_UPLOAD_LIKENESS §2.3) — kept apart on
+              purpose, because collapsing them buries the first behind the second at the
+              moment it matters most. */}
+          <div className="flex flex-col gap-0.5">
+            {/* CORRECTNESS. The typed field is the typed door's own input and is NOT cleared
+                when a photo is chosen (the draft is lifted so it survives a lock, §5.1). So a
+                leftover "blue jay" would ride along with a photo of a retriever — and because
+                `_remix_prompt` repeats the subject to make it win, a WRONG noun is worse than
+                no noun. Echo the value rather than pointing at it: "name the animal on the
+                left" does not tell you the name already there is wrong (§2.1). */}
+            <span className="mono text-xs"
+                  style={{ color: typedDraft.trim() ? "var(--gold)" : "var(--muted)" }}>
+              {typedDraft.trim()
+                ? `using “${typedDraft.trim()}” — change it on the left`
+                : "name the animal on the left for a closer match"}
+            </span>
+            {/* QUALITY. The pipeline's documented precondition is "one animal, side profile,
+                facing right" and nothing else on the page says so. This is the pending state
+                because the header above is still a button that reopens the picker — the one
+                moment the advice can actually be acted on. */}
+            <span className="mono text-xs" style={{ color: "var(--faint)" }}>
+              side-on, whole animal, good light works best
+            </span>
+          </div>
+
           <button type="button" className="btn self-start" disabled={busy}
                   onClick={onUploadDraw}>
             {busy ? "Drawing…" : uploadIsDrawn ? "Draw again" : "Draw it"}
