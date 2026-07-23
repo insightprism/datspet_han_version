@@ -43,6 +43,9 @@ export default function NavAuth() {
             <Link href="/admin/design" className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
               Design
             </Link>
+            <Link href="/admin/ai" className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
+              AI
+            </Link>
           </span>
         ) : adminBounce ? (
           <a href={adminBounce} className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>

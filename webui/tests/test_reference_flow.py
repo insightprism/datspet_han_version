@@ -185,6 +185,103 @@ def test_upload_without_an_animal_hint_still_works(client, no_gpu):
     assert r.json()["source"] == "upload"
 
 
+# ── SPEC_UPLOAD_LIKENESS §2.5: the upload captioner (lever E / Phase 2.1) ─────
+#
+# The AI engine's first real consumer. With a key set, the upload door reads the
+# photo (image_triage gates, pet_likeness names it) and — when the noun field is
+# empty — prefills the noun and extends the redraw. The human's typed word wins,
+# and any failure / not-an-animal / no-key degrades to today's manual field. The
+# one Anthropic seam (ai_engine._call_model) is mocked; no network.
+
+def _mock_caption(app_mod, monkeypatch, *, is_subject=True, subject="parakeet",
+                  features="green and yellow"):
+    import json
+    monkeypatch.setenv("DATSPET_AI_API_KEY", "test-key")
+
+    def fake_model(**kw):
+        props = kw["output_schema"].get("properties", {})
+        if "is_subject" in props:                     # image_triage
+            return json.dumps({"is_subject": is_subject, "usable": is_subject,
+                               "reason": "clear subject" if is_subject else "a screenshot"}), \
+                {"input_tokens": 10, "output_tokens": 5}
+        return json.dumps({"subject": subject, "features": features,           # pet_likeness
+                           "description": f"a {features} {subject}"}), \
+            {"input_tokens": 20, "output_tokens": 10}
+
+    monkeypatch.setattr(app_mod.ai_engine, "_call_model", fake_model)
+
+
+def test_upload_empty_field_is_captioned_by_the_ai(client, no_gpu, app_mod, monkeypatch):
+    """The whole point of lever E: upload a photo with no noun → the AI names it.
+    The reference carries the suggestion (so the door can prefill the field), and
+    the redraw draws THAT subject with the AI's cue — not the generic 'pet'."""
+    _mock_caption(app_mod, monkeypatch)
+    body = client.post("/api/reference", files=_upload()).json()
+    assert body["suggested_subject"] == "parakeet"
+    assert body["description"] == "parakeet"                          # clean noun on the record
+    assert no_gpu[-1]["description"] == "parakeet, green and yellow"  # noun + cue to the redraw
+    assert no_gpu[-1]["isolate"] is True
+
+
+def test_upload_of_a_person_is_captioned_not_rejected(client, no_gpu, app_mod, monkeypatch):
+    """The subject may be a PERSON, not only an animal (users animate themselves and
+    other people): triage passes a person and the captioner names them, so the noun
+    prefills and the redraw draws a person — not a fallback to 'pet'."""
+    _mock_caption(app_mod, monkeypatch, subject="woman", features="long brown hair, red shirt")
+    body = client.post("/api/reference", files=_upload()).json()
+    assert body["suggested_subject"] == "woman"
+    assert body["description"] == "woman"
+    assert no_gpu[-1]["description"] == "woman, long brown hair, red shirt"
+
+
+def test_typed_noun_wins_and_skips_the_ai(client, no_gpu, app_mod, monkeypatch):
+    """decision 3 — the human's word wins: a typed noun is used verbatim and the AI
+    is not consulted at all (no suggestion, no cue)."""
+    _mock_caption(app_mod, monkeypatch)
+    body = client.post("/api/reference", data={"animal": "corgi"}, files=_upload()).json()
+    assert body["suggested_subject"] is None
+    assert body["description"] == "corgi"
+    assert no_gpu[-1]["description"] == "corgi"
+
+
+def test_not_a_subject_degrades_to_the_manual_field(client, no_gpu, app_mod, monkeypatch):
+    """Triage gates: a screenshot (is_subject False) degrades to today's behaviour —
+    no suggestion, subject 'pet' — never a confident wrong caption."""
+    _mock_caption(app_mod, monkeypatch, is_subject=False)
+    body = client.post("/api/reference", files=_upload()).json()
+    assert body["suggested_subject"] is None
+    assert body["description"] == "pet"
+
+
+def test_captioner_is_inert_without_a_key(client, no_gpu, monkeypatch):
+    """No key → the captioner never runs; an empty-field upload behaves exactly as
+    before (subject 'pet'). The engine stays optional — the door works turned off."""
+    monkeypatch.delenv("DATSPET_AI_API_KEY", raising=False)
+    body = client.post("/api/reference", files=_upload()).json()
+    assert body["suggested_subject"] is None
+    assert body["description"] == "pet"
+
+
+def test_ai_toggle_off_skips_the_captioner_even_on_an_empty_field(client, no_gpu, app_mod, monkeypatch):
+    """The 'AI enabled' toggle turned OFF sends ai_caption=false. Even with the engine
+    configured AND an empty noun field, the captioner must NOT run — an empty field
+    draws 'pet'. The toggle disables the server captioner, not just the UI field."""
+    _mock_caption(app_mod, monkeypatch)  # engine on + mocked, but the flag gates it off
+    body = client.post("/api/reference",
+                       data={"ai_caption": "false"}, files=_upload()).json()
+    assert body["suggested_subject"] is None
+    assert body["description"] == "pet"
+
+
+def test_ai_toggle_off_uses_the_typed_noun(client, no_gpu, app_mod, monkeypatch):
+    """Toggle off + a typed noun → the user's word is used, the AI is not consulted."""
+    _mock_caption(app_mod, monkeypatch)
+    body = client.post("/api/reference",
+                       data={"ai_caption": "false", "animal": "corgi"}, files=_upload()).json()
+    assert body["suggested_subject"] is None
+    assert body["description"] == "corgi"
+
+
 # ── the exactly-one-source guard (§7.4) ──────────────────────────────────────
 
 def test_catalog_plus_upload_is_refused(client, no_gpu):

@@ -186,7 +186,11 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
       {canceled && (
         <div className="mt-4">
           <div className="mono mb-3 text-sm" style={{ color: "var(--muted)" }}>Build stopped.</div>
-          <button type="button" onClick={onReset} className="btn">{resetLabel}</button>
+          {/* NOT resetLabel ("Design another") here: a stop keeps steps 1 and 2 locked in —
+              onReset only clears the dead job, dropping step 3 back to its build controls with
+              the same design. So the honest verb is re-run, not start-over. resetLabel stays
+              for the `done` case, where you really are moving on to a new pet. */}
+          <button type="button" onClick={onReset} className="btn">Re-run the build</button>
         </div>
       )}
 

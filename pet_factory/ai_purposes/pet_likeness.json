@@ -1,0 +1,23 @@
+{
+  "_doc": "SPEC_UPLOAD_LIKENESS §2.5 (lever E / Phase 2.1), purpose 2 of 2 — the captioner. Runs only if image_triage passed. `subject` prefills the upload noun field (the user's word still wins on correction — decision 3: the AI prefills, the field stays editable, a correction discards the AI's value); `features`/`description` extend the redraw prompt so the img2img follows the real subject. The subject may be an ANIMAL or a PERSON: users animate pets, themselves, and other people, so the noun is a generic drawable common noun ('parakeet', 'corgi', 'man', 'woman', 'boy', 'girl'), never assumed to be a species. {hint_clause} lets the call site fold in a noun the user already typed WITHOUT the engine ever knowing what a subject is (the prompt-template mechanism, SPEC_DATSPET_AI_ENGINE §3). `fast` tier — bump only if §4's corpus shows it's needed (decision 17). A CONSUMER contribution: the engine owns none of it.",
+  "purpose_key": "pet_likeness",
+  "display_name": "Subject likeness from a photo",
+  "description": "Reads an uploaded photo and names the subject (an animal or a person) plus a short visual description, to prefill the upload field and extend the redraw prompt. Runs only after triage passes.",
+  "tier": "fast",
+  "max_tokens": 256,
+  "input": "image",
+  "template_vars": ["hint_clause"],
+  "system_prompt": "You identify the main subject of a photograph for a cartoon generator — it may be an ANIMAL or a PERSON. Return three things. `subject`: a short, drawable common noun a user would type — for an animal the species ('parakeet', 'corgi'); for a person a simple noun such as 'man', 'woman', 'boy', or 'girl'. `features`: a SHORT phrase of only a few words naming the main colours plus one or two standout traits (e.g. 'green and yellow feathers' or 'short brown hair, red shirt') — this is appended to the redraw prompt, so keep it brief, not a sentence. `description`: a fuller one- or two-sentence visual summary. If you recognise a specific well-known person you may note who in `description`, but keep `subject` generic and drawable (say 'man', not the name). If unsure, give your best guess and say so in `description`. Answer only in the required JSON shape.",
+  "user_prompt_template": "Identify the main subject of this photo.{hint_clause}",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "subject": { "type": ["string", "null"] },
+      "features": { "type": ["string", "null"] },
+      "description": { "type": "string" }
+    },
+    "required": ["subject", "description"],
+    "additionalProperties": false
+  },
+  "is_active": true
+}

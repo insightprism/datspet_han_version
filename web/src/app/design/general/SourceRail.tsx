@@ -81,12 +81,34 @@ interface Props {
   uploadPending: boolean;
   uploadIsDrawn: boolean;
   onUploadDraw: () => void;
+  /**
+   * The upload door's OWN noun — "what animal is this a photo of?" (SPEC_UPLOAD_LIKENESS
+   * §2.1, decision 3a, reversed on evidence). It is a DIFFERENT question from `typedDraft`:
+   * that field is the typed door's whole input ("draw this from nothing"); this one labels
+   * a photo the user already has. They share no state, so the two fields can never show the
+   * same value in two places, and the upload door no longer borrows a value from across the
+   * page — the indirection ("change it on the left") that confused a real uploader is gone.
+   */
+  uploadNoun: string;
+  onUploadNoun: (text: string) => void;
+
+  /**
+   * The upload door's "AI enabled" toggle, top-right of the card (default ON). ON → the
+   * AI names the photo (an animal OR a person) and the noun field is HIDDEN; OFF → the
+   * field shows and the user types the name themselves. It also flips the server's
+   * captioner off (ai_caption=false), so OFF genuinely means "don't caption", not just
+   * "hide the box" — otherwise an empty field would still be captioned.
+   */
+  aiEnabled: boolean;
+  onAiEnabled: (enabled: boolean) => void;
 }
 
 export default function SourceRail({
   current, busy, typedDraft, onTypedDraft, typedIsDrawn,
   onGallery, onUpload, onTypedDraw,
   uploadPending, uploadIsDrawn, onUploadDraw,
+  uploadNoun, onUploadNoun,
+  aiEnabled, onAiEnabled,
 }: Props) {
   const draft = typedDraft.trim();
 
@@ -116,10 +138,15 @@ export default function SourceRail({
           reached the animation. A control whose effect is erased downstream is worse than
           no control: it charges a decision and silently discards it. */}
       {uploadPending ? (
-        <div className="flex flex-col gap-2 rounded-xl border px-3 py-2.5"
+        <div className="relative flex flex-col gap-2 rounded-xl border px-3 py-2.5"
              style={shell(TONE.upload, current === "upload")}>
+          {/* "AI enabled" toggle, top-right (SPEC_UPLOAD_LIKENESS §2.5). ON (default):
+              the AI names the animal or person, so the noun field is hidden. OFF: the
+              field appears and the user types it. A sibling of the header button, not a
+              child — a <button> cannot nest inside the header <button>. */}
+          <AiToggle enabled={aiEnabled} onChange={onAiEnabled} />
           <button type="button" onClick={onUpload}
-                  className="flex items-center gap-3 text-left transition hover:opacity-80">
+                  className="flex items-center gap-3 pr-16 text-left transition hover:opacity-80">
             <Glyph glyph="📷" tone={TONE.upload} />
             <span className="flex min-w-0 flex-col">
               <span className="text-sm font-medium" style={{ color: "var(--heading)" }}>
@@ -136,28 +163,46 @@ export default function SourceRail({
               </span>
             </span>
           </button>
-          {/* Two lines, two different jobs (SPEC_UPLOAD_LIKENESS §2.3) — kept apart on
-              purpose, because collapsing them buries the first behind the second at the
-              moment it matters most. */}
-          <div className="flex flex-col gap-0.5">
-            {/* CORRECTNESS. The typed field is the typed door's own input and is NOT cleared
-                when a photo is chosen (the draft is lifted so it survives a lock, §5.1). So a
-                leftover "blue jay" would ride along with a photo of a retriever — and because
-                `_remix_prompt` repeats the subject to make it win, a WRONG noun is worse than
-                no noun. Echo the value rather than pointing at it: "name the animal on the
-                left" does not tell you the name already there is wrong (§2.1). */}
-            <span className="mono text-xs"
-                  style={{ color: typedDraft.trim() ? "var(--gold)" : "var(--muted)" }}>
-              {typedDraft.trim()
-                ? `using “${typedDraft.trim()}” — change it on the left`
-                : "name the animal on the left for a closer match"}
-            </span>
-            {/* QUALITY. The pipeline's documented precondition is "one animal, side profile,
-                facing right" and nothing else on the page says so. This is the pending state
-                because the header above is still a button that reopens the picker — the one
-                moment the advice can actually be acted on. */}
+          {/* THE noun, INSIDE the upload door (SPEC_UPLOAD_LIKENESS §2.1, decision 3a).
+              It was on the "type any animal" door across the page, and the upload door
+              only pointed at it ("change it on the left") — which a real uploader read as
+              two unrelated doors and never filled, so their parakeet redrew against "pet"
+              and came back a generic mammal. The question this asks — "what is this a photo
+              of?" — is genuinely different from the typed door's "what should I draw from
+              nothing?", so a field in each is right, not the "same question twice" the old
+              design feared.
+
+              With AI enabled (§2.5, the default) the captioner names it and this field is
+              HIDDEN; turning AI off reveals it so the human can name it themselves — and
+              their word wins (decision 3). The subject may be an animal OR a person. */}
+          <div className="flex flex-col gap-1">
+            {aiEnabled ? (
+              <p className="mono text-xs" style={{ color: "var(--faint)" }}>
+                the AI will identify it — an animal or a person — and name it for you
+              </p>
+            ) : (
+              <input
+                id="upload-animal"
+                className="input"
+                aria-label="what is it? (an animal or a person)"
+                /* §3.2's archetype rule holds here too: a NOUN and an example, never
+                   "describe your pet" — the upload door names the subject, it does not
+                   design it. Now that a photo can also be a person, the copy names both. */
+                placeholder="what is it? e.g. parakeet, or a person"
+                value={uploadNoun}
+                onChange={(e) => onUploadNoun(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !busy) {
+                    e.preventDefault();
+                    onUploadDraw();
+                  }
+                }}
+              />
+            )}
+            {/* The pipeline's documented precondition — good-photo advice matters whether
+                the AI or the user names it, so it shows in both modes. */}
             <span className="mono text-xs" style={{ color: "var(--faint)" }}>
-              side-on, whole animal, good light works best
+              side-on, whole subject, good light works best
             </span>
           </div>
 
@@ -240,6 +285,35 @@ function shell(tone: string, current: boolean) {
     borderColor: current ? soft(tone, 45) : "var(--line)",
     borderLeft: `3px solid ${current ? tone : "transparent"}`,
   };
+}
+
+/**
+ * The upload door's "AI enabled" switch (SPEC_UPLOAD_LIKENESS §2.5), a compact pill in
+ * the card's top-right: label "AI" + a switch track. ON (default) = the captioner names
+ * the photo and the noun field is hidden; OFF = the field shows so the human names it.
+ * A real role="switch" so it reads as a toggle to assistive tech.
+ */
+function AiToggle({ enabled, onChange }: { enabled: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      aria-label="AI enabled — name the photo automatically"
+      onClick={() => onChange(!enabled)}
+      title={enabled
+        ? "AI enabled — the AI names your photo (an animal or a person). Turn off to type the name yourself."
+        : "AI off — type the name yourself. Turn on to let the AI name it."}
+      className="mono absolute right-2.5 top-2.5 z-10 flex items-center gap-1.5 text-xs transition hover:opacity-80"
+    >
+      <span style={{ color: enabled ? TONE.upload : "var(--faint)" }}>AI</span>
+      <span className="relative inline-block h-3.5 w-6 rounded-full transition-colors"
+            style={{ background: enabled ? TONE.upload : "var(--line)" }}>
+        <span className="absolute top-0.5 block h-2.5 w-2.5 rounded-full transition-all"
+              style={{ background: "#fff", left: enabled ? "0.75rem" : "0.125rem" }} />
+      </span>
+    </button>
+  );
 }
 
 /** The door's glyph, in its own colour — what carries the colour and most of the weight. */

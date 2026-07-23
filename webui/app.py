@@ -46,6 +46,10 @@ from fastapi.responses import FileResponse, Response
 
 import db
 import pool_client
+# ai_engine is web-tier + one HTTPS call, and imports anthropic LAZILY (inside its
+# one call), so importing it here costs nothing and stays GPU-less-safe. It powers
+# the upload captioner (SPEC_UPLOAD_LIKENESS §2.5); inert until DATSPET_AI_API_KEY.
+import ai_engine
 # motion_profiles is pure data (no ML deps) — safe to import on the GPU-less web
 # tier; it powers /api/motions and the pose menu (SPEC_MOTION_PROFILES §5.1).
 from pet_factory import motion_profiles as motion_profiles_mod
@@ -142,6 +146,12 @@ app.include_router(motion_admin.router)
 # motion admin, pointed at the design vocabulary + the catalog's design profiles.
 import design_admin
 app.include_router(design_admin.router)
+
+# AI engine admin (SPEC_DATSPET_AI_ENGINE §6): the third admin router — the model
+# catalog (read-only), the editable purpose registry, usage, and Test configuration.
+# Pure web-tier + one HTTPS call; inert until DATSPET_AI_API_KEY is set (§4).
+import ai_admin
+app.include_router(ai_admin.router)
 
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 ALLOWED_IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
@@ -566,6 +576,11 @@ def _reference_record(meta: dict) -> dict:
         "source": meta.get("source", ""),
         "min_strength": meta.get("min_strength"),
         "generated": bool(meta.get("generated", False)),
+        # The AI's guess at the subject (animal or person) for an upload
+        # (SPEC_UPLOAD_LIKENESS §2.5), or None. The upload door prefills its noun
+        # field with this — the human's typed word still wins, so it is only used
+        # when that field was empty.
+        "suggested_subject": meta.get("suggested_subject"),
     }
 
 
@@ -574,6 +589,7 @@ def _save_reference(png: bytes, *, owner: Optional[str], description: str,
                     min_strength: Optional[float] = None,
                     generated: bool = False,
                     surface: Optional[str] = None,
+                    suggested_subject: Optional[str] = None,
                     catalog_animal: Optional[str] = None,
                     catalog_breed: Optional[str] = None) -> dict:
     """Mint one reference. EVERY door ends here, which is the whole design: past
@@ -593,7 +609,7 @@ def _save_reference(png: bytes, *, owner: Optional[str], description: str,
         "description": description, "display_name": display_name,
         "motion_profile": motion_profile, "source": source,
         "min_strength": min_strength, "generated": generated,
-        "surface": surface,
+        "surface": surface, "suggested_subject": suggested_subject,
         "catalog_animal": catalog_animal, "catalog_breed": catalog_breed,
     }
     png_path.write_bytes(png)
@@ -751,6 +767,46 @@ def _resolve_typed_surface(animal: str) -> Optional[str]:
     return surface
 
 
+def _caption_upload(body: bytes, media_type: str, typed_noun: str,
+                    owner: Optional[str]) -> Optional[dict]:
+    """The upload captioner (SPEC_UPLOAD_LIKENESS §2.5 / Phase 2.1, lever E): read
+    an uploaded photo with the AI so the noun no longer has to be typed. image_triage
+    gates first ('is this a usable subject — an animal or a person?'), then pet_likeness
+    names it and describes it. Returns {subject, description, features} or None.
+
+    The subject may be an ANIMAL or a PERSON: users animate pets, themselves, and other
+    people, so this is deliberately not animal-only.
+
+    None means DEGRADE to the manual field (Phase 1): the engine is inert (no key), the
+    photo is not a usable subject, or any call failed. This is best-effort by design —
+    it NEVER raises, so a captioner hiccup can never break the upload door, and the
+    human's typed noun is always the fallback. The engine (SPEC_DATSPET_AI_ENGINE)
+    names none of this; the two purpose keys are this call site's arguments (§11).
+    """
+    if not ai_engine.is_available():
+        return None
+    try:
+        triage, _ = ai_engine.call_purpose(
+            "image_triage", image=body, media_type=media_type, external_user_id=owner)
+        if not (triage.get("is_subject") and triage.get("usable")):
+            return None
+        hint = (f" The uploader says it is a {typed_noun.strip()}."
+                if typed_noun.strip() else "")
+        like, _ = ai_engine.call_purpose(
+            "pet_likeness", image=body, media_type=media_type,
+            variables={"hint_clause": hint}, external_user_id=owner)
+        subject = (like.get("subject") or "").strip()
+        if not subject:
+            return None
+        return {"subject": subject, "description": like.get("description") or "",
+                "features": like.get("features")}
+    except (ai_engine.AIUnavailable, ai_engine.AIError):
+        return None
+    except Exception as e:  # defensive — the upload door must survive any AI failure
+        print(f"[webui] upload captioner failed: {e}", flush=True)
+        return None
+
+
 @app.post("/api/reference")
 def create_reference(
     request: Request,
@@ -759,6 +815,11 @@ def create_reference(
     animal: str = Form(""),
     image: Optional[UploadFile] = File(None),
     strength: float = Form(UPLOAD_REDRAW_STRENGTH),
+    # The upload door's "AI enabled" toggle (SPEC_UPLOAD_LIKENESS §2.5): when on
+    # (default) an empty noun is captioned by the AI; when the user turns it OFF to
+    # type the noun themselves, this is false so an empty field draws "pet" rather
+    # than silently captioning anyway. Defaults True → the API stays backward-compatible.
+    ai_caption: bool = Form(True),
 ):
     """Step 1: fill the box (§3). Returns one reference record.
 
@@ -828,7 +889,25 @@ def create_reference(
     if len(body) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "Image exceeds 12 MB limit")
 
-    subject = animal or "pet"
+    # The captioner (SPEC_UPLOAD_LIKENESS §2.5, lever E). The human's typed word wins
+    # (decision 3), so the AI only runs when the noun field is EMPTY — no reason to
+    # spend two calls to name what the user already named. When the engine is inert or
+    # the photo isn't a usable animal, `caption` is None → today's manual-field
+    # behaviour ("pet"), unchanged.
+    caption = (_caption_upload(body, image.content_type, "", owner)
+               if (ai_caption and not animal) else None)
+    suggested = None
+    if caption and caption.get("subject"):
+        suggested = caption["subject"].strip()[:60]
+
+    subject = animal or suggested or "pet"
+    # Extend the redraw prompt with the AI's short visual cue, but ONLY when the AI
+    # supplied the noun (the field was empty) — _remix_prompt repeats the description
+    # to win over the source's colours, so a features hint reinforces the redraw.
+    render_description = subject
+    if suggested and caption and caption.get("features"):
+        render_description = f"{subject}, {caption['features']}"
+
     # The user chooses how hard to redraw (§3.5): "faithful" keeps their photo's look
     # but preserves the photographic pose/lighting Wan I2V animates badly; "sprite"
     # animates reliably but looks redrawn. Only they know which side of that they
@@ -841,17 +920,19 @@ def create_reference(
         # A photo is a dog-in-a-garden; cut the subject out before the redraw so the
         # img2img follows the animal, not the lawn. Step 2's preview leaves it False:
         # its reference is already a clean sprite.
-        png = _render_still(subject, request, owner, reference_path=tmp,
+        png = _render_still(render_description, request, owner, reference_path=tmp,
                             strength=redraw_strength, isolate=True)
     finally:
         tmp.unlink(missing_ok=True)
+    # §3.4: a photo carries no reliable surface signal → universal axes only; but a
+    # NAME (typed OR captioned) may promote via the keyword map — which is how an
+    # upload recovers the coat/plumage axis it used to lose (app.py comment above).
+    surface_noun = animal or suggested or ""
     return _reference_record(_save_reference(
         png, owner=owner, description=subject.lower(),
         display_name=subject.title(), motion_profile=None,
-        source="upload", generated=True,
-        # §3.4: a photo carries no reliable surface signal → universal axes
-        # only; a typed animal name alongside it may promote via the keyword map.
-        surface=_resolve_typed_surface(animal) if animal else None))
+        source="upload", generated=True, suggested_subject=suggested,
+        surface=_resolve_typed_surface(surface_noun) if surface_noun else None))
 
 
 @app.get("/api/reference/{reference_id}.png")

@@ -457,6 +457,103 @@ export const designAdmin = {
     ),
 };
 
+// ---------------------------------------------------------------------------
+// AI engine admin (SPEC_DATSPET_AI_ENGINE §6) — the third admin surface: the
+// editable purpose registry, the READ-ONLY model catalog, usage (est. cost
+// derived server-side from the catalog), and a Test-configuration probe. Gated
+// like the others; inert until DATSPET_AI_API_KEY is set.
+// ---------------------------------------------------------------------------
+export interface AiModelEntry {
+  id: string;
+  label: string;
+  provider: string;
+  tier: string;
+  status: string;
+  vision: boolean;
+  cost_per_mtok: { input: number; output: number };
+  default_for_tiers: string[];
+  replacement_id?: string;
+}
+export interface AiPurposeSummary {
+  purpose_key: string;
+  display_name: string;
+  description: string;
+  tier: string;
+  max_tokens: number;
+  input: string;
+  is_active: boolean;
+}
+export interface AiPurposeFile {
+  _doc?: string;
+  purpose_key: string;
+  display_name: string;
+  description: string;
+  tier: string;
+  max_tokens: number;
+  input: "text" | "image";
+  template_vars: string[];
+  system_prompt: string;
+  user_prompt_template: string;
+  output_schema: Record<string, unknown>;
+  is_active: boolean;
+}
+export interface AiAdminStatus {
+  available: boolean;
+  writable: boolean;
+  purpose_count: number;
+  model_count: number;
+}
+export interface AiPurposeList {
+  writable: boolean;
+  available: boolean;
+  tiers: string[];
+  purposes: AiPurposeSummary[];
+}
+export interface AiPurposeDetail {
+  purpose: AiPurposeFile;
+  tiers: string[];
+  writable: boolean;
+}
+export interface AiUsagePurpose {
+  purpose_key: string;
+  calls: number;
+  ok_calls: number;
+  error_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  est_cost_usd: number;
+  models: string[];
+}
+export interface AiUsageReport {
+  days: number;
+  total_cost_usd: number;
+  purposes: AiUsagePurpose[];
+}
+export interface AiTestResult {
+  ok: boolean;
+  kind?: "unavailable" | "error";
+  reason?: string;
+  model?: string;
+  input_tokens?: number;
+  output_tokens?: number;
+  est_cost_usd?: number;
+  result?: unknown;
+}
+
+const aiFetch = (path: string, init?: RequestInit) =>
+  adminApiFetch("/api/admin/ai", path, init);
+
+export const aiAdmin = {
+  status: (): Promise<AiAdminStatus> => aiFetch("/status"),
+  listPurposes: (): Promise<AiPurposeList> => aiFetch("/purposes"),
+  getPurpose: (key: string): Promise<AiPurposeDetail> => aiFetch(`/purposes/${encodeURIComponent(key)}`),
+  updatePurpose: (key: string, purpose: AiPurposeFile) =>
+    aiFetch(`/purposes/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ purpose }) }),
+  models: (): Promise<{ models: AiModelEntry[] }> => aiFetch("/models"),
+  usage: (days = 30): Promise<AiUsageReport> => aiFetch(`/usage?days=${days}`),
+  test: (): Promise<AiTestResult> => aiFetch("/test", { method: "POST" }),
+};
+
 // ── The reference layer (SPEC_PET_DESIGNER_FLOW §7.4) ────────────────────────
 //
 // ONE record shape, three endpoints. Every way of starting a pet ends in the same
@@ -479,6 +576,11 @@ export interface PetReference {
   source: "catalog" | "txt2img" | "upload" | "design";
   min_strength: number | null;    // the clamp that was applied, so the UI can say so
   generated: boolean;             // false = a curated cache hit, free and instant
+  // The AI's guess at the subject (animal or person) for an upload
+  // (SPEC_UPLOAD_LIKENESS §2.5), or null. The upload door prefills its noun field with
+  // this on an empty submit; the human's typed word wins, so it is null-or-ignored
+  // whenever the user named the subject themselves.
+  suggested_subject: string | null;
 }
 
 export interface DesignAxisOption {

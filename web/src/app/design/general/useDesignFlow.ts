@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useReducer, useState } from "react";
 import {
   createReference, previewReference, fetchDesignAxes, fetchMotions, fetchEntitlement,
-  type DesignAxis, type Entitlement,
+  type DesignAxis, type Entitlement, type PetReference,
 } from "@/lib/api";
 import {
   designFlowReducer, initialState, frontier, expandedStep, hasDesign,
@@ -85,15 +85,19 @@ export function useDesignFlow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, species, maxPoses, Boolean(state.reference)]);
 
-  const fillReference = useCallback(async (form: FormData) => {
+  const fillReference = useCallback(async (form: FormData): Promise<PetReference | null> => {
     dispatch({ type: "referenceRequested" });
     // Read the seq AFTER the bump: +1 is what this request is stamped with.
     const seq = stateSeqAfterBump(state.seq);
     try {
       const reference = await createReference(form);
       dispatch({ type: "referenceFilled", seq, reference });
+      // Returned so the upload door can prefill its noun from the AI's guess
+      // (SPEC_UPLOAD_LIKENESS §2.5). Other callers ignore it.
+      return reference;
     } catch (e) {
       dispatch({ type: "referenceFailed", seq, message: (e as Error).message });
+      return null;
     }
   }, [state.seq]);
 

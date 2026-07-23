@@ -246,7 +246,20 @@ export function designFlowReducer(
   switch (action.type) {
     case "referenceRequested":
       // Bumping seq here is what invalidates every in-flight result (§7.6).
-      return { ...state, seq: state.seq + 1, referenceBusy: true, referenceError: null };
+      //
+      // The lock resets NOW, when the draw fires — not when it lands. The box is a
+      // door into the chooser even while locked (an artifact never unmounts), so a
+      // fill can fire with baseConfirmed still true; without this reset the page
+      // spent the whole ~10 s draw saying "🔒 locked in" under "drawing…", with
+      // step 2 open and designable against the OUTGOING animal. Asking for a new
+      // base IS unlocking, so everything baseUnlocked voids, this voids.
+      return {
+        ...state, seq: state.seq + 1, referenceBusy: true, referenceError: null,
+        baseConfirmed: false,
+        preview: null, previewBusy: false, previewError: null,
+        designConfirmed: false, previewFailureDismissed: false,
+        expandedOverride: null,
+      };
 
     case "referenceFailed":
       if (action.seq !== state.seq) return state;
@@ -301,31 +314,38 @@ export function designFlowReducer(
       // controls unmount with it. The DESIGN survives — colour and shape were never
       // properties of the base (§0.1) — but the preview cannot: it is a function of
       // (base × design), and the base is in play again. Nor can a dismissal of a
-      // failure to draw it (see referenceFilled).
-      return { ...state, baseConfirmed: false, preview: null, designConfirmed: false,
+      // failure to draw it (see referenceFilled). previewBusy clears with it: the
+      // seq bump drops an in-flight preview's result, and a busy flag whose result
+      // can never land is a "Drawing…" button disabled forever.
+      return { ...state, baseConfirmed: false, preview: null, previewBusy: false,
+               previewError: null, designConfirmed: false,
                previewFailureDismissed: false, expandedOverride: null, seq: state.seq + 1 };
 
+    // Every design change bumps seq, which drops an in-flight preview's result —
+    // so each must clear previewBusy too, or that never-landing result leaves the
+    // preview button saying "Drawing…" forever (the swatches stay live during a
+    // redraw, so this is an ordinary click away).
     case "colorPicked":
-      return { ...state, seq: state.seq + 1, color: action.color, preview: null, designConfirmed: false, previewFailureDismissed: false };
+      return { ...state, seq: state.seq + 1, color: action.color, preview: null, previewBusy: false, designConfirmed: false, previewFailureDismissed: false };
 
     case "accessoryToggled": {
       const has = state.accessories.includes(action.accessory);
       const next = has
         ? state.accessories.filter((a) => a !== action.accessory)
         : [...state.accessories, action.accessory].slice(0, MAX_ACCESSORIES);
-      return { ...state, seq: state.seq + 1, accessories: next, preview: null, designConfirmed: false, previewFailureDismissed: false };
+      return { ...state, seq: state.seq + 1, accessories: next, preview: null, previewBusy: false, designConfirmed: false, previewFailureDismissed: false };
     }
 
     case "axisPicked":
       return { ...state, seq: state.seq + 1,
                axisPicks: { ...state.axisPicks, [action.axis]: action.key },
-               preview: null, designConfirmed: false, previewFailureDismissed: false };
+               preview: null, previewBusy: false, designConfirmed: false, previewFailureDismissed: false };
 
     case "extraChanged":
-      return { ...state, seq: state.seq + 1, extra: action.text, preview: null, designConfirmed: false, previewFailureDismissed: false };
+      return { ...state, seq: state.seq + 1, extra: action.text, preview: null, previewBusy: false, designConfirmed: false, previewFailureDismissed: false };
 
     case "strengthPicked":
-      return { ...state, seq: state.seq + 1, strength: action.strength, preview: null, designConfirmed: false, previewFailureDismissed: false };
+      return { ...state, seq: state.seq + 1, strength: action.strength, preview: null, previewBusy: false, designConfirmed: false, previewFailureDismissed: false };
 
     case "nameChanged":
       // The name is a label, not a design input — it never invalidates the preview.

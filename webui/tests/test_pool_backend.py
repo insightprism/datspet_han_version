@@ -322,6 +322,19 @@ def test_pool_mode_never_imports_the_ml_factory(tmp_path, monkeypatch):
     # motion_profiles is allowed and expected; the ML factory must be absent.
     assert "pet_factory.factory" not in sys.modules
 
+    # The AI engine, extended onto this gate (SPEC_DATSPET_AI_ENGINE §11): the new
+    # engine modules import on the GPU-less web tier without dragging in the ML
+    # factory. ai_engine imports anthropic LAZILY (inside its one HTTPS call), so
+    # module import stays clean even with the ML stack absent.
+    import ai_engine
+    import ai_admin
+    from pet_factory import ai_models, ai_purposes
+    importlib.reload(ai_models)
+    importlib.reload(ai_purposes)
+    importlib.reload(ai_engine)
+    importlib.reload(ai_admin)
+    assert "pet_factory.factory" not in sys.modules
+
 
 # Parity pins for the review fixes (transparent references + composed prompts) ---
 def test_encode_reference_image_preserves_alpha(pool_app, tmp_path):

@@ -1,0 +1,23 @@
+{
+  "_doc": "SPEC_UPLOAD_LIKENESS §2.5 (lever E / Phase 2.1), purpose 1 of 2 — the gate that makes the 'nothing to redraw' branch real. It runs BEFORE pet_likeness so a screenshot, a landscape, a logo, or a blurry photo degrades to the manual field instead of being captioned confidently. The subject may be an ANIMAL or a PERSON: the product started as pet-only, but users upload photos of themselves and of people to see them animated, so the gate is subject-versus-not-a-subject, not animal-versus-not-an-animal. `fast` tier — a near-binary judgement (SPEC_DATSPET_AI_ENGINE decision 17: start small, bump on evidence). This is a CONSUMER contribution: it lives in the engine's registry the way an animal's base.png lives in animal_catalog, but the engine (SPEC_DATSPET_AI_ENGINE) owns none of it and names no purpose key.",
+  "purpose_key": "image_triage",
+  "display_name": "Upload triage",
+  "description": "Cheap gate on an uploaded photo: is the subject a single, clearly-depicted animal or person we can redraw as a cartoon? Runs first; a fail routes the user back to the manual field.",
+  "tier": "fast",
+  "max_tokens": 128,
+  "input": "image",
+  "template_vars": [],
+  "system_prompt": "You screen uploaded images for a cartoon generator. Decide only two things: whether the main subject is a single, clearly-depicted subject we could redraw as a cartoon — an animal OR a person — as opposed to a screenshot, object, scene, chart, logo, or text; and whether it is clear enough to redraw as a side-profile cartoon sprite. A photo, a drawing, or a cartoon all count — the question is subject-versus-not-a-subject, not photo-versus-illustration. Do not name the subject here. Answer only in the required JSON shape.",
+  "user_prompt_template": "Is the main subject of this image a single animal or person, clear enough to redraw as a cartoon sprite?",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "is_subject": { "type": "boolean" },
+      "usable": { "type": "boolean" },
+      "reason": { "type": "string" }
+    },
+    "required": ["is_subject", "usable", "reason"],
+    "additionalProperties": false
+  },
+  "is_active": true
+}

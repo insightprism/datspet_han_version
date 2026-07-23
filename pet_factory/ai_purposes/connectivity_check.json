@@ -1,0 +1,22 @@
+{
+  "_doc": "The engine's one self-owned purpose (SPEC_DATSPET_AI_ENGINE §3.1). It exists so the admin's Test-configuration button has something real to call: install a key, press it, and watch a row land in ai_usage with real tokens and a derived cost. It carries no pet knowledge — `tier: fast` (identifying nothing is not hard), a two-token prompt, no image, no template variables — so shipping it does not smuggle a product concern into the engine. output_schema uses only structured-output-supported keywords (no minimum/maximum/minLength/maxLength — the API silently ignores those, so the purpose validator rejects them; §11).",
+  "purpose_key": "connectivity_check",
+  "display_name": "Connectivity check",
+  "description": "A no-op probe that proves the AI engine is wired: it resolves a model, makes one real structured-output call, and records a usage row.",
+  "tier": "fast",
+  "max_tokens": 64,
+  "input": "text",
+  "template_vars": [],
+  "system_prompt": "You are a connectivity probe for the DatsPet AI engine. Answer only in the required JSON shape.",
+  "user_prompt_template": "Reply with ok set to true and echo set to the single word pong.",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "ok": { "type": "boolean" },
+      "echo": { "type": "string" }
+    },
+    "required": ["ok", "echo"],
+    "additionalProperties": false
+  },
+  "is_active": true
+}

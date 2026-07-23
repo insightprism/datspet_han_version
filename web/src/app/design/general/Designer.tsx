@@ -61,6 +61,17 @@ export default function Designer() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pending, setPending] = useState<PendingSource | null>(null);
   const [typedDraft, setTypedDraft] = useState("");
+  // The upload door's OWN noun ("what animal is this a photo of?"), separate from the typed
+  // door's draft (SPEC_UPLOAD_LIKENESS §2.1, decision 3a). Kept here for the same reason as
+  // `typedDraft`: <Step> unmounts its children on collapse, so a value held in <SourceRail>
+  // would be destroyed every time step 1 locked. Two independent fields, so the upload door
+  // no longer borrows the typed door's value across the page.
+  const [uploadNoun, setUploadNoun] = useState("");
+  // The upload door's "AI enabled" toggle (default on). On → the AI names the photo
+  // (animal or person) and the noun field is hidden; off → the field shows and the
+  // user types it. Held here, not in <SourceRail>, for the same unmount reason as
+  // uploadNoun (Step unmounts its children on lock).
+  const [aiEnabled, setAiEnabled] = useState(true);
   // Client-side intake failures (§1.10) — a HEIC, a .txt, an unreadable file. Local rather
   // than reducer state because nothing downstream depends on it: it is not a property of
   // the base animal, it is a note about a file we declined to send.
@@ -137,6 +148,13 @@ export default function Designer() {
     setPreparing(true);
     try {
       const prepared = await prepareUpload(file);
+      // A new photo is a NEW question ("what is THIS photo of?"), so the previous
+      // photo's noun must not carry over — otherwise a stale "man" wins over the
+      // captioner on the next upload (typed-noun-wins, decision 3) and a parakeet
+      // gets drawn as a man. Clearing it lets the captioner re-answer for the new
+      // photo, or the user re-type. This funnels every intake path (picker, drop,
+      // paste), so it is the one right place to reset it.
+      setUploadNoun("");
       choose({ kind: "upload", file: prepared, url: URL.createObjectURL(prepared) });
     } catch (e) {
       // UploadRejected carries copy written for the user; anything else is a surprise and
@@ -183,13 +201,33 @@ export default function Designer() {
       // redraw takes `species = ... or ref["description"]` (app.py:966). It also recovers the
       // coat/plumage axis, which an upload with no animal silently loses (app.py:841).
       //
-      // The user's own word beats any inference — nobody out-names an owner on their own dog.
-      const noun = typedDraft.trim();
-      if (noun) form.append("animal", noun);
+      // The noun comes from the upload door's OWN field (`uploadNoun`), not the typed door's
+      // draft (decision 3a): the two ask different questions and share no state. The user's
+      // own word beats any inference — nobody out-names an owner on their own dog.
+      //
+      // The "AI enabled" toggle decides who names it. ON → send no noun and ai_caption=true,
+      // so the AI identifies the animal/person (the noun field is hidden). OFF → send the
+      // user's typed noun and ai_caption=false, so an empty field draws "pet" rather than
+      // being captioned anyway (the toggle disables the captioner on the server, not just
+      // the field).
+      form.append("ai_caption", String(aiEnabled));
+      if (!aiEnabled) {
+        const noun = uploadNoun.trim();
+        if (noun) form.append("animal", noun);
+      }
     } else {
       form.append("animal", source.animal.trim());
     }
-    fillReference(form).then(() => setPendingDrawn(true));
+    fillReference(form).then((ref) => {
+      setPendingDrawn(true);
+      // The captioner's guess prefills the upload noun (SPEC_UPLOAD_LIKENESS §2.5,
+      // the "AI fills THIS field on an empty submit" the door already anticipates,
+      // SourceRail.tsx:157). The subject may be an animal or a person. The human's
+      // typed word wins, so fill only when the field is still empty (decision 3).
+      if (source.kind === "upload" && !uploadNoun.trim() && ref?.suggested_subject) {
+        setUploadNoun(ref.suggested_subject);
+      }
+    });
   }
 
   /** Choose a source and draw it in one act — "select, and it executes". */
@@ -364,6 +402,10 @@ export default function Designer() {
             uploadPending={pending?.kind === "upload"}
             uploadIsDrawn={pending?.kind === "upload" && pendingDrawn}
             onUploadDraw={() => { if (pending?.kind === "upload") drawFrom(pending); }}
+            uploadNoun={uploadNoun}
+            onUploadNoun={setUploadNoun}
+            aiEnabled={aiEnabled}
+            onAiEnabled={setAiEnabled}
           />
 
           {/* Intake wins when both are set: the newer complaint is about the file the user

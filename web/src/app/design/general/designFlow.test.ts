@@ -32,7 +32,7 @@ const ref = (id: string, name: string): PetReference => ({
   reference_id: id, image_url: `/api/reference/${id}.png`,
   description: name, display_name: name,
   motion_profile: "quadruped", source: "catalog",
-  min_strength: null, generated: false,
+  min_strength: null, generated: false, suggested_subject: null,
 });
 
 /** Step 1 done: an archetype is in the box and the user has said it is the one. */
@@ -94,8 +94,9 @@ describe("§7.6 — what a new archetype voids, and what it must not", () => {
   it("clears a dismissal when a new archetype lands WITHOUT an unlock (the click-the-box path)", () => {
     // Designer.tsx's `onOpen` is `setDialogOpen(true)` — it does NOT dispatch baseUnlocked.
     // So clicking the reference box itself, rather than the lock toggle, lands a fill with
-    // the dismissal still set. This is the path that makes referenceFilled's reset
-    // load-bearing rather than belt-and-braces.
+    // the dismissal still set. referenceRequested now resets it at fire time, so in the
+    // app this fill-time reset is the backstop — but it is pinned separately, because a
+    // fill whose request was somehow skipped must not smuggle a stale dismissal in.
     let s = designFlowReducer(designed(), { type: "previewFailureDismissed" });
     expect(previewSettled(s)).toBe(true);
 
@@ -140,5 +141,58 @@ describe("§7.6 — what a new archetype voids, and what it must not", () => {
       type: "referenceFilled", seq: s.seq - 1, reference: ref("old", "ferret"),
     });
     expect(stale).toBe(s);                 // identity: the action was ignored entirely
+  });
+});
+
+describe("the lock cannot outlive the base it recorded", () => {
+  // The box is a door into the chooser even while locked — artifacts never unmount —
+  // so a new draw can FIRE with baseConfirmed still true. The regression: the request
+  // left the lock standing, and for the whole ~10 s draw the page said "🔒 locked in"
+  // under "drawing…", with step 2 open and designable against the OUTGOING animal.
+  it("reopens step 1 the moment a new draw fires, not when it lands", () => {
+    let s = atStepTwo();
+    expect(frontier(s, AXES)).toBe(2);
+    s = designFlowReducer(s, { type: "referenceRequested" });
+    expect(s.referenceBusy).toBe(true);
+    expect(s.baseConfirmed).toBe(false);
+    expect(frontier(s, AXES)).toBe(1);     // step 2 unmounts for the whole draw
+  });
+
+  it("voids the outgoing animal's preview, design lock, and dismissal with it", () => {
+    let s = designed();
+    s = designFlowReducer(s, { type: "previewRequested" });
+    s = designFlowReducer(s, { type: "previewLanded", seq: s.seq, preview: ref("p1", "tabby") });
+    s = designFlowReducer(s, { type: "designAccepted" });
+    expect(frontier(s, AXES)).toBe(3);     // fully settled…
+    s = designFlowReducer(s, { type: "referenceRequested" });
+    expect(s.preview).toBeNull();          // …and a new draw voids all of it:
+    expect(s.designConfirmed).toBe(false); // the preview was (base × design), and
+    expect(frontier(s, AXES)).toBe(1);     // the base is in play again.
+  });
+});
+
+describe("a seq bump must not strand a busy flag", () => {
+  // Bumping seq voids whatever is in flight — its result is dropped as stale. A busy
+  // flag that only that result could clear then stays true forever: a "Drawing…"
+  // button disabled for the rest of the session. The swatches stay live during a
+  // redraw, so this was one ordinary click away.
+  it("a design change mid-preview clears previewBusy, and the stale result still drops", () => {
+    let s = designed();
+    s = designFlowReducer(s, { type: "previewRequested" });
+    const inFlightSeq = s.seq;
+    expect(s.previewBusy).toBe(true);
+    s = designFlowReducer(s, { type: "colorPicked", color: "teal" });
+    expect(s.previewBusy).toBe(false);
+    const landed = designFlowReducer(s, {
+      type: "previewLanded", seq: inFlightSeq, preview: ref("p1", "tabby"),
+    });
+    expect(landed).toBe(s);                // the old design's preview never lands
+  });
+
+  it("unlocking the base mid-preview clears previewBusy", () => {
+    let s = designed();
+    s = designFlowReducer(s, { type: "previewRequested" });
+    s = designFlowReducer(s, { type: "baseUnlocked" });
+    expect(s.previewBusy).toBe(false);
   });
 });

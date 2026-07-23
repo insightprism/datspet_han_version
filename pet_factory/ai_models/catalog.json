@@ -1,0 +1,35 @@
+{
+  "_doc": "AI model catalog (SPEC_DATSPET_AI_ENGINE §2). One entry per model, every fact in one place — the registry pattern this repo already runs four times (motion_profiles / animal_catalog / tiers / design_axes), applied to models. Adding, deprecating, or removing a model is a single-file edit; the guard test (tests/test_ai_models.py) fails the build on a half-formed entry, and the loader re-validates on first read (a malformed catalog raises CatalogError rather than pricing a call wrong). `tier` is the model's natural tier; `default_for_tiers` is the resolution map a purpose's `tier` string resolves through, so a model swap is a one-line edit here (§6/§17). `status` + `replacement_id` make model churn a one-line lifecycle edit (draft → available → deprecated → retired); deprecated/retired entries stay so historical ai_usage rows still price at read time (§5, catalog rule 5). `cost_per_mtok` is US dollars per MILLION tokens — cost is DERIVED at read time from these numbers, never stored (§5). `provider` is a FACT about a model, not a dispatcher (§7, decision 9): every entry is anthropic today; a second provider arrives as new entries plus one dispatch arm, never a re-architecture. Sonnet 5's $2/$10 introductory rate runs through 2026-08-31; the sticker $3/$15 is carried here so a correction is a one-line edit when the intro lapses.",
+  "models": [
+    {
+      "id": "claude-opus-4-8",
+      "label": "Claude Opus 4.8",
+      "provider": "anthropic",
+      "tier": "capable",
+      "status": "available",
+      "vision": true,
+      "cost_per_mtok": { "input": 5.00, "output": 25.00 },
+      "default_for_tiers": ["capable"]
+    },
+    {
+      "id": "claude-sonnet-5",
+      "label": "Claude Sonnet 5",
+      "provider": "anthropic",
+      "tier": "balanced",
+      "status": "available",
+      "vision": true,
+      "cost_per_mtok": { "input": 3.00, "output": 15.00 },
+      "default_for_tiers": ["balanced"]
+    },
+    {
+      "id": "claude-haiku-4-5",
+      "label": "Claude Haiku 4.5",
+      "provider": "anthropic",
+      "tier": "fast",
+      "status": "available",
+      "vision": true,
+      "cost_per_mtok": { "input": 1.00, "output": 5.00 },
+      "default_for_tiers": ["fast"]
+    }
+  ]
+}

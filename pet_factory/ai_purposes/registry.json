@@ -1,0 +1,8 @@
+{
+  "_doc": "AI purpose registry (SPEC_DATSPET_AI_ENGINE §3). One entry per purpose, naming a <key>.json file in this directory — the design_axes pattern, applied to prompts. A registry entry without its file, or a purpose file without its entry, fails the build (tests/test_ai_purposes.py — the half-formed-entry rule). `connectivity_check` is the engine's OWN purpose (§3.1): it tests the engine, so the engine is end-to-end demonstrable — key → admin → Test configuration → a usage row — with zero product features built, and it always stays. Everything else here is a CONSUMER contribution, added the way an animal contributes a base.png: `image_triage` + `pet_likeness` are SPEC_UPLOAD_LIKENESS §2.5 (lever E / Phase 2.1 — the upload captioner). Adding a purpose is a new file + a new registry line and never touches the engine (§0.1); the engine itself names no purpose key (§11, pinned in test_ai_engine.py).",
+  "purposes": [
+    { "key": "connectivity_check" },
+    { "key": "image_triage" },
+    { "key": "pet_likeness" }
+  ]
+}

@@ -89,6 +89,25 @@ CREATE TABLE IF NOT EXISTS bundle_tokens (
     downloaded_at       REAL,             -- first successful download; NULL until then
     FOREIGN KEY (pet_id) REFERENCES pets(id) ON DELETE CASCADE
 );
+
+-- AI engine usage ledger (SPEC_DATSPET_AI_ENGINE §5). Append-only: a re-run is a
+-- NEW row, never an UPDATE. Cost is NOT stored — it is derived at read time from
+-- the model catalog's cost_per_mtok, so a pricing correction stays fixable and a
+-- retired model's historical rows still price. `external_user_id` follows db.py's
+-- existing identity scoping (a value = the DatsMe user; NULL = standalone).
+CREATE TABLE IF NOT EXISTS ai_usage (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                  REAL NOT NULL,
+    purpose_key         TEXT NOT NULL,
+    model_id            TEXT NOT NULL,
+    input_tokens        INTEGER NOT NULL DEFAULT 0,
+    output_tokens       INTEGER NOT NULL DEFAULT 0,
+    ok                  INTEGER NOT NULL DEFAULT 1,   -- 1 = call succeeded, 0 = failed
+    error_code          TEXT,                          -- set only when ok=0
+    external_user_id    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_ts ON ai_usage(ts);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_purpose ON ai_usage(purpose_key);
 """
 
 
@@ -526,6 +545,53 @@ def burn_bundle_token(token: str) -> None:
             "UPDATE bundle_tokens SET downloaded_at=? WHERE token=?",
             (time.time(), token))
         conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# AI engine usage ledger (SPEC_DATSPET_AI_ENGINE §5). Append-only — insert_ai_usage
+# never updates. Reads aggregate with a GROUP BY (the rollup a platform with orders
+# of magnitude more traffic needs is deliberately NOT adopted, §7). Cost is derived
+# by the caller from ai_models.price at read time, so this layer returns token sums.
+# ---------------------------------------------------------------------------
+def insert_ai_usage(*, ts: float, purpose_key: str, model_id: str,
+                    input_tokens: int, output_tokens: int, ok: bool,
+                    error_code: Optional[str] = None,
+                    external_user_id: Optional[str] = None) -> None:
+    """Append one usage row (never an UPDATE — a re-run is a new row)."""
+    with _lock:
+        conn = _connect()
+        conn.execute(
+            """INSERT INTO ai_usage
+               (ts, purpose_key, model_id, input_tokens, output_tokens, ok,
+                error_code, external_user_id)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (ts, purpose_key, model_id, int(input_tokens), int(output_tokens),
+             1 if ok else 0, error_code, external_user_id),
+        )
+        conn.commit()
+
+
+def ai_usage_summary(since: Optional[float] = None) -> list[dict]:
+    """Per (purpose_key, model_id) usage aggregation, newest activity first.
+
+    Grouped by model as well as purpose because cost is a per-MODEL rate: the
+    admin derives USD from ai_models.price(model_id, in, out) per row and sums by
+    purpose for display. `since` (a unix-epoch float) bounds the window; None
+    means all-time. Returns {purpose_key, model_id, calls, ok_calls, error_calls,
+    input_tokens, output_tokens}."""
+    where, params = ("WHERE ts >= ?", (since,)) if since is not None else ("", ())
+    with _lock:
+        rows = _connect().execute(
+            f"""SELECT purpose_key, model_id,
+                       COUNT(*)                       AS calls,
+                       SUM(ok)                        AS ok_calls,
+                       SUM(CASE WHEN ok=0 THEN 1 ELSE 0 END) AS error_calls,
+                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(output_tokens), 0) AS output_tokens
+                FROM ai_usage {where}
+                GROUP BY purpose_key, model_id
+                ORDER BY MAX(ts) DESC""", params).fetchall()
+    return [dict(r) for r in rows]
 
 
 def purge_expired_bundle_tokens(grace_s: float = 3600) -> int:

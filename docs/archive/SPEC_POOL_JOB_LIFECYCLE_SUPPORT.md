@@ -1,11 +1,22 @@
-# SPEC — Pool job-lifecycle support (DatsPet side)
+# SPEC — Pool job-lifecycle support (DatsPet side) — CLOSED / DELIVERED
 
-> **Status: DRAFT / FOR REVIEW — 2026-07-21.** App-side companion to the pool-side spec
-> `../shared_gpu_cpu/docs/pet_factory_watchdog_failure_fix_spec.md` (read it first; section refs
-> below like *pool §9.1* point there). That spec hardens the **pool**; this one lists what
-> **DatsPet** (`pet_factory/` engine, `pool_handler/`, `webui/` app-server, `web/` frontend) must
-> do so the pool's new self-heal, cancel, and abandonment features actually work end-to-end.
-> Nothing here ships without approval.
+> **Status: CLOSED / DELIVERED — shipped & verified in production (2026-07-21).** All items
+> (A fail-fast + `preload_dlls`, B per-frame cutout progress, C consumer heartbeat, D user Stop
+> button) are **built, deployed to pet.datsme.me, and verified live** (deploy CHECKLIST C1 = 14
+> passed / 0 failed; the design-page Stop button confirmed end-to-end with `cancel_reason=
+> user_stopped`). The pool side released as `shared_gpu_cpu` 0.1.7/0.1.8.
+>
+> **Close-out record — read the pool spec §0 (`../shared_gpu_cpu/docs/…`) for the full delivery
+> status.** Three items deviated from this design during implementation, two of them on this side:
+> (1) **item A was incomplete** — installing the CUDA wheels wasn't enough; `_rembg()` must call
+> `onnxruntime.preload_dlls()` (folded into A). (2) The **consumer-abandonment (C) proved harmful**
+> for the mobile/desktop flow — pausing the poll on screen-lock / tab-hide caused wrong "abandoned"
+> cancels; the pool now keeps abandonment **opt-in and OFF** for datspet, so C's keepalive /
+> poll-pause plumbing is **vestigial** and can be removed in a small cleanup (nothing depends on
+> it). (3) omen-pet's worker runs from a bespoke venv, not `~/.pool` — verify per node.
+>
+> This document is closed and archived. Reopen only to remove the vestigial C plumbing or to wire
+> `pet_factory`'s opt-in stall timer (its per-frame progress, item B, is already shipped).
 
 ## 0. Why DatsPet is involved at all
 

@@ -1,6 +1,11 @@
 # SPEC — DatsPet AI Engine (model catalog + purpose registry)
 
-**Status:** proposed, 2026-07-23. **Rev.2** — separated from its first consumer (§0.1).
+**Status:** proposed, 2026-07-23. **Rev.3 — implementation-ready.** Rev.2 separated the engine
+from its first consumer (§0.1); Rev.3 pins what a build actually needs — verified against the
+running `datsme_me/api/apps/ai_engine/` and the current Anthropic API: the API key's name and
+source (§4), the `anthropic` dependency and why it stays GPU-less-safe (§4/§9), the tier defaults
+(§4), the structured-output schema constraints the validator must reject (§11), and Sonnet 5's
+introductory pricing (§2).
 **Adapts:** `datsme_me` `api/apps/ai_engine/` — the design concept, not the code.
 **Repos touched:** `datsme-pet-factory_wu` (`webui/` + two data subpackages). No GPU, no pool handler.
 
@@ -108,7 +113,7 @@ A data subpackage beside `tiers/` and `design_axes/`, importable with **no ML de
 
     { "id": "claude-sonnet-5", "label": "Claude Sonnet 5", "provider": "anthropic",
       "tier": "balanced", "status": "available", "vision": true,
-      "cost_per_mtok": { "input": 3.00, "output": 15.00 },
+      "cost_per_mtok": { "input": 3.00, "output": 15.00 },   // $2/$10 introductory through 2026-08-31
       "default_for_tiers": ["balanced"] },
 
     { "id": "claude-haiku-4-5", "label": "Claude Haiku 4.5", "provider": "anthropic",
@@ -124,6 +129,12 @@ own schedule regardless of how many features you have — DatsMe's catalog alrea
 retired `gpt-4` family and a `claude-sonnet-4` deprecated with a date, kept so historical usage
 rows still price. A `status` + `replacement_id` pair turns "this model is going away" from a
 grep across the codebase into a one-line edit that the guard test enforces.
+
+**`provider` is a fact about a model, not a dispatcher** (decision 9). Today every entry is
+`anthropic`, but the `fast` tier is the natural home for a cheap cross-provider model — a Gemini
+Flash-lite for near-binary vision, say — and that arrives as catalog entries plus one `google`
+dispatch arm, never a re-architecture. Captioning (identify the animal, name its colours) is
+exactly the low-stakes, high-volume job that would motivate it.
 
 **Guard test** (`pet_factory/tests/`), mirroring DatsMe's import-time validator and this repo's
 existing registry guards — the build fails on a half-formed entry:
@@ -156,7 +167,11 @@ web tier with no migration.
   "purpose_key": "pet_likeness",
   "display_name": "Pet likeness from a photo",
   "description": "Turns an uploaded photo into the structured description the redraw prompt needs.",
-  "tier": "capable",                 // resolved through the catalog, not a pinned model id
+  "tier": "fast",                    // resolved through the catalog, not a pinned model id.
+                                     // Identifying an animal is not hard — default to the fast
+                                     // tier (Haiku, or a cheap cross-provider model); bumping to
+                                     // balanced/capable is a one-line edit if the corpus
+                                     // (SPEC_UPLOAD_LIKENESS §4) shows it is warranted.
   "max_tokens": 512,
   "input": "image",
   "system_prompt": "You identify animals in photographs for a cartoon-pet generator. …",
@@ -218,10 +233,19 @@ object.
   environment fact, not a style choice.
 - **`DATSPET_AI_API_KEY` unset ⇒ the whole engine is inert** and `call_purpose` raises a typed
   `AIUnavailable` that every caller degrades on — the standalone-first posture
-  `datsme_integration.py` already uses for `DATSME_HMAC_SECRET`.
-- **Model: `claude-opus-4-8`** for `capable`, `claude-haiku-4-5` for `fast`. Not
-  cost-downgraded by default — that is an admin decision, and the tier indirection is what makes
-  it a one-line one.
+  `datsme_integration.py` already uses for `DATSME_HMAC_SECRET`. **The value is the platform's
+  Anthropic key** — the same secret DatsMe holds as `ANTHROPIC_API_KEY` (`datsme_me/api/.env`),
+  copied into the gitignored `pet_env.local.sh` under DatsPet's own name so its secret namespace
+  stays distinct. The engine passes it explicitly to `anthropic.Anthropic(api_key=…)`, so the
+  name is DatsPet's to choose.
+- **Tier defaults: `fast` → `claude-haiku-4-5`, `balanced` → `claude-sonnet-5`,
+  `capable` → `claude-opus-4-8`.** The tier a purpose asks for is honored — not cost-downgraded
+  by default — and re-pointing a tier's default is a one-line catalog edit (`default_for_tiers`).
+- **New dependency: `anthropic`** (which pulls `httpx`), pinned in `webui/requirements.txt`. Both
+  are **pure-Python — no numpy, no torch** — so the GPU-less deploy gate ("`import numpy` must
+  fail") still passes and the web tier stays clean. Structured outputs go through
+  `messages.parse()` with a Pydantic model, or `output_config={"format": {"type": "json_schema",
+  "schema": …}}` on `messages.create()`; do **not** carry `temperature` (§1 — it 400s).
 
 ---
 
@@ -316,7 +340,7 @@ not a copy.
 |---|---|---|
 | **1** | `pet_factory/ai_models/` — `catalog.json`, `__init__.py` (`resolve(tier)`, `entry(id)`, `price(...)`), guard test | No API calls; pure data |
 | **2** | `pet_factory/ai_purposes/` — `registry.json`, the purpose **schema + validator**, `connectivity_check.json`, guard tests (incl. catalog rules 6–7 and the no-back-import rule) | Still no API calls |
-| **3** | `webui/ai_engine.py` — `call_purpose()`, proxy handling, `AIUnavailable`, structured outputs | First live call; key unset ⇒ inert |
+| **3** | `webui/ai_engine.py` — `call_purpose()`, proxy handling, `AIUnavailable`, structured outputs; add `anthropic` to `webui/requirements.txt` (pure-Python, GPU-less-safe) | First live call; key unset ⇒ inert |
 | **4** | `db.py` — `ai_usage` table; record on every call | |
 | **5** | `webui/ai_admin.py` + admin tab, incl. **Test configuration** | **The engine is DONE here** |
 
@@ -352,6 +376,8 @@ that work does not appear in this build order and does not gate it.
 | 13 | Do the pet purposes ship with the engine? | **No — features contribute them (§0.1)** | They change for a different reason (the product question) than the engine does (a model is retired). An engine that knows what a coat pattern is has broken the rule the rest of this repo is built on |
 | 14 | Is this spec deliverable without any pet feature? | **Yes, and that is the acceptance test** | Key → admin → **Test configuration** → a usage row. If `SPEC_UPLOAD_LIKENESS` is never built, nothing here becomes dead code (§9) |
 | 15 | Can a consumer import engine internals? | **No — `call_purpose()` + its typed errors are the whole surface** | Guard-tested both ways (§11). A consumer reaching past the seam re-couples what §0.1 separated |
+| 16 | Where does the API key come from, and what is it named? | **`DATSPET_AI_API_KEY`, set from the platform Anthropic key** | The same secret DatsMe holds as `ANTHROPIC_API_KEY`, copied into `pet_env.local.sh` under DatsPet's own name so the namespace stays distinct; passed explicitly to the SDK (§4) |
+| 17 | What tier does a captioning purpose default to? | **`fast` — start small, bump on evidence** | Identifying an animal is not hard; the fast tier (Haiku, or a cheap cross-provider model once `provider` earns a second arm) is the right default, and the tier indirection makes bumping it a one-line change (§2, §3) |
 
 ---
 
@@ -362,6 +388,12 @@ Same posture as `motion_profiles` and `design_axes` — the build fails on a hal
 - Catalog rules 1–7 (§2).
 - Every purpose's `tier` resolves; `output_schema` is valid JSON Schema with
   `additionalProperties: false` (a structured-outputs requirement, so this is a real gate).
+- **`output_schema` uses only structured-output-supported keywords.** The API enforces
+  type/enum/const/required/`additionalProperties:false`, but **silently ignores** numeric
+  (`minimum`/`maximum`/`multipleOf`) and string-length (`minLength`/`maxLength`) constraints. The
+  validator **rejects** those keywords rather than let a purpose author ship a bound the model
+  will not honor — a false guarantee is worse than none. (This bites the deferred `likeness_score`
+  scorer's 0–100 integers in `SPEC_UPLOAD_LIKENESS` §4.3, not the captioner's string/enum output.)
 - Every `{placeholder}` in a `user_prompt_template` is supplied by its caller — the failure mode
   is a prompt that silently ships the literal `{hint_clause}` to the model.
 - The registry's purpose list matches the files on disk, both directions.

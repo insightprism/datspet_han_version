@@ -1,13 +1,20 @@
 # SPEC — "That's my dog": making the upload door produce a recognisable pet
 
-**Status:** proposed, 2026-07-23. **Rev.6 — implementation-ready.** Rev.5 made this standalone
-(the AI left the plan, §8); Rev.6 fixes what a read against the running code turned up: the
-isolation function's real name and call sites, a failure mode the table missed (the cutout can
-*raise*), a guard-test suite that could not have run on this repo's no-GPU test gate, and the
-artifact §4 actually has to judge. **Depends on nothing new** — no model, no API key, no
-`SPEC_DATSPET_AI_ENGINE`.
+**Status:** proposed, 2026-07-23. **Rev.7 — the captioner comes back, as a consumer.** Rev.5
+sent the AI out of the plan ("fix the pipeline first, measure, then decide"); Phases 1–2 shipped
+and a real uploader's parakeet — redrawn as a mammal because the noun field was empty — supplied
+the evidence §8 asked for. So AI returns as **lever E / Phase 2.1 (§2.5): automate the noun.** It
+does not fold the AI engine into this spec — `SPEC_DATSPET_AI_ENGINE` stays a **separate** spec
+that this one merely consumes (two purposes + one call site). Rev.6 remains the record of the
+code-accurate corrections (the isolation function's real name, the raise-failure row, the no-GPU
+guard suite).
 
-**Amends:** `SPEC_PET_DESIGNER_FLOW` §3.5, §3.4. **Depends on:** `SPEC_STEP1_SOURCE_RAIL` §1.12.
+**Dependency is per-phase.** **Phases 1, 2, 3 depend on nothing new** — no model, no API key.
+**Phase 2.1 (E) depends on `SPEC_DATSPET_AI_ENGINE`** (built, and on `DATSPET_AI_API_KEY`); with
+the key unset, E is inert and the upload door is exactly Phase 1.
+
+**Amends:** `SPEC_PET_DESIGNER_FLOW` §3.5, §3.4. **Depends on:** `SPEC_STEP1_SOURCE_RAIL` §1.12;
+**and — for Phase 2.1 only — `SPEC_DATSPET_AI_ENGINE`.**
 **Repos touched:** `datsme-pet-factory_wu` — `web/`, `webui/`, `pet_factory/`, one pool handler.
 
 Someone photographs their dog and says *make an animation out of it*. Today they get a generic
@@ -90,17 +97,25 @@ lawn. **Fix the pipeline first; measure; then decide whether anything else is ne
 
 ---
 
-## 2. Four levers, none of which need anything installed
+## 2. The levers
 
 | | Lever | Cost |
 |---|---|---|
-| **A** | **Send the noun.** The user's typed animal reaches the redraw prompt | ~1 line |
+| **A** | **Send the noun.** The animal named in the upload door's own field reaches the redraw prompt | ~1 line |
 | **B** | **Isolate and crop the subject** before img2img, with `_remove_bg` | ~40 lines, worker-side |
 | **C** | **Say what a good photo is**, at the moment it can be acted on | copy only |
 | **D** | **Keep the rolls.** Every draw stays pickable instead of being thrown away | UI only, **zero extra GPU** |
+| **E** | **Automate the noun.** AI reads the photo, names the animal, and fills A's field for the user | the AI engine (a **separate** spec) + 2 purposes + 1 call site |
 
-**All four were chosen because they survive step 2.** That is the selection rule, not an
-afterthought — see §3.
+**A–D need nothing installed** — that is the discipline of §1: fix the pipeline before adding a
+model, and A–D do exactly that. **E is the one that crosses that line, deliberately, on the
+evidence §8 required** — a real uploader's parakeet redrew as a generic mammal because A's field
+was left empty (the whole point of the upload door is that you shouldn't have to type what the
+photo plainly shows). E does not replace A; it **automates** A, filling the same field. So E
+inherits A's slot and survives step 2 for the same reason A does (§3).
+
+**All of A–D were chosen because they survive step 2** — that is the selection rule, not an
+afterthought (§3).
 
 ### 2.1 A — send the noun
 
@@ -111,12 +126,11 @@ already exists and is documented:
 > — `_resolve_reference_door`, `app.py:706`, which routes `["upload","txt2img"] → "upload"`
 > deliberately.
 
-`drawFrom`'s upload branch (`Designer.tsx:170-177`, where `typedDraft` is already in scope at
-`:63`) appends `animal` when the typed draft is non-empty. `exactly pet` becomes
-`exactly golden retriever`.
+`drawFrom`'s upload branch appends `animal` when the upload door's noun field is non-empty.
+`exactly pet` becomes `exactly golden retriever`.
 
 **The user's own word is ground truth, not an inference.** No model can beat the owner at
-naming their own dog, and the field is already on screen.
+naming their own dog.
 
 It recovers two more things for free:
 
@@ -127,30 +141,24 @@ It recovers two more things for free:
   and an upload's description is `subject.lower()` — i.e. `"pet"`. **The noun is wrong in both
   redraws, and A fixes both.**
 
-And it makes `ReferenceBox.tsx`'s header comment true at last: *"the left-hand 'or type any
-animal' field already asks exactly that question, so a photo dropped here simply borrows it as
-the redraw hint."* It never did. Putting that field on the page is what made the sentence
-buildable.
+**Where the field lives — reversed on evidence (decision 3a).** The first build of A shipped
+**no field on the upload door**: the noun was borrowed from the "type any animal" door across
+the page, on the theory (`ReferenceBox`'s old header comment) that two "which animal?" fields
+were "the same question wearing two hats." A real uploader disproved it — they read the two
+doors as *unrelated*, never filled the far field, and their parakeet redrew against `"pet"` and
+came back a generic winged mammal. So the noun now lives **inside the upload door, in its own
+`what animal is it?` field** (`SourceRail.tsx`, its own `uploadNoun` state, separate from the
+typed door's `typedDraft`). They are genuinely different questions: the typed door's field is
+its *whole input* — "draw this from nothing"; the upload door's field *labels a photo the user
+already holds*. A field in each is correct, not redundant.
 
-**One product decision A forces, and a stale draft is worse than no draft.** The typed field is
-*also* the typed door's own draw input, and `choose()` does not clear it on a new source — by
-design (`SPEC_STEP1_SOURCE_RAIL` §5.1 lifts the draft so it survives a lock). So: type
-`blue jay`, draw it, then drop a photo of a retriever, and A would send `animal="blue jay"` with
-that photo. The prompt becomes *"a cute cartoon blue jay, exactly blue jay"* over a dog —
-**actively worse than today's `"pet"`**, because `_remix_prompt` repeats the subject to make it
-win (§0.2).
-
-Guidance alone does not fix this: a line saying *"name the animal on the left"* does not tell
-the user that the name currently there is wrong. **Echo the value**, so the mistake is
-impossible to miss rather than merely possible to notice:
-
-> `using "blue jay" — change it on the left`
-
-Copy, not code, and not a second field — which `ReferenceBox`'s header comment already rejects
-("two fields asking *which animal?* … were the same question wearing two hats"). Clearing the
-draft on upload was considered and rejected: the flow this feature most wants to encourage is
-*type the animal, then drop the photo*, and clearing would delete the word the moment it became
-useful.
+**This also deletes a hazard the borrowed field created.** When the upload borrowed the typed
+draft, a leftover `blue jay` from an earlier typed draw would ride along with a dog photo — and
+because `_remix_prompt` repeats the subject to make it win (§0.2), a *wrong* noun was actively
+worse than `"pet"`. The old design fought this with an echo line (*"using 'blue jay' — change it
+on the left"*). A dedicated, independent field removes the cross-talk entirely: the upload door's
+noun is only ever the one typed into the upload door, so there is no stale value to echo and no
+"left" to point at.
 
 ### 2.2 B — isolate and crop *(the main event)*
 
@@ -163,10 +171,16 @@ def _remove_bg(img) -> Image.Image          # factory.py:112 — EXISTS. birefne
 def _crop_to_subject(rgba) -> Image.Image   # NEW. Pure PIL: alpha bbox + margin + crop
 ```
 
-`_crop_to_subject` returns the input **cropped to its alpha bbox plus ~8% margin**, or — in
-every failure case — **the input unchanged**. It never composites and never pads: the existing
-tail of `_prep_reference_image` already does both, so the fallback is "return the input" and the
-caller's behaviour is then byte-identical to today by construction.
+`_crop_to_subject` returns the input **cropped to its alpha bbox plus a 5%-per-side margin**, or
+— in every failure case — **the input unchanged**. It never composites and never pads: the
+existing tail of `_prep_reference_image` already does both, so the fallback is "return the input"
+and the caller's behaviour is then byte-identical to today by construction.
+
+> **Why 5% and not the looser figure an earlier draft used.** Margin trades directly against §7's
+> "subject fills the frame" bar. A square subject of side `S` with margin fraction `m` per side
+> occupies `1/(1+2m)²` of the result: **5% → 82.6%** (clears §7's ≥80%), **8% → 74.3%** (fails
+> it). The implementation pins `_CROP_MARGIN = 0.05` for exactly this reason — the constant is the
+> spec, not an illustration.
 
 ```python
 def _prep_reference_image(src, *, isolate: bool = False) -> Path:
@@ -280,18 +294,16 @@ The pipeline wants one animal, side-on, well lit. Nothing tells the user that.
 
 Put it in the upload door's **pending** state — after a photo is chosen, before Draw is
 pressed — because that is the moment it can be acted on: the door's header is still a button
-that reopens the picker. It is also where §2.1's stale-draft risk is resolved, so it is **two
-lines: one about the animal, one about the photo.**
+that reopens the picker.
 
-| Typed draft | Line 1 |
-|---|---|
-| present | `using "blue jay" — change it on the left` (§2.1: echo it, don't merely point at it) |
-| empty | `name the animal on the left for a closer match` |
+It is the **helper line under §2.1's `what animal is it?` field**:
 
-> Line 2, always: `side-on, whole animal, good light works best`
+> `side-on, whole animal, good light works best`
 
-Line 1 carries a correctness job and line 2 carries a quality job; collapsing them into one
-sentence would bury the first behind the second at the moment it matters most.
+(An earlier design carried a *second*, correctness line here — echoing the borrowed typed
+draft, *"using 'blue jay' — change it on the left"*. Decision 3a removed the borrowing, so
+that line is gone: the field's own placeholder now asks the question directly, and there is no
+cross-door value to echo. What remains is the one quality nudge.)
 
 Free, and it moves the **input distribution**, which dominates every downstream lever. Do not
 put it on the closed door: `SPEC_STEP1_SOURCE_RAIL` §1.11 established that a door's description
@@ -329,9 +341,74 @@ invalidation rules are the product":
 
 Applies to typed animals as well. Independent of A–C; it could ship on its own.
 
+### 2.5 E — automate the noun with AI *(Phase 2.1, the captioner)*
+
+A–D fixed the pipeline with nothing installed. E is the deliberate crossing into AI, and it
+earns it on evidence: the upload door's whole promise is *"give me a photo, get your pet"*, and
+requiring the user to type what the photo plainly shows breaks that promise — a real uploader
+left A's field empty and got a generic mammal. **The owner is looking at a parakeet; the app
+should not have to ask them what it is.**
+
+**E does not add a new surface — it fills A's.** Lever A (Phase 1) put a `what animal is it?`
+field inside the upload door (`uploadNoun`, `SourceRail.tsx`). E writes into that same field:
+on upload, the AI identifies the animal and its description, prefills the field, and feeds the
+description to the redraw prompt. The user stops typing. **The field is not removed** — it is
+the AI's output surface, the correction handle, and the fallback all at once (see below). Once
+the AI is reliable it *may* be collapsed to a "not quite right? fix it" affordance, but that is
+a later, evidence-gated UI decision, not this phase.
+
+**The AI engine is a SEPARATE spec, and this phase only consumes it.** `SPEC_DATSPET_AI_ENGINE`
+owns the model catalog, the purpose registry, dispatch, usage and admin, and **ships and is
+demonstrable without this feature** (its acceptance test is key → admin → *Test configuration* →
+a usage row — no pet feature required). This phase changes for a different reason than the engine
+does — a change to what the redraw prompt needs versus a model being retired — so they are
+different specs and different PRs. The engine does not import this feature and is guard-tested
+against doing so. **What this phase owns is small and precise:**
+
+| Owned by the engine (`SPEC_DATSPET_AI_ENGINE`) | Owned by this phase |
+|---|---|
+| which models exist, their lifecycle and cost; `call_purpose(...)`; usage log; admin; key handling; degradation contract | `image_triage.json`, `pet_likeness.json`; the one call from the upload path; prefilling `uploadNoun`; the manual-override behaviour |
+
+The two purposes this phase contributes into `pet_factory/ai_purposes/` (per the engine's
+consumer model), both **one image**, so `call_purpose(image=…)` fits with no signature change:
+
+| `purpose_key` | Tier | Input | Question |
+|---|---|---|---|
+| `image_triage` | `fast` | 1 image | *Is this an animal, and is it usable?* Cheap gate, runs first — makes the "not an animal" branch real |
+| `pet_likeness` | `fast` | 1 image | *What animal, breed, coat, markings?* Runs only if triage passes; its answer prefills the field and extends the prompt. Identifying an animal is not hard — start on `fast`, bump the tier only if §4's corpus shows it's needed (`SPEC_DATSPET_AI_ENGINE` decision 17) |
+
+**Where it runs, and why it is NOT fleet-gated like B.** The web tier, over HTTPS — no VRAM, no
+per-worker install, the GPU-less posture `CLAUDE.md` calls load-bearing. Crucially, the call
+happens at **reference-creation time on the web tier** (`app.py`'s `door == "upload"` branch),
+and the resulting description is stored on the reference and flows to *both* the local and pool
+render backends unchanged. So unlike B — which needs a handler v3 rolled to every node (§2.2,
+Phase 3) — **E reaches production the moment the engine and this phase ship; it does not wait on
+the fleet.** One new secret, `DATSPET_AI_API_KEY`, per the engine spec.
+
+**Every failure degrades to A's manual field — which is exactly why A's field is not removed.**
+Key unset, API down, rate-limited, a refusal, or **not an animal at all** → the field simply
+stays as the user's own input, i.e. today's Phase-1 behaviour. A vision outage must never take
+out the upload door. `DATSPET_AI_API_KEY` unset ⇒ the whole of E is inert and the door is exactly
+Phase 1 — the standalone-first posture `datsme_integration.py` already uses for its own secret.
+
+**The owner's word still wins (decision 3, unchanged).** The AI prefills; the field stays
+editable; if the user corrects it, their value is used and the AI's is discarded. E moves typing
+from *required* to *rarely needed*, it does not overrule the owner.
+
+**One open decision for the build (not settled here):** whether the call fires **eagerly on
+photo-select** (prefill ~1–3 s later, so the user sees and can correct the identification before
+drawing) or **lazily folded into Draw** (no extra perceived latency, but no chance to correct
+first). Eager fits the "see it, fix it if wrong" model better; lazy is cheaper. Decide against
+the real latency in the build.
+
+**The honest ceiling, restated.** E fixes the **descriptor** — the input to the redraw. It brings
+the non-typing majority up to the quality a correct hand-typed noun already reaches (the parakeet,
+once named). It does **not** fix the double-redraw drift or a bad input pose (§3). If results are
+still off *with a correct AI description*, the next lever is the pipeline, not more AI.
+
 ---
 
-## 3. Why these four levers, and what is deliberately not fixed
+## 3. Why these levers, and what is deliberately not fixed
 
 **The selection rule: a lever only counts if it survives step 2's mandatory redraw.** Step 2 is
 img2img at up to 0.9 (`app.py:967-975`), it mints a **new** reference (`source="design"`), and
@@ -339,7 +416,7 @@ step 3 animates *that* one as-is (`app.py:1238`, `remix_strength` always `None`)
 `SPEC_STEP1_SOURCE_RAIL` §1.12 already used this to delete the faithful↔sprite chooser: at 0.9
 the second pass wins outright, and photographic fidelity is *gone before anything is animated*.
 
-A–D pass that test, and this is the whole reason they are the four:
+The levers pass that test, and this is the whole reason they are the levers:
 
 - **A** rides `ref["description"]` straight into step 2's own prompt (`app.py:966`) — the noun
   is fixed in *both* redraws, not one.
@@ -348,6 +425,8 @@ A–D pass that test, and this is the whole reason they are the four:
   not.
 - **C** moves the input distribution, which is upstream of everything.
 - **D** puts the owner's judgement after the render, where no amount of denoise can erase it.
+- **E** writes into A's slot, so it rides the same path A does — it changes *who* fills the
+  descriptor (the AI, not the user), never *where* the descriptor goes.
 
 Earlier revisions proposed render paths that differed only in *how much of the photo's pixels
 they preserved*. That is exactly the quantity §1.12 proved cannot reach the finished pet.
@@ -406,11 +485,12 @@ over a handful of finalists, not over the corpus.
 
 | Phase | | Ships without |
 |---|---|---|
-| **1** | ✅ **DONE** (`f81bb2c`). **A + C** — send the noun, add the pending-state line (which also resolves §2.1's field ambiguity) | anything else. Hours |
-| **2** | ✅ **CODE DONE.** **B (local)** — `_crop_to_subject`, `isolate=` on `_prep_reference_image` → `_base_sprite` → `render_design_still` → `_render_still`, upload branch sets `isolate=True`. 8 guard tests (§7) + the upload-isolates / preview-does-not assertions. Real-GPU verified: cat-in-grass → tight crop on white; a real OOM degraded to the raw photo. **Remaining: the corpus measurement — rows B/A/A+B + the fallback-rate finding above** | the fleet |
-| **3** | **B (pool)** — `isolate_subject` param → `pet_preview_handler` **v3** → roll to the fleet → enable. §10.1 fleet gate | — |
+| **1** | ✅ **DONE** (`f81bb2c`, + the inline-field refinement — decision 3a). **A + C** — the animal is named in the upload door's **own** field (`uploadNoun`), with the quality line under it | anything else. Hours |
+| **2** | ✅ **CODE DONE.** **B (local)** — `_crop_to_subject`, `isolate=` on `_prep_reference_image` → `_base_sprite` → `render_design_still` → `_render_still`, upload branch sets `isolate=True`. 8 guard tests (§7) + the upload-isolates / preview-does-not assertions. Real-GPU verified: cat-in-grass → tight crop on white; a real OOM degraded to the raw photo. **Note: this is live on `PET_GEN_BACKEND=local` ONLY — prod runs `pool`, whose branch does not forward `isolate`, so uploads in prod are unchanged until Phase 3.** **Remaining: the corpus measurement — rows B/A/A+B + the fallback-rate finding above** | the fleet |
+| **2.1** | **E — the captioner (§2.5).** ***Requires `SPEC_DATSPET_AI_ENGINE` built (its phases 1–5) — a separate spec this one only consumes.*** Contribute `image_triage.json` + `pet_likeness.json`; call `call_purpose(image=…)` from `app.py`'s `door == "upload"` branch; prefill `uploadNoun` + extend the redraw prompt with the caption; degrade to the manual field (Phase 1) on any failure or not-an-animal; human's word wins on override. **Web-tier — reaches prod WITHOUT the Phase 3 fleet gate**, and independent of B and D | the AI engine (hard dependency); Phase 3; the fleet; B; D |
+| **3** | **B (pool)** — `isolate_subject` param → `pet_preview_handler` **v3** → roll to the fleet → enable. §10.1 fleet gate. **Before enabling: the §2.2 VRAM-contention decision is a fleet gate, not a Phase 2 note** — a pool worker runs birefnet on the same card as a resident Z-Image model (`vram_gb: 20` advertised), the exact shape that OOM'd on the dev box. Pick the mitigation (second GPU / free ComfyUI's VRAM / CPU birefnet for the one call) and confirm the fallback rate is low on a real worker, or every pool upload silently no-ops through the catch | — |
 | **4** | **D** — the candidate strip | B |
-| **5** | **Measure** (§4) end to end, then decide whether anything in §8 is warranted | — |
+| **5** | **Measure** (§4) end to end, then decide whether anything **still** in §8 is warranted | — |
 
 **Phase 1 is worth doing this week regardless of everything else.** One line on the client,
 kills `exactly pet` in *both* redraws, recovers the coat axis, and makes a stale comment true.
@@ -427,9 +507,9 @@ develop the two in parallel against the same reducer.
 | # | Question | Answer | Why |
 |---|---|---|---|
 | 1 | Does step 3 need to change? | **No** | `start_image` *and* `end_image` are the step-1 still; step 3's prompt drives motion only (§0.1). Likeness is a one-still problem |
-| 2 | Does this spec need AI? | **No — nothing new installed at all** | The isolation tool is already on the box and unused on input (§1). Fix the pipeline before adding a model |
-| 3 | Where does the animal's name come from? | **The user's typed field** | Ground truth, already on screen, free. No inference can beat the owner naming their own dog (§2.1) |
-| 3a | Two fields asking "which animal?" | **No — one field, and §2.3's line disambiguates it** | `ReferenceBox`'s header comment already rejected a second field; the pending-state line is on screen at the exact moment the question is live (§2.1, §2.3) |
+| 2 | Does this spec need AI? | **A–D do not; E does** | A–D fix the pipeline with nothing installed (§1). E (Phase 2.1) crosses into AI deliberately, on evidence, to automate A — and it is the *only* part that needs a model (§2.5) |
+| 3 | Where does the animal's name come from? | **The user, via the upload door's own field** | Ground truth, free. No inference can beat the owner naming their own dog (§2.1). When AI lands it fills this same field on an empty submit; the human's word still wins (§8) |
+| 3a | Does the upload door get its own noun field, or share the typed door's? | **Its own — reversed on evidence** | The first build shared the typed door's field ("two hats, same question"). A real uploader read the two doors as unrelated, never filled the far field, and their parakeet redrew as a generic mammal. They ask *different* questions — "draw this from nothing" vs. "label this photo I already have" — so each door owns its field. A dedicated field also deletes the stale-draft hazard the borrowed one created (§2.1) |
 | 4 | Does the cutout run on every reference? | **No — `isolate=True` on the upload path only** | `_prep_reference_image` is shared with step 2's preview, whose reference is already a clean sprite. The caller knows it holds a photo; the renderer must not sniff (§2.2) |
 | 4a | One function or two? | **Two — `_remove_bg` (ML, exists) + `_crop_to_subject` (pure PIL, new)** | The failure rules live in the geometry and are the part most likely to be wrong. A pure function makes all four of them testable with no GPU and no ML import, which this repo's test gate requires (§7) |
 | 5 | What if segmentation finds nothing? | **Return the input unchanged → today's pad-to-square** | An empty or 5%-of-frame bbox must never produce a blank or a 40 px upscale. "Return the input" also makes the byte-identity guard true by construction (§2.2) |
@@ -440,7 +520,12 @@ develop the two in parallel against the same reducer.
 | 7a | Is the roll strip per-door? | **No — source-agnostic, last N drawn references** | A per-door strip would empty itself on a re-roll from the other door. It holds "things you drew and might want back" (§2.4) |
 | 8 | Is the promise "your dog"? | **"Your dog, as a cartoon pet"** | Z-Image has no IP-Adapter; semantic identity is deliverable, visual identity is not (§3) |
 | 9 | How is success measured? | **Contact sheet; B from the prepped still, A+B from the step-2 output, animation only for finalists** | Cheap because the levers are independently visible — but the recognisability row must judge what actually gets animated (§4) |
-| 10 | Where does AI go? | **After §5's measurement, if a gap remains** — §8 | If B alone closes it, none of it is needed |
+| 10 | Does the user type the animal, or does AI? | **AI (Phase 2.1) — filling the field the user could type** | The upload door's promise is "give me a photo"; making the owner type what the photo shows breaks it (§2.5). The typed field is not removed — it is the AI's output surface, the correction handle, and the fallback |
+| 10a | Does the manual field survive AI? | **Yes — AI prefills it; the owner can override; it may later be hidden, not deleted** | Not-an-animal, a wrong guess, and decision 3 (owner's word wins) all need the field. Hiding it once AI is reliable is a later UI call, not this phase (§2.5) |
+| 10b | Does this spec own the AI engine? | **No — `SPEC_DATSPET_AI_ENGINE` does; this spec consumes it** | A model retirement and a change to what the redraw prompt needs are different reasons to change. The engine ships and is demonstrable without this feature and is guard-tested against importing it; this spec contributes two purposes and one call site (§2.5) |
+| 10c | Does E wait on the pool fleet like B? | **No — E is web-tier** | The caption is computed at reference-creation on the web tier and flows to both render backends. E reaches prod when the engine + Phase 2.1 ship, without the Phase 3 handler roll (§2.5) |
+| 10d | What if the vision API is down or the key is unset? | **Degrade to the manual field (Phase 1)** | A vision outage must never take out the upload door; `DATSPET_AI_API_KEY` unset ⇒ E is inert and the door is exactly Phase 1 — the standalone-first posture (§2.5) |
+| 11 | Anything else in §8 (scorer, retry ladders)? | **Still deferred** | The captioner graduated to Phase 2.1 on evidence; the rest waits on the captioner's real-world results, same discipline (§8) |
 
 ---
 
@@ -455,7 +540,7 @@ Against `_crop_to_subject` (pure, no ML):
 
 | Fixture (alpha authored by hand) | Expected |
 |---|---|
-| Opaque 100×100 subject in the corner of a 1000×1000 transparent field | Returns a crop whose subject bbox is ≥ ~80% of the result's area |
+| Opaque 350×350 subject in the corner of a 1000×1000 transparent field (**12% area — comfortably above the 5% floor**) | Returns a crop whose subject bbox is ≥ ~80% of the result's area |
 | Fully transparent alpha | Returns the input **unchanged** (identity, not a copy-equal) |
 | Opaque subject covering ~3% of frame area | Returns the input unchanged |
 | Fully opaque alpha | Returns the input unchanged |
@@ -483,30 +568,33 @@ Pool-side, one contract test with no fleet required:
 
 ---
 
-## 8. Where AI could help — later, and only on evidence
+## 8. Where AI could help — and what is now adopted vs. still deferred
 
-Nothing in this section is proposed for build. It is recorded so the sequence is deliberate:
-**ship §5, measure §4, and then ask whether a model adds anything the pipeline did not.**
+**The captioner has graduated from this section into Phase 2.1 (lever E, §2.5).** §8 used to
+hold *all* AI candidates behind an evidence gate — "fix the pipeline first, then ask whether a
+model adds anything." That gate has now fired for **one** of them: a real uploader's parakeet
+redrew as a mammal because the noun field was empty, which is exactly the evidence §8 demanded
+that the empty-noun case is common and worth automating. So the captioner is adopted (§2.5), on
+the engine that is its own separate spec.
 
-If the measurement shows the gap is closed, this section stays unbuilt — that is a success, not
-an omission.
-
-If a gap remains, the candidates, in the order their value is provable:
+The rest of this section stays deferred — recorded so the sequence remains deliberate, not
+because the model is assumed useless:
 
 1. **A scorer in the harness** (`SPEC_DATSPET_AI_ENGINE` + a `likeness_score` purpose). Its
    value is highest where **there is no user in the loop** — sweeping a corpus after every
-   prompt change, which a human sitting cannot do repeatably. Note this is a *tooling* use, not
-   a product feature, and it is the one use §2.4 does not displace: the candidate strip puts the
-   owner in the loop at runtime, and the owner is a better judge of their own dog than any model.
-   *(If it is ever built: `likeness_score` takes **two** images, and
-   `SPEC_DATSPET_AI_ENGINE` §4's `call_purpose(..., image=…)` takes one. That signature has to
-   widen before the purpose can exist — a real edit to that spec, not a contribution under it.)*
-2. **A captioner for the empty case** — only when the user uploads a photo and types nothing.
-   With A shipped, the population that needs it is whoever declined to type one word, and the
-   cheaper fix may simply be asking them.
-3. **Everything else** — per-photo render-path selection, automated retry ladders, quality
-   gates — is downstream of 1 and 2 and should not be designed before them.
+   prompt change, which a human sitting cannot do repeatably. A *tooling* use, not a product
+   feature, and the one use §2.4 does not displace: the candidate strip puts the owner in the
+   loop at runtime, and the owner is a better judge of their own dog than any model.
+   *(If it is ever built: `likeness_score` takes **two** images, and `SPEC_DATSPET_AI_ENGINE`
+   §4's `call_purpose(..., image=…)` takes one. That signature has to widen before the purpose
+   can exist — a real edit to that spec, not a contribution under it. The captioner in Phase 2.1
+   does **not** hit this: `image_triage` and `pet_likeness` are one image each.)*
+2. **Everything else** — per-photo render-path selection, automated retry ladders, quality
+   gates — is downstream of the captioner and the scorer, and should not be designed before the
+   captioner's real-world results are in.
 
-**The rule that sends AI to the back of this spec:** the pipeline had an unused segmentation
+**The rule that ordered this spec, and still holds:** the pipeline had an unused segmentation
 model, a documented precondition nothing enforced, and a prompt naming the wrong animal. A
-language model on top of that would have been measuring a problem the pipeline was creating.
+language model on top of *that* would have measured a problem the pipeline was creating — which
+is why A–D came first. The captioner is adopted now because the pipeline is fixed underneath it
+and the evidence for the empty-noun case came in, not because the discipline was abandoned.

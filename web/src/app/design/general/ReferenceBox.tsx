@@ -11,12 +11,14 @@
  * because the box couldn't accept a photo. A box you can drop onto needs no second box
  * to drop onto.
  *
- * The animal's NAME is not asked for here. The left-hand "or type any animal" field
- * already asks exactly that question, so a photo dropped here simply borrows it as the
- * redraw hint. Two fields asking "which animal?" — one labelled "type any animal" and
- * one labelled "what animal is it?" — were the same question wearing two hats, and
- * step 1 takes ONE input: which animal (§0.1). (That left-hand field described a layout
- * that had been deleted; <SourceRail> puts it back, so the paragraph is true again.)
+ * The animal's NAME is not asked for HERE, in the box — but the upload DOOR asks for it,
+ * in its own "what animal is it?" field (SPEC_UPLOAD_LIKENESS §2.1, decision 3a). An
+ * earlier design put no field on the upload door and had it borrow the typed door's field
+ * across the page, on the theory that "type any animal" and "what animal is this photo of?"
+ * were the same question wearing two hats. Evidence said otherwise: a real uploader read
+ * the two doors as unrelated, never filled the far field, and their photo redrew against
+ * the generic "pet". They are different questions — one names an animal to draw from
+ * nothing, the other labels a photo you already have — so each door owns its own field.
  *
  * Clicking opens the GALLERY, not a menu — click a picture, get more pictures. The rail
  * beside it names all three sources, so the caption here keeps only the one affordance
