@@ -1,4 +1,24 @@
-# SPEC — DatsPet AI Engine (model catalog + purpose registry)
+# SPEC — DatsPet AI Engine (model catalog + purpose registry) — CLOSED / IMPLEMENTED
+
+> **Status: CLOSED / IMPLEMENTED — Phases 1–5 built, guard-tested, and verified live on the dev
+> box (2026-07-23).** The entire §9 deliverable shipped: the model catalog
+> (`pet_factory/ai_models/`), the purpose registry + validator (`pet_factory/ai_purposes/`), the
+> one dispatch path (`webui/ai_engine.py`), the append-only `ai_usage` ledger (`db.py`), and the
+> fourth admin tab (`webui/ai_admin.py` + `web/src/app/admin/ai/`). **The §9 acceptance test
+> passes live:** with `DATSPET_AI_API_KEY` set (the platform Anthropic key, per §16),
+> `connectivity_check` makes a real structured-output call and lands a usage row with real tokens
+> and a derived cost (`claude-haiku-4-5`, 208 in / 13 out, ≈ $0.0003). Guard tests green — catalog
+> rules 1–7, the purpose validator (incl. the §11 structured-output-keyword rejection), both seam
+> directions, and the numpy-absent GPU-less gate. Committed locally as `8b77d2f`.
+>
+> **Consumers are separate and are NOT closed by this.** `SPEC_UPLOAD_LIKENESS` §2.5 (lever E /
+> Phase 2.1) contributed `image_triage.json` + `pet_likeness.json` and the one `call_purpose(...)`
+> from the upload path — the engine's first real consumer, now live (an animal-**or**-person
+> captioner plus an "AI enabled" toggle) — but that spec has further phases and stays open.
+>
+> **Not deployed to production.** Implemented and acceptance-tested on the dev box and committed
+> locally; deploying to `pet.datsme.me` (the new `DATSPET_AI_API_KEY` secret onto the box,
+> `anthropic` into the web-tier venv) is a separate, unrequested step.
 
 **Status:** proposed, 2026-07-23. **Rev.3 — implementation-ready.** Rev.2 separated the engine
 from its first consumer (§0.1); Rev.3 pins what a build actually needs — verified against the
