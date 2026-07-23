@@ -42,9 +42,7 @@ import Step from "./Step";
 import ReferenceBox from "./ReferenceBox";
 import SourceRail from "./SourceRail";
 import BaseGalleryDialog from "./BaseGalleryDialog";
-import UploadStrength, {
-  DEFAULT_UPLOAD_STRENGTH, type PendingSource,
-} from "./UploadStrength";
+import { DEFAULT_UPLOAD_STRENGTH, type PendingSource } from "./UploadStrength";
 import { prepareUpload, UploadRejected, ACCEPT_ATTR } from "./prepareUpload";
 import DesignStep from "./DesignStep";
 import PoseStep from "./PoseStep";
@@ -187,21 +185,15 @@ export default function Designer() {
     drawFrom(next);
   }
 
-  // The draw button only exists where drawing can change something, and it sits beside
-  // the control that feeds it (SPEC_STEP1_SOURCE_RAIL §5.3).
+  // NO DRAW BUTTON LIVES HERE ANY MORE (SPEC_STEP1_SOURCE_RAIL §1.11). Each door owns the
+  // controls for its own source: typed draws from beside its text field, an upload from
+  // beside its strength chips, and a curated base has nothing to draw at all — it is a
+  // FILE, already copied into the box in ~6 ms, so the button's only honest label would be
+  // "do nothing, slowly".
   //
-  // A curated base is a FILE. Picking it in the gallery already copied it into the box
-  // (~6 ms, no GPU), and pressing draw again would re-copy the same bytes to the same
-  // picture — a button whose only honest label is "do nothing, slowly". A photo and a
-  // typed name are the opposite: each press is a new render, so the loop is real.
-  //
-  // TYPED redraws from its own row in <SourceRail>, next to the field whose text it
-  // renders — so this button narrows to uploads. Leaving it live for typed too would put
-  // two identical "Draw it again" buttons on screen for ONE source, which is the second
-  // door §2 forbids. The upload's stays here for the same reason typed's went there: it
-  // belongs beside <UploadStrength>, the control that changes what it draws.
-  const canRedraw = pending?.kind === "upload";
-  const redrawLabel = pendingDrawn ? "Draw it again · ~10 s" : "Draw it · ~10 s";
+  // That is why `canRedraw`/`redrawLabel` are gone rather than moved: they existed to
+  // decide which of several sources the ONE shared button was currently serving, and there
+  // is no shared button left to serve them.
 
   // The draft is exactly what is already in the box → the rail says "Draw it again".
   // Type over a drawn animal and it reverts to "Draw it", because the draft and the
@@ -356,34 +348,14 @@ export default function Designer() {
             onGallery={() => setDialogOpen(true)}
             onUpload={() => fileRef.current?.click()}
             onTypedDraw={(animal) => chooseAndDraw({ kind: "typed", animal })}
+            uploadPending={pending?.kind === "upload"}
+            uploadStrength={pending?.kind === "upload" ? pending.strength : DEFAULT_UPLOAD_STRENGTH}
+            onUploadStrength={(s) => {
+              if (pending?.kind === "upload") setPending({ ...pending, strength: s });
+            }}
+            uploadIsDrawn={pending?.kind === "upload" && pendingDrawn}
+            onUploadDraw={() => { if (pending?.kind === "upload") drawFrom(pending); }}
           />
-
-          {/* An upload is the one source with a decision attached, and its two controls
-              travel together: the likeness-vs-animation trade has to be visible while you
-              press draw again, so the slider and its draw button are one block.
-
-              DRAW — press it as often as you like. It is absent for a curated base
-              (nothing to draw), for a typed animal (its own button lives in the rail,
-              beside the field that feeds it) and once locked (offering to re-roll what you
-              just settled is an invitation to undo it by accident). */}
-          {pending?.kind === "upload" && (
-            <div className="flex max-w-[26rem] flex-col gap-3">
-              <UploadStrength
-                strength={pending.strength}
-                onStrength={(s) => setPending({ ...pending, strength: s })}
-              />
-              {!state.baseConfirmed && canRedraw && (
-                <button
-                  type="button"
-                  className="btn self-start"
-                  disabled={state.referenceBusy}
-                  onClick={() => pending && drawFrom(pending)}
-                >
-                  {state.referenceBusy ? "Drawing…" : redrawLabel}
-                </button>
-              )}
-            </div>
-          )}
 
           {/* Intake wins when both are set: the newer complaint is about the file the user
               just handed over, and the stale render error is about one they have moved on

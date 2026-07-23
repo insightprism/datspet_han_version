@@ -649,7 +649,10 @@ the same act. Drawing is the loop; committing ends it.*
 > beneath the box. A **typed** source draws from its own button in the rail, beside the field
 > whose text it renders, so `canRedraw` narrows to **uploads only** — sharing one button
 > would put two live "Draw it again"s on screen for a single source. Every draw button sits
-> beside the control that feeds it, and no source has two.
+> beside the control that feeds it, and no source has two. **Since §1.11 that means inside
+> the door**: the typed field and its Draw, the strength chips and theirs. `canRedraw` and
+> `redrawLabel` are deleted — they arbitrated one shared button, and there is no shared
+> button left. A curated base still has none, for the reason below.
 >
 > **Use this animal → moved under the picture, and is now rendered rather than disabled.**
 > It commits what the box shows, so it belongs to the box, not to the foot of a column of

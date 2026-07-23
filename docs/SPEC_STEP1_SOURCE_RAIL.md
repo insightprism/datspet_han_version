@@ -1,6 +1,8 @@
 # SPEC — Step 1's source rail (the three doors move onto the page)
 
-**Status:** **BUILT**, 2026-07-23. **Rev.6** — adds §1.10: one intake gate for uploaded
+**Status:** **BUILT**, 2026-07-23. **Rev.7** — adds §1.11: every door owns its own controls,
+so the upload's strength chips and **Draw it** move inside the upload door instead of sitting
+at the foot of the column. **Rev.6** — adds §1.10: one intake gate for uploaded
 photos — format checked on all three paths, oversized images downscaled client-side instead
 of rejected. **Rev.5** — adds §1.9: the caption speaks only when it has
 news, the drop hint is a hover overlay, and the two columns end on one line. **Rev.4** — Rev.2's design plus three rounds of correction
@@ -407,6 +409,45 @@ laptop and over a second on a phone, and without it a drop looks like a dropped 
 **intake error**, held in local `useState` rather than the reducer: it is not a property of
 the base animal, it is a note about a file we declined to send. A rejection leaves the current
 base completely untouched — same picture, same commit button.
+
+### 1.11 Every door owns its own controls *(Rev.7)*
+
+The typed door had its field and its **Draw it** inside it. The upload door did not: choosing
+a photo left the faithful↔sprite chips and a **Draw it · ~10 s** stranded at the *bottom of
+the column*, below all three doors, describing a decision raised two cards higher up. Nothing
+tied them to the door that produced them.
+
+**Both doors that carry a decision now look alike, and the one that does not, does not.**
+That is §3.2's own rule made visible:
+
+| Door | Decision attached? | Shape |
+|---|---|---|
+| Use an existing base animal | no — picking *is* the answer | a plain button |
+| Use my own picture | **yes** — how faithful? | a card: header, strength chips, **Draw it** |
+| Or type any animal | **yes** — which animal? | a card: header, field, **Draw it** |
+
+So the upload door has two shapes: a plain `<Door>` with no photo chosen, and a card once one
+is. That is not a special case — it is the door acquiring a decision, which is exactly when
+§3.2 says a door stops executing on selection and waits.
+
+`UploadStrength` gains one prop, `action?: ReactNode`, rendered on the chips' own row: the
+trade and the button that spends it belong on one line, the same shape the typed door has. It
+is a **slot, not an `onDraw` callback** — the strength control must not learn what drawing is.
+
+**`canRedraw` and `redrawLabel` are deleted, not moved.** They existed to decide which source
+the ONE shared draw button was currently serving; with each door drawing its own, there is no
+shared button left to arbitrate. Nothing in `Designer` renders a draw button now.
+
+> **The door's hint must not morph.** A first pass replaced `~10 s · redrawn as a sprite`
+> with `click to pick a different one` once a photo was pending — helpful-sounding, and it
+> deleted the price at the exact moment the user is deciding whether to spend it (§3.3: the
+> price is on the door *before* you commit). The hint is the door's description and stays
+> constant; the header remains a button, and re-picking is the same click that got them there.
+
+*Caught by `tsc` not catching it:* removing the bottom block left `canRedraw`, `redrawLabel`
+and the `UploadStrength` import dead in `Designer.tsx`, and **nothing automated flagged them**
+— `noUnusedLocals` is off and `npm run lint` has never run (§7). Dead-symbol sweeps after a
+move are manual here.
 
 ---
 
@@ -898,6 +939,9 @@ Manual E2E — `./start_all.sh`, `PET_GEN_BACKEND=local`, `:19955`, appended to 
 | 24 | Is an oversized photo rejected or downscaled? | **Downscaled, client-side, before it is sent** | The server's 413 fires on a budget nothing downstream cares about — `_encode_reference_image` thumbnails every accepted image to the same 1024 px four lines later. Doing it first turns a full upload plus a round-trip into ~200 ms of local work (§1.10) |
 | 25 | Does the server's 12 MB cap change? | **No** | It is the security boundary; a direct API call never runs this code. The UI simply stops producing files that trip it. Relaxing a server limit because the client got polite is the wrong lesson (§1.10) |
 | 26 | Is the downscaled file always the one sent? | **No — only when it is actually smaller** | Measured: a 548 KB 3000 px PNG re-encoded to **2.9 MB** at 1024 px, because resampling raises entropy. Fewer pixels ≠ fewer bytes. When the re-encode loses and the original fits, the original is sent (§1.10) |
+| 28 | Where does the upload's **Draw it** live? | **Inside the upload door, beside its strength chips** | It was stranded at the foot of the column, below all three doors, describing a decision raised two cards higher. Every door now owns its own controls, and the two doors with a decision attached (§3.2) look alike (§1.11) |
+| 29 | Does the upload door change shape when a photo is pending? | **Yes — plain button → card** | Not a special case: it is the door *acquiring* a decision, which is precisely when §3.2 says a door stops executing on selection and waits for one |
+| 30 | Does `UploadStrength` learn how to draw? | **No — it takes an `action` ReactNode slot** | The trade and the button that spends it share a row; the strength control still knows nothing about rendering (§1.11) |
 | 27 | Where does the intake error live? | **Local `useState`, not the reducer** | It is not a property of the base animal — it is a note about a file we declined to send. A rejection leaves the current base, its picture and its commit button completely untouched (§1.10) |
 
 ### 9.15 The undrawn draft, and why the commit ignores it

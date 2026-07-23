@@ -36,7 +36,7 @@
  * carry a glyph in their own brand colour, and stack label-over-hint so the block is
  * button-shaped rather than line-shaped.
  */
-import type { PendingSource } from "./UploadStrength";
+import UploadStrength, { type PendingSource } from "./UploadStrength";
 
 /**
  * One brand colour per door, so the three read as a SET of distinct choices rather than
@@ -72,11 +72,23 @@ interface Props {
   onUpload: () => void;
   /** Draw the typed animal — the typed door's "select, and it executes" (§3.2). */
   onTypedDraw: (animal: string) => void;
+
+  /**
+   * A photo is chosen and waiting to be drawn — the upload door grows its body (§1.11).
+   * These are the door's own controls, not the page's: the faithful↔sprite trade and the
+   * button that spends it belong beside the door that raised the question.
+   */
+  uploadPending: boolean;
+  uploadStrength: number;
+  onUploadStrength: (s: number) => void;
+  uploadIsDrawn: boolean;
+  onUploadDraw: () => void;
 }
 
 export default function SourceRail({
   current, busy, typedDraft, onTypedDraft, typedIsDrawn,
   onGallery, onUpload, onTypedDraw,
+  uploadPending, uploadStrength, onUploadStrength, uploadIsDrawn, onUploadDraw,
 }: Props) {
   const draft = typedDraft.trim();
 
@@ -96,14 +108,53 @@ export default function SourceRail({
         current={current === "catalog"}
         onClick={onGallery}
       />
-      <Door
-        glyph="📷"
-        tone={TONE.upload}
-        label="Use my own picture"
-        hint="~10 s · redrawn as a sprite"
-        current={current === "upload"}
-        onClick={onUpload}
-      />
+      {/* The upload door, in its two shapes. With no photo chosen it is a plain door like
+          the gallery's. With one chosen it grows a body and becomes a card like the typed
+          door — because it now HAS a decision attached (§3.2's own rule: "selecting
+          executes, except where a decision is attached"). The two doors carrying a decision
+          look alike; the one that just executes does not. */}
+      {uploadPending ? (
+        <div className="flex flex-col gap-2 rounded-xl border px-3 py-2.5"
+             style={shell(TONE.upload, current === "upload")}>
+          <button type="button" onClick={onUpload}
+                  className="flex items-center gap-3 text-left transition hover:opacity-80">
+            <Glyph glyph="📷" tone={TONE.upload} />
+            <span className="flex min-w-0 flex-col">
+              <span className="text-sm font-medium" style={{ color: "var(--heading)" }}>
+                Use my own picture
+              </span>
+              {/* The SAME hint as the door's closed state, deliberately. A first draft
+                  swapped it for "click to pick a different one", which read as helpful and
+                  quietly deleted the ~10 s price at the exact moment the user is deciding
+                  whether to spend it (§3.3: the price is on the door before you commit).
+                  A door's description should not morph into an instruction — the header is
+                  still a button, and it is the same click that got them here. */}
+              <span className="mono text-xs" style={{ color: "var(--faint)" }}>
+                ~10 s · redrawn as a sprite
+              </span>
+            </span>
+          </button>
+          <UploadStrength
+            strength={uploadStrength}
+            onStrength={onUploadStrength}
+            action={
+              <button type="button" className="btn shrink-0" disabled={busy}
+                      onClick={onUploadDraw}>
+                {busy ? "Drawing…" : uploadIsDrawn ? "Draw again" : "Draw it"}
+              </button>
+            }
+          />
+        </div>
+      ) : (
+        <Door
+          glyph="📷"
+          tone={TONE.upload}
+          label="Use my own picture"
+          hint="~10 s · redrawn as a sprite"
+          current={current === "upload"}
+          onClick={onUpload}
+        />
+      )}
 
       {/* The third door, standing open. Same shell as a <Door> so the three read as one
           set — but no aria-current: the <input> already carries the animal name as its

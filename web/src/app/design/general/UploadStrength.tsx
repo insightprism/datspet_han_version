@@ -35,15 +35,23 @@ export const DEFAULT_UPLOAD_STRENGTH = 0.85;
 interface Props {
   strength: number;
   onStrength: (s: number) => void;
+  /**
+   * The button that SPENDS this choice, rendered on the same row as the chips
+   * (SPEC_STEP1_SOURCE_RAIL §1.11). The trade and the act that commits it belong on one
+   * line — "sprite, and draw it" — the same shape the typed door has, where the animal
+   * name and its Draw sit together. The slot is a ReactNode rather than an onDraw
+   * callback because this component must not learn what drawing is.
+   */
+  action?: React.ReactNode;
 }
 
-export default function UploadStrength({ strength, onStrength }: Props) {
+export default function UploadStrength({ strength, onStrength, action }: Props) {
   return (
     <div className="flex flex-col gap-1">
       <span className="mono text-xs" style={{ color: "var(--muted)" }}>
         how much to redraw your photo
       </span>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         {UPLOAD_STRENGTHS.map((s) => (
           <button
             key={s.label}
@@ -55,6 +63,7 @@ export default function UploadStrength({ strength, onStrength }: Props) {
             {s.label}
           </button>
         ))}
+        {action}
       </div>
       <span className="mono text-xs" style={{ color: "var(--faint)" }}>
         faithful keeps your photo&apos;s look · sprite animates best
