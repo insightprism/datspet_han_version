@@ -8,6 +8,16 @@
     "allowJs": true,
     "skipLibCheck": true,
     "strict": true,
+    // NOT covered by `strict` — these are separate "Additional Checks", and assuming
+    // otherwise is exactly how three dead symbols survived a refactor here (a stale
+    // 13-line comment rode along with one of them, still confidently describing a layout
+    // that had been deleted). This repo has no ESLint — `npm run lint` runs `next lint`,
+    // which has never been configured — and vitest covers only the reducer, so
+    // `tsc --noEmit` is the ONLY automated check for unreferenced code. Keep them on.
+    // Note what they do NOT catch: unused exports, unused props declared in a type but
+    // never destructured, unreachable branches. Those still need eyes.
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",

@@ -24,7 +24,7 @@ import Link from "next/link";
 import {
   designAdmin, getDatsmeSession, AdminApiError,
   type DesignAdminAxisList, type DesignAdminAnimals, type DesignAxisFile,
-  type DesignAxisSummary, type DesignAnimalProfile, type DesignBreedProfile,
+  type DesignAxisSummary,
   type DesignAxisOption, type DesignCalibrationStatus,
 } from "@/lib/api";
 import ConfirmModal from "@/components/ConfirmModal";
@@ -484,7 +484,7 @@ function AnimalsTab({ animals, onSaved }: {
       {animals.animals.map((a) => (
         <div key={a.key} className="card p-4">
           <ProfileRow
-            title={a.label} refName={a.key} entry={a} inherited={null}
+            title={a.label} entry={a} inherited={null}
             surfaces={animals.surfaces} optionVocab={animals.surface_axis_options}
             writable={animals.writable}
             onSave={(p) => designAdmin.setProfile(a.key, null, p)
@@ -493,7 +493,7 @@ function AnimalsTab({ animals, onSaved }: {
           <div className="mt-3 flex flex-col gap-3 border-t pt-3" style={{ borderColor: "var(--line)" }}>
             {a.breeds.map((b) => (
               <ProfileRow
-                key={b.key} title={`↳ ${b.label}`} refName={`${a.key}/${b.key}`}
+                key={b.key} title={`↳ ${b.label}`}
                 entry={b} inherited={a.surface}
                 surfaces={animals.surfaces} optionVocab={animals.surface_axis_options}
                 writable={animals.writable}
@@ -508,9 +508,8 @@ function AnimalsTab({ animals, onSaved }: {
   );
 }
 
-function ProfileRow({ title, refName, entry, inherited, surfaces, optionVocab, writable, onSave }: {
+function ProfileRow({ title, entry, inherited, surfaces, optionVocab, writable, onSave }: {
   title: string;
-  refName: string;
   entry: { surface: string | null; surface_options: string[] | null };
   /** The animal-level surface a breed falls back to; null for animal rows. */
   inherited: string | null;
