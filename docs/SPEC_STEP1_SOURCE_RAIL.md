@@ -1,6 +1,8 @@
 # SPEC — Step 1's source rail (the three doors move onto the page)
 
-**Status:** **BUILT**, 2026-07-23. **Rev.7** — adds §1.11: every door owns its own controls,
+**Status:** **BUILT**, 2026-07-23. **Rev.8** — adds §1.12: the upload strength chooser is
+removed, because step 2's mandatory redraw overwrote the choice before it reached the
+animation. **Rev.7** — adds §1.11: every door owns its own controls,
 so the upload's strength chips and **Draw it** move inside the upload door instead of sitting
 at the foot of the column. **Rev.6** — adds §1.10: one intake gate for uploaded
 photos — format checked on all three paths, oversized images downscaled client-side instead
@@ -448,6 +450,59 @@ shared button left to arbitrate. Nothing in `Designer` renders a draw button now
 and the `UploadStrength` import dead in `Designer.tsx`, and **nothing automated flagged them**
 — `noUnusedLocals` is off and `npm run lint` has never run (§7). Dead-symbol sweeps after a
 move are manual here.
+
+### 1.12 The upload strength chooser is removed — it could not survive step 2 *(Rev.8)*
+
+`SPEC_PET_DESIGNER_FLOW` §3.5 argues at length for faithful/balanced/sprite on the upload
+door: *"the user chooses how far to redraw, because the trade is real and only they know
+which side they want."* **The trade is real. The choice was not** — user-reported from the
+running app, then traced:
+
+```
+step 1   photo ──img2img @ your strength (0.4 / 0.65 / 0.85)──▶ base reference
+step 2   base ──img2img @ step 2's OWN strength──────────────▶ the pet that gets animated
+```
+
+Three facts compose into the failure:
+
+1. **Step 2's redraw is mandatory.** `/api/preview` 400s unless a colour, accessory, axis or
+   free-text change is present (§4.1, §4.2 *"No exceptions"*), and step 3 is gated on it.
+   Every pet passes through it.
+2. **Step 2 redraws at a strength step 1 never set** — `state.strength`, its own *"how far
+   to push it"* control, defaulting to 0.85.
+3. **`compose_design` can force it to 0.9** (`app.py:296`) whenever the design fights the
+   source — a colour word against a differently-coloured species. The comment on that clamp
+   says the quiet part: the redraw *"needs full strength (0.9) to win"*.
+
+At 0.9 the second pass wins outright, so the photographic likeness a "faithful" base
+preserved is destroyed before it is ever animated. §3.5's own table already conceded the
+direction — *"faithful keeps your actual dog, costs the photographic pose/lighting Wan I2V
+animates badly"* — and defaulted to sprite because **the animation is the product**. What it
+did not account for is that the second redraw removes the choice regardless.
+
+> **A control whose effect is erased downstream is worse than no control.** It charges the
+> user a decision, implies the decision matters, and silently discards it. The honest UI for
+> a value the user cannot really influence is no UI.
+
+**What was done.** The chooser is gone from the upload door, which now shows only its Draw
+button. The client sends **no `strength` at all** for uploads, so the server's own
+`UPLOAD_REDRAW_STRENGTH = 0.85` (`app.py:155`, already the `Form()` default) is the single
+owner — shipping a client copy of that number would be a second owner free to drift.
+`UploadStrength.tsx` is **deleted**; `PendingSource` moved to `pendingSource.ts` and its
+upload variant lost its `strength` field.
+
+**Step 2's control is untouched and is the one that matters.** It governs the redraw that
+actually produces the animated pet, it is where `min_strength` surfaces (§4.5), and nothing
+here changes it.
+
+> **`noUnusedLocals` did not catch this deletion's fallout** — `UploadStrength.tsx` became an
+> unreferenced *module*, and the flag only sees unused locals and imports (§7). Found by
+> grep. This is the exact limitation the `tsconfig.json` comment warns about, hit one commit
+> after it was written.
+
+*If per-upload faithfulness is ever wanted again, the fix is not to restore this chooser: it
+is to let step 1's strength ride the reference record into step 2's redraw as a floor, so the
+choice survives the second pass. That is a backend change, not a control.*
 
 ---
 
@@ -941,7 +996,9 @@ Manual E2E — `./start_all.sh`, `PET_GEN_BACKEND=local`, `:19955`, appended to 
 | 26 | Is the downscaled file always the one sent? | **No — only when it is actually smaller** | Measured: a 548 KB 3000 px PNG re-encoded to **2.9 MB** at 1024 px, because resampling raises entropy. Fewer pixels ≠ fewer bytes. When the re-encode loses and the original fits, the original is sent (§1.10) |
 | 28 | Where does the upload's **Draw it** live? | **Inside the upload door, beside its strength chips** | It was stranded at the foot of the column, below all three doors, describing a decision raised two cards higher. Every door now owns its own controls, and the two doors with a decision attached (§3.2) look alike (§1.11) |
 | 29 | Does the upload door change shape when a photo is pending? | **Yes — plain button → card** | Not a special case: it is the door *acquiring* a decision, which is precisely when §3.2 says a door stops executing on selection and waits for one |
-| 30 | Does `UploadStrength` learn how to draw? | **No — it takes an `action` ReactNode slot** | The trade and the button that spends it share a row; the strength control still knows nothing about rendering (§1.11) |
+| 30 | ~~Does `UploadStrength` learn how to draw?~~ | **Moot — the component is deleted (#31)** | It took an `action` slot for one commit, then the control it wrapped was removed entirely (§1.12) |
+| 31 | Does the upload door keep faithful/balanced/sprite? | **No — removed; the server's `UPLOAD_REDRAW_STRENGTH` governs** | Step 2's redraw is mandatory, runs at its own strength, and is forced to 0.9 whenever the design fights the source — so a "faithful" base was overwritten before it was animated. A control whose effect is erased downstream charges a decision and discards it. Step 2's own strength control is untouched and is the one that shapes the pet (§1.12) |
+| 32 | Does the client send `strength` for uploads? | **No — nothing at all** | The client has no opinion now, and the server's `Form(UPLOAD_REDRAW_STRENGTH)` default already holds the value. A client copy would be a second owner of one number, free to drift (§1.12) |
 | 27 | Where does the intake error live? | **Local `useState`, not the reducer** | It is not a property of the base animal — it is a note about a file we declined to send. A rejection leaves the current base, its picture and its commit button completely untouched (§1.10) |
 
 ### 9.15 The undrawn draft, and why the commit ignores it

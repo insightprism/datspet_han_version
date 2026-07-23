@@ -36,7 +36,7 @@
  * carry a glyph in their own brand colour, and stack label-over-hint so the block is
  * button-shaped rather than line-shaped.
  */
-import UploadStrength, { type PendingSource } from "./UploadStrength";
+import type { PendingSource } from "./pendingSource";
 
 /**
  * One brand colour per door, so the three read as a SET of distinct choices rather than
@@ -74,13 +74,11 @@ interface Props {
   onTypedDraw: (animal: string) => void;
 
   /**
-   * A photo is chosen and waiting to be drawn — the upload door grows its body (§1.11).
-   * These are the door's own controls, not the page's: the faithful↔sprite trade and the
-   * button that spends it belong beside the door that raised the question.
+   * A photo is chosen and waiting to be drawn — the upload door grows its Draw button
+   * (§1.11). The faithful↔sprite chooser that used to sit here is gone (§1.12): step 2's
+   * mandatory redraw overwrote the choice before it ever reached the animation.
    */
   uploadPending: boolean;
-  uploadStrength: number;
-  onUploadStrength: (s: number) => void;
   uploadIsDrawn: boolean;
   onUploadDraw: () => void;
 }
@@ -88,7 +86,7 @@ interface Props {
 export default function SourceRail({
   current, busy, typedDraft, onTypedDraft, typedIsDrawn,
   onGallery, onUpload, onTypedDraw,
-  uploadPending, uploadStrength, onUploadStrength, uploadIsDrawn, onUploadDraw,
+  uploadPending, uploadIsDrawn, onUploadDraw,
 }: Props) {
   const draft = typedDraft.trim();
 
@@ -109,10 +107,14 @@ export default function SourceRail({
         onClick={onGallery}
       />
       {/* The upload door, in its two shapes. With no photo chosen it is a plain door like
-          the gallery's. With one chosen it grows a body and becomes a card like the typed
-          door — because it now HAS a decision attached (§3.2's own rule: "selecting
-          executes, except where a decision is attached"). The two doors carrying a decision
-          look alike; the one that just executes does not. */}
+          the gallery's; with one chosen it grows a Draw button, because a photo is the one
+          source that lands undrawn (§3.2).
+
+          It used to grow a faithful↔sprite chooser too. That is gone (§1.12): step 2's
+          redraw is mandatory and runs at a strength this door never set, forced to 0.9
+          whenever the design fights the source — so "faithful" was overwritten before it
+          reached the animation. A control whose effect is erased downstream is worse than
+          no control: it charges a decision and silently discards it. */}
       {uploadPending ? (
         <div className="flex flex-col gap-2 rounded-xl border px-3 py-2.5"
              style={shell(TONE.upload, current === "upload")}>
@@ -134,16 +136,10 @@ export default function SourceRail({
               </span>
             </span>
           </button>
-          <UploadStrength
-            strength={uploadStrength}
-            onStrength={onUploadStrength}
-            action={
-              <button type="button" className="btn shrink-0" disabled={busy}
-                      onClick={onUploadDraw}>
-                {busy ? "Drawing…" : uploadIsDrawn ? "Draw again" : "Draw it"}
-              </button>
-            }
-          />
+          <button type="button" className="btn self-start" disabled={busy}
+                  onClick={onUploadDraw}>
+            {busy ? "Drawing…" : uploadIsDrawn ? "Draw again" : "Draw it"}
+          </button>
         </div>
       ) : (
         <Door

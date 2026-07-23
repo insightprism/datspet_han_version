@@ -586,6 +586,20 @@ advertises it (`make/page.tsx:144`), and the "silently ignored" `strength` field
 unreachable from any shipped UI. What exists is a **product gap** — users upload photos
 that violate the precondition and nothing says so.
 
+> **SUPERSEDED 2026-07-23 — the chooser below is REMOVED (`SPEC_STEP1_SOURCE_RAIL` §1.12).**
+> The trade is real; the choice was not. Step 2's redraw is **mandatory** (§4.2), runs at its
+> own strength, and `compose_design` forces it to **0.9** whenever the design fights the
+> source (`app.py:296`) — at which point the second pass wins outright and the photographic
+> likeness a "faithful" base preserved is gone before anything is animated. A control whose
+> effect is erased downstream is worse than none: it charges a decision and discards it.
+>
+> Uploads now redraw at the server's `UPLOAD_REDRAW_STRENGTH` (0.85 — the sprite value this
+> section already defaults to) and the client sends no `strength`. **Step 2's own "how far to
+> push it" control is untouched** and is the one that actually shapes the animated pet.
+>
+> The table below stays because its *reasoning* is what justifies the removal — read it as
+> the argument for defaulting to sprite, not as a description of shipped UI.
+
 **Rev.5: the user chooses how far to redraw, because the trade is real and only they know
 which side they want.**
 

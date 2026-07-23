@@ -42,7 +42,7 @@ import Step from "./Step";
 import ReferenceBox from "./ReferenceBox";
 import SourceRail from "./SourceRail";
 import BaseGalleryDialog from "./BaseGalleryDialog";
-import { DEFAULT_UPLOAD_STRENGTH, type PendingSource } from "./UploadStrength";
+import type { PendingSource } from "./pendingSource";
 import { prepareUpload, UploadRejected, ACCEPT_ATTR } from "./prepareUpload";
 import DesignStep from "./DesignStep";
 import PoseStep from "./PoseStep";
@@ -137,10 +137,7 @@ export default function Designer() {
     setPreparing(true);
     try {
       const prepared = await prepareUpload(file);
-      choose({
-        kind: "upload", file: prepared, url: URL.createObjectURL(prepared),
-        strength: DEFAULT_UPLOAD_STRENGTH,
-      });
+      choose({ kind: "upload", file: prepared, url: URL.createObjectURL(prepared) });
     } catch (e) {
       // UploadRejected carries copy written for the user; anything else is a surprise and
       // says so rather than pretending to be advice.
@@ -171,8 +168,10 @@ export default function Designer() {
       form.append("catalog_animal", source.animal);
       form.append("catalog_breed", source.breed);
     } else if (source.kind === "upload") {
+      // No `strength`: the client has no opinion since the chooser was removed (§1.12), so
+      // the server's own UPLOAD_REDRAW_STRENGTH default (app.py:155) governs. Sending a
+      // copy of it from here would be a second owner of one number, free to drift.
       form.append("image", source.file);
-      form.append("strength", String(source.strength));
     } else {
       form.append("animal", source.animal.trim());
     }
@@ -349,10 +348,6 @@ export default function Designer() {
             onUpload={() => fileRef.current?.click()}
             onTypedDraw={(animal) => chooseAndDraw({ kind: "typed", animal })}
             uploadPending={pending?.kind === "upload"}
-            uploadStrength={pending?.kind === "upload" ? pending.strength : DEFAULT_UPLOAD_STRENGTH}
-            onUploadStrength={(s) => {
-              if (pending?.kind === "upload") setPending({ ...pending, strength: s });
-            }}
             uploadIsDrawn={pending?.kind === "upload" && pendingDrawn}
             onUploadDraw={() => { if (pending?.kind === "upload") drawFrom(pending); }}
           />
