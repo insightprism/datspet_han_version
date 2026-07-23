@@ -4,6 +4,12 @@
 three-step designer, rewritten from it after many rounds of review against a running app.
 §6, §7 and §9–§13 are design, reconciled to them.
 
+> **Amended 2026-07-23 by `docs/SPEC_STEP1_SOURCE_RAIL.md` (built).** Step 1's source
+> question moved out of the dialog and onto the page as `<SourceRail>`; the typed field is
+> inline; the dialog is gallery-only and renamed `BaseGalleryDialog`. **§3.1's "nothing else
+> is on screen" no longer describes the screen** — see §3.10, which is the as-built account,
+> and §13's last two rows. First paint 2 → **6** (§1.1).
+
 **Implementation: build steps 0–3 and 5–8 are DONE and green** — 208 tests, `tsc` clean.
 The designer is live at `/design/general`; `/design` 307s to it. **There is one designer and
 one contract**: the legacy `/api/generate` params, `_legacy_resolve_base`, `_legacy_preview`
@@ -311,7 +317,7 @@ Measured on "yellow chubby blue jay, wizard hat, +run pose":
 | | Today | Rev.2 (flow only) | Rev.3 (flow + §4.6) | **Rev.6 (as built)** |
 |---|---|---|---|---|
 | Actions to a finished pet | ~7 | ~6 | ~6 | **~8** |
-| Controls on screen **at first paint** | **29** (verified) | ~26 | ~18 | **2** (measured) |
+| Controls on screen **at first paint** | **29** (verified) | ~26 | ~18 | **2** → **6** (§3.10) |
 | **Peak** controls on screen at once | **32** (verified) | ~30 | ~21 | **25** (measured) |
 | Total controls that exist | 29 | ~30 | ~21 | **~27** |
 | Decisions to make | ~8 | ~8 | ~8 | ~8 |
@@ -327,6 +333,19 @@ mounted until the base is committed, so the opening screen is the box and one bu
 draw button is not rendered at all, because the pre-filled base is a curated FILE and there
 is nothing to draw. Rev.2 promised 3 while its own §3.1 opened step 2 immediately, which is
 why the claim was arithmetically impossible (§12).
+
+> **And two was too few — the number was right and the screen was wrong (§3.10).** Those two
+> controls were a picture and a commit button. The question step 1 exists to ask was on
+> neither: it lived in a dialog behind a click on a pre-filled box that looked like an
+> answer, so *type any animal* — the product's headline capability — was invisible until
+> discovered. The rail puts the question on the page and first paint becomes **6**.
+>
+> This is not the metric regressing; it is the metric being read correctly. §12's own
+> correction says it: *"controls at first paint was never 29 decisions."* The four added
+> controls carry **zero** new decisions — the user always had to decide where their animal
+> came from, and was doing it blind. Actions **improve**: the typed path drops two clicks,
+> the other two drop one each. A page whose two visible controls are a picture and a commit
+> button is small the way a locked door is quiet.
 
 **Peak is 25, not the ~21 this spec estimated** — measured, not projected: the vocabulary is
 22 (an 11-control palette with "natural", 3 body, 1 accessory select + up to 3 remove-chips,
@@ -448,10 +467,16 @@ piece is the way it is. The corrections are recorded in §13.
 The single place a starting picture is chosen. Every way in produces one `reference_id`
 the rest of the flow consumes identically.
 
-### 3.1 The box is the interface
+### 3.1 The box is the subject — *(superseded in part by §3.10)*
 
-**The base animal has exactly one home — a box — and the box is also the control.**
-Click it and a dialog asks the one question step 1 exists to ask:
+> **Read §3.10 first.** This section described the screen from Rev.5 until 2026-07-23. Its
+> *argument* is still load-bearing and §3.10 depends on it; its *conclusion* — that the
+> question belongs in a dialog and nothing else is on screen — is what §3.10 replaces.
+> Everything below stands except that one placement.
+
+**The base animal has exactly one home — a box.** From Rev.5 to 2026-07-23 the box was also
+the only control: click it and a dialog asked the one question step 1 exists to ask
+(**it is now asked on the page — §3.10**):
 
 > **Where should the base animal come from?**
 > · **Use an existing base animal** — the gallery *(free · instant)*
@@ -461,6 +486,13 @@ Click it and a dialog asks the one question step 1 exists to ask:
 Nothing else is on screen. No dropdowns, no second dropzone, no "Change" button beside a
 picture that is already clickable. Rev.1–4 accumulated all three, and every one of them
 was a second door into the same room.
+
+> **The rule survives; "nothing else is on screen" does not (§3.10).** The distinction it
+> turns on, which this section never drew: each of those three was **a second control
+> performing an action another control already performed**. That is a second door, and it
+> is still forbidden. **The first statement of a question nobody could see is not** — it
+> performs an action nothing on the page performed. Rev.5 read the rule as "minimise
+> controls" and hid the product behind it.
 
 This is the author's original framing, recovered: *"have a box that will hold the
 reference picture. The user can click on this box and will be given a choice for getting
@@ -482,6 +514,14 @@ drop/paste target, because a box you can drop onto needs no second box to drop o
 Two of three execute on selection; the one that has a decision attached waits for it.
 That asymmetry is not an inconsistency — it is the rule *"never ask for a confirmation
 that has nothing to confirm"* applied honestly to three different situations.
+
+> **This table stands unchanged in substance (§3.10).** What changed is where each door is
+> reached from: all three are now named in the rail. The typed door's **Confirm** is the
+> rail's own Draw button sitting beside the inline field (Enter still draws), and the dialog
+> holds only the gallery. A **second** asymmetry now sits under this one and decides the
+> layout: the doors differ by an order of magnitude in *how much surface their answer needs*
+> — a growing thumbnail grid, an OS dialog, and one text input — which is why exactly one of
+> the three inlines.
 
 ### 3.3 The gallery shows the bases; it does not describe them
 
@@ -563,6 +603,33 @@ This is why the upload door previews rather than draws (§3.2): the control has 
 visible *before* the 10 s is spent, and pressing **Draw it again** after moving the slider
 is how you find the one you want.
 
+#### What reaches the server (2026-07-23, §3.10)
+
+**Accepted: PNG, JPEG, WebP, GIF** (`ALLOWED_IMAGE_MIMES`, `app.py:147`), **≤12 MB**
+(`MAX_UPLOAD_BYTES`, `app.py:146`). Those are unchanged and remain the authority — a direct
+API call meets them and nothing else.
+
+What changed is everything in front of them. A photo can arrive three ways — the OS picker,
+a drop on the box, a paste — and until now **only the picker checked anything**: a drop
+accepted any file at all (a `.txt` went through), and paste accepted any `image/*`. Both then
+failed as a `400` *after* the user pressed Draw, beside a blank preview. All three funnel
+through `acceptPhoto`, so all three now pass one gate (`prepareUpload.ts`).
+
+**Oversize is downscaled, not rejected.** The 12 MB `413` was firing on a budget nothing
+downstream cares about: `_encode_reference_image` (`app.py:302`) thumbnails every *accepted*
+image to ≤1024 px four lines later. The client now does that first — same 1024 px, before the
+bytes move. Measured: a 4000×3000 JPEG went 11.2 MB → **221 KB**.
+
+> **Fewer pixels is not automatically fewer bytes.** A 548 KB 3000 px PNG re-encodes to
+> **2.9 MB** at 1024 px, because resampling raises entropy. When the re-encode loses and the
+> original already fits, the original is sent — the server downscales it to the same 1024 px
+> anyway.
+
+**HEIC is still refused**, with its own message: no browser outside Safari decodes it, and a
+wasm decoder is ~1 MB for one door. It is the format users will actually hit (the iPhone
+default), so it gets a sentence that says what to do about it rather than a generic MIME
+complaint.
+
 ### 3.6 Draw, then use — two buttons, and why not one
 
 Below the box:
@@ -577,6 +644,21 @@ Below the box:
 *Rev.4 specified ONE button doing both (decision #9). That was answered and then
 superseded: once selection began executing immediately, "draw" and "commit" stopped being
 the same act. Drawing is the loop; committing ends it.*
+
+> **Where these live now (§3.10).** They sit in the left column under the rail, not centred
+> beneath the box. A **typed** source draws from its own button in the rail, beside the field
+> whose text it renders, so `canRedraw` narrows to **uploads only** — sharing one button
+> would put two live "Draw it again"s on screen for a single source. Every draw button sits
+> beside the control that feeds it, and no source has two.
+>
+> **Use this animal → moved under the picture, and is now rendered rather than disabled.**
+> It commits what the box shows, so it belongs to the box, not to the foot of a column of
+> source controls. Its old disabled predicate — *there is no finished animal on screen* — now
+> decides whether it exists, because the box directly above it already says `drawing…` or
+> `not drawn yet — press draw` in words, and a greyed button asks the reader to derive what
+> the caption states. It still does **not** react to an undrawn typed draft: text the user
+> never actioned is an intention, not a choice, and the box still shows what the button
+> commits (`SPEC_STEP1_SOURCE_RAIL` §1.7, §9.15).
 
 ### 3.7 Locking is the gate — step 2 does not exist until it is pressed
 
@@ -595,10 +677,15 @@ would blow out the contrast of the sprite sitting on it), and the header reads
 wanting to change the base and wanting to see the chooser are the same wish.
 
 > **The toggle's two halves live in different places, for a structural reason.** Locking
-> moves the frontier to 2, which collapses step 1 and **unmounts its body** — so a locked
-> button living there would vanish the instant it was pressed. "Use this animal →" sits in
-> the body (visible while deciding); "🔒 Locked" sits in the header, the one part that
-> survives the collapse.
+> moves the frontier to 2, which collapses step 1 — so a locked button living in the part
+> that disappears would vanish the instant it was pressed. "Use this animal →" sits with the
+> picture it commits; "🔒 Locked" sits in the header, the one part that survives the collapse.
+>
+> **Since §3.10 that button lives in the `artifact` slot, which `<Step>` renders in EVERY
+> state** — so it carries its own `showsControls` gate. Without it the commit would outlive
+> the collapse and offer to re-lock an already-locked step, which is the header toggle's job.
+> The rule is unchanged; only the thing enforcing it moved from the layout to a predicate
+> (`SPEC_STEP1_SOURCE_RAIL` §1.7).
 
 **Unlocking clears the preview but keeps the design.** Colour and shape were never
 properties of the base (§0.1), so they survive; the preview cannot, because it is a
@@ -606,7 +693,16 @@ function of (base × design) and the base is back in play.
 
 ### 3.8 The dialog uses the shared overlay primitive
 
-`<BaseAnimalDialog>` composes **`<ModalOverlay>`** (`web/src/components/ModalOverlay.tsx`),
+> **The dialog is now `<BaseGalleryDialog>` and holds ONE view, not three (§3.10).** The
+> `choices` and `typed` views moved onto the page, so the `View` union, the `view` state and
+> the reset-on-close are all gone. Everything below about `<ModalOverlay>` is unchanged and
+> still binding. Note the trap that deletion avoided: this component is mounted
+> unconditionally and only `<ModalOverlay>` returns `null` when closed, so its state outlives
+> every close — a `useState(initialView)` seeded from a prop would be read once at first
+> mount and silently ignored thereafter (`SPEC_STEP1_SOURCE_RAIL` §10E). If a second view is
+> ever needed, make it fully controlled; never seed state from a prop here.
+
+`<BaseGalleryDialog>` composes **`<ModalOverlay>`** (`web/src/components/ModalOverlay.tsx`),
 **new in Rev.5** — there was no shared overlay to reuse. `ConfirmModal` looked like one but
 is a fixed title/body/confirm/cancel shape with no children, and was *itself* a hand-rolled
 `fixed inset-0 … flex` with **no body scroll-lock, no safe-area insets, no height cap and
@@ -640,6 +736,83 @@ longer a backend to un-orphan. Note what reviving it costs now that `/design` 30
 so a `?base` would survive the hop in prod — but `design/page.tsx`'s dev-side
 `redirect("/design/general")` drops it. **Both halves would need the query before this works
 in dev**, and dev-vs-prod drift is the failure mode that hid the last `/design` bug.
+
+### 3.10 The question is on the page — the source rail *(2026-07-23, as-built)*
+
+Full argument: **`docs/SPEC_STEP1_SOURCE_RAIL.md`**. This is the as-built summary, and where
+§3.1 and §3.10 disagree, **§3.10 is the screen**.
+
+**What was wrong.** §3.1's box lands *pre-filled* (correctly — see §1.1). A filled box looks
+like an answer, so nobody clicks it to find the question, and the question was only inside
+it. The entire disclosure of three doors was one line of faint mono: `click to change · or
+drop a photo`. Of the three, "existing" was roughly implied, "photo" was findable in 11 px,
+and **"type any animal" was stated nowhere at all** — the sentence `CLAUDE.md` opens the repo
+with, invisible until you clicked a picture that gave no sign it was a menu. The guardrail
+went with it: *"just the starting picture — you'll make it yours in the next step"*, the copy
+that stops users designing in step 1, shipped inside the same unopened modal.
+
+**What it is now.** Step 1 is a `layout="split"` step. The left column is `<SourceRail>`:
+
+| Slot | Goes to |
+|---|---|
+| **Use an existing base animal** · free · instant | the gallery dialog |
+| **Use my own picture** · ~10 s · redrawn as a sprite | the OS file dialog, directly |
+| **Or type any animal** — a label, an input, and its own Draw | *nothing — the field is right there* |
+
+Two doors are buttons; the third is **the door standing open**. Clicking the box opens the
+**gallery** — click a picture, get more pictures — never a menu. Drop and paste are unchanged.
+The current source carries a faint accent left edge, never a selected/radio look: these slots
+open doors, they do not select.
+
+Each door carries a glyph in its own brand colour (🐾 green · 📷 indigo · ✏️ purple) and is
+capped well short of the column. That is not decoration: shipped first as full-width rows
+with the hint pushed right — the dialog's shape, correct in a modal that held nothing else —
+they read on the page as *a table of text*, visible and still not obviously operable, which
+is this section's own bug in a new register. Colour is per-door identity; the current-source
+edge stays the only state channel, so the set never reads as a radio group.
+
+**Use this animal → sits under the picture and appears only once one is drawn** (§3.6, §3.7).
+
+**Three more things landed with the rail, and two of them are the whole designer's:**
+
+- **Every card names its step** — `Step 1 — Select the Animal to Design`, in `<Step>`, so all
+  three get it. A faint numeral beside a title read as a list marker while the page header
+  above promised three named steps.
+- **The step-advancing buttons are FILLED** (`.btn-step`): `Use this animal →`,
+  `Use this as my pet →`, `Bring it to life · ~3 min`, and nothing else, ever. This flow is a
+  spine of three locks surrounded by loop buttons — draw, preview, try again — that may be
+  pressed any number of times or never; rendering both kinds as `.btn` made three decisions
+  look like six options. **A loop button wearing `.btn-step` destroys the signal**, which is
+  why the rule is stated in `globals.css` where someone would reach for it.
+- **The rail has no heading and no sub-line.** `Where should it come from?` sat above three
+  doors that answer it in their own labels. Its sub-line was §3.2's archetype guardrail, and
+  losing it is a real cost — paid by the page header (*"start from what a typical animal
+  looks like"*, above all three cards) and by the typed door itself, which still reads
+  `Or type any animal` / `~10 s · drawn from scratch` / `blue jay`. The mitigation now sits on
+  the one control a design can actually be typed into. **If typed-in designs appear, fix the
+  typed row — do not restore a paragraph over the whole rail.**
+
+**Why exactly one of the three inlines (§3.2's second asymmetry).** Their answer surfaces are
+not comparable: a thumbnail grid that grows one folder per animal (§3.3) cannot live in a
+280 px column; an OS dialog is not ours to place; a typed animal's answer surface is **one
+text input**. Putting a single input behind a button that opens a modal containing a single
+input is ceremony in front of the one capability users could not find. Inlining also drags
+all four pieces of guardrail copy — the "starting picture" line, the *any animal* label, the
+`blue jay` placeholder, the "drawn from scratch" sub-line — permanently into view, so §3.2's
+highest-risk rule gets **more** exposure, not less.
+
+**Why this is not the second door §3.1 forbids.** Rev.1–4's three were each a second control
+performing an action another control already performed. The rail performs one nothing on the
+page performed: naming the sources. And it removes surfaces on net — the dialog's `choices`
+and `typed` views are deleted, and "my own picture" no longer routes through an app dialog to
+reach the OS one, so the surfaces asking *"which source?"* go from two to **one**. The single
+overlap it does accept — the rail's first button and the box's click both reach the gallery —
+is stated rather than glossed: the button's job is to be the third member of a complete set,
+and a rail reading only *"picture / type"* would leave the curated bases reachable but
+unnamed, which is this section's own bug moved one seat over.
+
+**What it cost.** First paint 2 → **6** (§1.1). Every path shortened: gallery and file by one
+click, typed by two.
 
 ## 4. Step 2 — design your pet
 
@@ -868,7 +1041,11 @@ This is not decoration. The loop is *tweak → preview → tweak*, and **a resul
 scroll away from in order to adjust is a result you cannot compare against**. Stacking the
 picture above ~17 swatches put the answer off-screen from the question.
 
-Step 1 stays centred: it has three controls, so there is no distance to close.
+**Step 1 is split too, since `SPEC_STEP1_SOURCE_RAIL` (§3.10).** It used to be centred
+*"because it has three controls, so there is no distance to close"* — true of the layout and
+wrong about the step: two of those three were a picture and a commit button, and the question
+step 1 exists to ask was not on screen at all. The rail is the left column; the box it fills
+sits beside it. Both steps now read identically.
 
 **The base animal moved underneath, small** — a 44 px thumbnail reading *"from a tabby"*. It
 stays on screen because "what did I change?" must be answerable at a glance, but it is
@@ -1262,21 +1439,24 @@ rule in spirit.
 
 #### Files
 
-**As built (Rev.6), colocated in `web/src/app/design/general2/`:** `designFlow.ts` (pure —
-types, reducer, selectors), `useDesignFlow.ts`, `Step.tsx`, `ReferenceBox.tsx`,
-`BaseAnimalDialog.tsx`, `UploadStrength.tsx`, `DesignStep.tsx`, `PoseStep.tsx`,
-`PetDesigner2.tsx`, `page.tsx`.
+**As built, colocated in `web/src/app/design/general/`:** `designFlow.ts` (pure — types,
+reducer, selectors), `useDesignFlow.ts`, `Step.tsx`, `ReferenceBox.tsx`, **`SourceRail.tsx`**
+(§3.10), **`BaseGalleryDialog.tsx`** (was `BaseAnimalDialog.tsx`), `UploadStrength.tsx`,
+`DesignStep.tsx`, `PoseStep.tsx`, `Designer.tsx`, `page.tsx`.
 
 **Shared, changed:** `web/src/components/ModalOverlay.tsx` (**new**, §3.8);
 `ConfirmModal.tsx` (migrated onto it); `PetJobResult.tsx` (**+`bare`**, §8.1);
 `globals.css` (**+`.input` / `.btn` / `.btn-ghost`** — the designer alone has five call
 sites, and `color-scheme: dark` on `.input` is load-bearing: without it a `<select>`'s popup
-renders with the OS's light defaults, i.e. white-on-white on this page).
+renders with the OS's light defaults, i.e. white-on-white on this page; **+`.btn-step`**,
+§3.10 — the filled treatment worn by the three controls that end a step, and by nothing
+else).
 
 *Rev.1–4 specified one file per door — `DoorDescribe.tsx`, then `DoorNameAnimal.tsx` +
-`DoorUpload.tsx`. None survive: the doors are three answers to one question inside
-`BaseAnimalDialog`, not three components (§3.1). Free text still appears twice, and that
-is deliberate — "which animal" in the dialog, "anything else" in `DesignStep` (§4.3). Same
+`DoorUpload.tsx`. None survive, and the reason held through §3.10: the doors are three
+answers to one question, now named in `SourceRail` and answered by the OS picker, the
+gallery, and one inline field — not three components. Free text still appears twice, and that
+is deliberate — "which animal" in the rail, "anything else" in `DesignStep` (§4.3). Same
 widget, two different questions; conflating them was Rev.1's mistake and remains one.*
 
 **Rewritten:** `Designer.tsx`, 659 → **551** lines — ~400 of code and ~120 of comment.
@@ -1622,6 +1802,12 @@ These did not verify:
 | *"Peak controls: ~22"* (§1.1) | Undercounted — step 2 alone is ~25. ~30 without §4.6; ~21 with it. **(Rev.4: this row's stated reason — "completed steps stay mounted for the co-visibility §7.6 requires" — was itself wrong. Completed steps keep their *artifact*, not their controls; §7.6's disclosure rule now says so, and ~21 follows as arithmetic.)** |
 | *"Rev.2 is smaller than Rev.1… adds one genuinely new capability instead of two"* | True of the architecture, **not** of the surface: Rev.2 *added* two step-2 controls (shape, free text) and removed none, taking total controls 29 → ~30. §4.6 is what makes the "smaller" claim true |
 
+**Rev.6's own first-paint figure needed the same treatment (2026-07-23).** "2, measured" was
+arithmetically correct and read the wrong way: the two were a picture and a commit button,
+with step 1's actual question on neither. It is **6** now (§1.1, §3.10) — four more controls,
+zero more decisions, every path shorter. The lesson this table exists for held again: *a
+control count is evidence about a screen, never a verdict on it.*
+
 ---
 
 ## 13. Corrections to Rev.1–4's step 1 (Rev.5)
@@ -1639,6 +1825,8 @@ misses.
 | Decision #9: one button, "Use / Redraw" | Superseded by §3.2. Answered honestly, then overtaken by a later decision — which is what a decisions table is for |
 | *"3 controls at first paint"* (Rev.1) → *"impossible, it is ~18"* (Rev.3) | **Both wrong.** Rev.1 could not deliver it because its own §3.1 opened step 2 immediately; Rev.3 was right about Rev.1 and wrong to conclude the number was unreachable. The LOCK reaches it — by not mounting step 2, not by disclosure (§1.1, §3.7) |
 | `cat/black` shipped as a curated base | A colour is not a breed, and colour is a step-2 input (§3.4). The archetype rule was stated for controls and never applied to the content it governs |
+| *"Nothing else is on screen"* (§3.1, Rev.5) | **True for controls that duplicate an action; wrong for the question itself.** The pre-filled box looks like an answer, so the chooser behind it went undiscovered — and *type any animal*, the capability `CLAUDE.md` opens the repo with, was stated nowhere on the page. So was the archetype guardrail that mitigates §3.2's highest risk. Rev.5 read "one door per room" as "minimise controls" and hid the product behind it. Fixed: §3.10 |
+| An earlier draft of the rail kept a two-view dialog behind an `initialView` prop | **Would have shipped a bug, and a familiar one.** The dialog is mounted unconditionally; only `<ModalOverlay>` returns `null` when closed, so its state outlives every close — `useState(initialView)` reads once at first mount and ignores every later change. Open the gallery, close it, click *type* → the gallery again. That is this table's own third row with the symptom inverted: **state the parent must control, living in the child.** Fixed by deleting the second view rather than patching the seed (§3.10) |
 
 **The pattern worth keeping:** every miss above is the same one — *specifying an interface
 instead of describing the artifact and letting the interface follow*. The bases are

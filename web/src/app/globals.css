@@ -105,6 +105,33 @@ body {
 .btn-ghost:hover:not(:disabled) { opacity: 0.85; color: var(--heading); }
 .btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/**
+ * THE step button — the one control that ends a step and opens the next
+ * (SPEC_STEP1_SOURCE_RAIL §1.8). There are exactly three in the whole designer:
+ * "Use this animal →", "Use this as my pet →", "Bring it to life · ~3 min".
+ *
+ * FILLED, where every other button on the page is outlined. That is the entire point:
+ * the designer is a spine of three locks (§3.7, §4.7) surrounded by loop buttons — draw,
+ * preview, try again — that you may press any number of times or never. Rendering both
+ * kinds as `.btn` made the flow's three actual decisions look like six options. One
+ * treatment, used three times, in the same colour, says "this is how you move forward"
+ * without a word of copy.
+ *
+ * Do NOT reach for this for anything that can be pressed twice. The moment a loop button
+ * wears it, the signal is gone and this rule is worth nothing.
+ */
+.btn-step {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #ffffff;
+  border-radius: 8px;
+  padding: 0.55rem 1.1rem;
+  font-weight: 600;
+  transition: filter 0.15s;
+}
+.btn-step:hover:not(:disabled) { filter: brightness(1.12); }
+.btn-step:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* Running-figure bob shown next to the elapsed timer while a pet generates —
    a small motion cue that reinforces "still working." Decorative only: the
    climbing timer carries the meaning, so it's held still under reduced-motion. */

@@ -47,8 +47,13 @@ interface Props {
    * "split" puts the controls LEFT and the artifact RIGHT while expanded, so the thing
    * you are changing sits beside the controls that change it. Step 2 needs it: it is a
    * loop (tweak → preview → tweak), and stacking the picture above ~17 swatches puts
-   * the result off-screen from the controls producing it. Step 1 stays centred — it has
-   * three controls, so there is no distance to close.
+   * the result off-screen from the controls producing it.
+   *
+   * Step 1 uses it too, since SPEC_STEP1_SOURCE_RAIL. It used to be centred "because it
+   * has three controls, so there is no distance to close" — true of the layout and wrong
+   * about the step: two of those three controls were a picture and a commit button, and
+   * the question step 1 exists to ask was not on screen at all. <SourceRail> puts it in
+   * the left column, and the box it fills sits beside it.
    *
    * Collapsed, both layouts are identical: a summary and the artifact.
    */
@@ -77,8 +82,10 @@ export default function Step({
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
-          <span className="mono text-xs" style={{ color: "var(--faint)" }}>{index}</span>
-          <h2 className="text-sm font-semibold">{title}</h2>
+          {/* "Step 1 — Select the Animal to Design", not a faint numeral beside a title.
+              The numeral read as decoration; naming the step in the heading is what ties
+              the card to the three-step promise in the page header above it. */}
+          <h2 className="text-sm font-semibold">Step {index} — {title}</h2>
           {!expanded && summary && (
             <span className="mono text-xs" style={{ color: "var(--muted)" }}>{summary}</span>
           )}

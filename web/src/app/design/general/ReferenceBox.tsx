@@ -1,7 +1,8 @@
 "use client";
 
 /**
- * <ReferenceBox> — the box that holds your base animal (SPEC_PET_DESIGNER_FLOW §3).
+ * <ReferenceBox> — the box that holds your base animal (SPEC_PET_DESIGNER_FLOW §3,
+ * SPEC_STEP1_SOURCE_RAIL §1.4).
  *
  * It is BOTH the display and one of the ways to fill it. That is the author's
  * original framing — "have a box that will hold the reference picture; the user can
@@ -14,18 +15,36 @@
  * already asks exactly that question, so a photo dropped here simply borrows it as the
  * redraw hint. Two fields asking "which animal?" — one labelled "type any animal" and
  * one labelled "what animal is it?" — were the same question wearing two hats, and
- * step 1 takes ONE input: which animal (§0.1).
+ * step 1 takes ONE input: which animal (§0.1). (That left-hand field described a layout
+ * that had been deleted; <SourceRail> puts it back, so the paragraph is true again.)
  *
- * Dropping auto-commits, unlike the typed door's explicit "Draw it". Dropping a photo
- * IS the explicit act — nobody drags a file by accident — so a second confirm would be
- * ceremony. The ~10 s price is on the box before you drop (§3.3's commit rule).
+ * Clicking opens the GALLERY, not a menu — click a picture, get more pictures. The rail
+ * beside it names all three sources, so the caption here keeps only the one affordance
+ * nothing else on the page reveals: drop.
+ *
+ * Dropping does NOT commit. The photo lands as a PREVIEW — the box shows your raw file
+ * via an object URL, the caption reads "not drawn yet — press draw", and the strength
+ * control appears in the rail. It becomes the base only when Draw is pressed.
+ *
+ * (An earlier version of this comment claimed dropping auto-commits, "so a second confirm
+ * would be ceremony". That was never what the code did, and §3.2 is why: an upload is the
+ * one door with a DECISION attached — faithful ↔ sprite — so drawing on drop would burn a
+ * ~10 s render at whatever default happened to be set. The confirm is not ceremony; it is
+ * the user answering the question the slider asks.)
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { referenceImageUrl, type PetReference } from "@/lib/api";
 
 interface Props {
   reference: PetReference | null;
   busy: boolean;
+  /**
+   * A dropped photo is being decoded and downscaled (SPEC_STEP1_SOURCE_RAIL §1.10).
+   * Separate from `busy` on purpose: `busy` is a ~10 s GPU render and this is ~200 ms of
+   * local work, and telling the user "drawing…" while nothing is being drawn would be a
+   * lie the very next state contradicts.
+   */
+  preparing: boolean;
   onPhoto: (file: File) => void;
   /** Click the box to choose where the base animal comes from. */
   onOpen: () => void;
@@ -45,10 +64,13 @@ interface Props {
 const SIDE = 200;
 
 export default function ReferenceBox({
-  reference, busy, onPhoto, onOpen, pendingUrl, pendingLabel, locked,
+  reference, busy, preparing, onPhoto, onOpen, pendingUrl, pendingLabel, locked,
 }: Props) {
   const [dragover, setDragover] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
+  // Hover reveals the drop hint INSIDE the box (below). It is not a caption line: a line
+  // that appears under the box on hover would shove the commit button down every time the
+  // pointer crossed the picture.
+  const [hover, setHover] = useState(false);
 
   const accept = useCallback((f: File | null | undefined) => {
     if (f) onPhoto(f);
@@ -77,8 +99,10 @@ export default function ReferenceBox({
       <div
         role="button"
         tabIndex={0}
-        aria-label="Your base animal — click to change it"
-        className="flex cursor-pointer items-center justify-center rounded-xl border transition"
+        aria-label="Your base animal — click to browse the gallery"
+        className="relative flex cursor-pointer items-center justify-center overflow-hidden rounded-xl border transition"
+        onMouseEnter={() => setHover(true)}
+        onMouseLeave={() => setHover(false)}
         style={{
           width: SIDE, height: SIDE,
           background: "#151515",
@@ -98,13 +122,6 @@ export default function ReferenceBox({
           accept(e.dataTransfer.files?.[0]);
         }}
       >
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp,image/gif"
-          className="hidden"
-          onChange={(e) => accept(e.target.files?.[0])}
-        />
         {shownUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -123,18 +140,53 @@ export default function ReferenceBox({
             {busy ? "drawing…" : "click to choose a base animal"}
           </span>
         )}
+
+        {/* The drop affordance, revealed on hover instead of stated permanently. It used
+            to be a caption line under the box, which spent a line of the layout on a
+            capability most users never reach for — and put "drop a photo here" one line
+            below "Tabby", where it read as a description of the tabby.
+
+            `pointer-events-none` is load-bearing: an element under the cursor that
+            accepts pointer events fires dragleave as the file passes over it, and the
+            drop would land on nothing. */}
+        {(hover || dragover) && !locked && !busy && !preparing && (
+          <span
+            className="mono pointer-events-none absolute inset-x-0 bottom-0 py-1.5 text-center text-xs"
+            style={{ background: "rgba(0,0,0,0.72)", color: dragover ? "var(--green)" : "var(--muted)" }}
+          >
+            {dragover ? "drop to use it" : "drop your own image"}
+          </span>
+        )}
       </div>
 
-      <figcaption className="flex flex-col items-center gap-0.5 text-center">
-        <span className="mono text-xs" style={{ color: "var(--muted)" }}>
-          {busy ? "drawing…" : shownLabel}
-        </span>
-        <span className="mono text-xs" style={{ color: locked ? "var(--green)" : "var(--faint)" }}>
-          {locked ? "🔒 locked in"
-           : isPending ? "not drawn yet — press draw"
-           : "click to change · or drop a photo"}
-        </span>
-      </figcaption>
+      {/**
+       * THE CAPTION SPEAKS ONLY WHEN IT HAS NEWS (SPEC_STEP1_SOURCE_RAIL §1.9).
+       *
+       * It used to be two permanent lines — the animal's name, and "drop a photo here".
+       * Both were noise in the steady state: you can see it is a tabby, and the drop
+       * affordance is now the hover overlay above. Two lines of chrome under a finished
+       * picture also pushed the commit button a line and a half below the last control in
+       * the rail, which is what made the two columns look unrelated.
+       *
+       * The three states that remain all EXPLAIN something the picture cannot:
+       *   drawing…                   — a ~10 s render is in flight (the image is dimmed,
+       *                                but dimming alone does not say "wait")
+       *   not drawn yet — press draw — why there is no commit button right now (§1.7).
+       *                                A missing button with no explanation is exactly
+       *                                what that rule exists to avoid
+       *   🔒 locked in               — this base is settled and step 2 is open (§3.7)
+       *
+       * A drawn, unlocked animal says nothing at all, which is the common case.
+       */}
+      {(busy || preparing || locked || isPending) && (
+        <figcaption className="mono text-center text-xs"
+                    style={{ color: locked ? "var(--green)" : "var(--faint)" }}>
+          {preparing ? "preparing your photo…"
+           : busy ? "drawing…"
+           : locked ? "🔒 locked in"
+           : "not drawn yet — press draw"}
+        </figcaption>
+      )}
     </figure>
   );
 }

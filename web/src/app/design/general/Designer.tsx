@@ -40,10 +40,12 @@ import { useDesignFlow } from "./useDesignFlow";
 import { showsControls, isReachable, previewSettled } from "./designFlow";
 import Step from "./Step";
 import ReferenceBox from "./ReferenceBox";
-import BaseAnimalDialog from "./BaseAnimalDialog";
+import SourceRail from "./SourceRail";
+import BaseGalleryDialog from "./BaseGalleryDialog";
 import UploadStrength, {
   DEFAULT_UPLOAD_STRENGTH, type PendingSource,
 } from "./UploadStrength";
+import { prepareUpload, UploadRejected, ACCEPT_ATTR } from "./prepareUpload";
 import DesignStep from "./DesignStep";
 import PoseStep from "./PoseStep";
 
@@ -52,12 +54,20 @@ export default function Designer() {
   const { state, dispatch, axes, entitlement, maxPoses, fillReference, makePreview } = flow;
   const { job, error: jobError, submit, reset, stop, busy, done } = usePetJob();
   const [options, setOptions] = useState<CatalogBaseOption[] | null>(null);
-  // The pending pick lives HERE, not in the dialog, because the dialog unmounts when
-  // it closes — and §3.1 requires the chooser to reopen with the previous choice
-  // retained. Held in the dialog, it would be destroyed on every close, and the box
-  // would end up showing one thing while the chooser claimed another.
+  // The pending pick and the typed draft live HERE, not in the surfaces that show them.
+  // <Step> unmounts its children on collapse (Step.tsx:111) and <ModalOverlay> unmounts
+  // the dialog's body on close, so either one held further down would be destroyed every
+  // time step 1 locked or the gallery closed — and §3.1 requires the chooser to reopen
+  // with the previous choice retained. That is §13's recorded miss verbatim: the box
+  // showing one thing while the chooser claimed another.
   const [dialogOpen, setDialogOpen] = useState(false);
   const [pending, setPending] = useState<PendingSource | null>(null);
+  const [typedDraft, setTypedDraft] = useState("");
+  // Client-side intake failures (§1.10) — a HEIC, a .txt, an unreadable file. Local rather
+  // than reducer state because nothing downstream depends on it: it is not a property of
+  // the base animal, it is a note about a file we declined to send.
+  const [intakeError, setIntakeError] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
   // Has the pending source been drawn yet? While false the box shows a PREVIEW of the
   // choice (the curated file, or the raw photo); once drawn it shows the real result.
   // Without this the box would keep showing your raw photo after the redraw had
@@ -68,6 +78,7 @@ export default function Designer() {
   function choose(next: PendingSource) {
     setPending(next);
     setPendingDrawn(false);   // a new source is a new question
+    setIntakeError(null);     // ...and it clears the last file's complaint
   }
 
   // Release the object URL when the pending photo is replaced or cleared — every
@@ -105,21 +116,41 @@ export default function Designer() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options]);
 
-  // A photo, from the OS dialog or dropped on the box. It becomes the PENDING pick —
-  // shown in the box immediately via an object URL, so the user sees what they're
-  // about to redraw — and only becomes the base when they press the button.
-  function acceptPhoto(file: File | null | undefined) {
+  // A photo, from the OS dialog, dropped on the box, or pasted. ALL THREE land here, which
+  // is why one gate covers them (§1.10) — before `prepareUpload` existed, only the OS
+  // picker's `accept=` checked anything, drop took literally any file, and both failed as
+  // a 400 after the user pressed Draw.
+  //
+  // It becomes the PENDING pick — shown in the box immediately via an object URL, so the
+  // user sees what they're about to redraw — and only becomes the base when they press the
+  // button.
+  async function acceptPhoto(file: File | null | undefined) {
     if (!file) return;
+    setIntakeError(null);
     // Drop and paste stay live after the lock (the box never unmounts), so a photo
     // can arrive while step 1 is locked. Unlock first: otherwise the pending photo
     // sits on a "🔒 locked in" box whose Draw button is unmounted — a preview of a
     // decision the page claims is settled, with no way to draw it. Choosing a new
     // source IS unlocking, the same rule referenceRequested applies.
     if (state.baseConfirmed) dispatch({ type: "baseUnlocked" });
-    choose({
-      kind: "upload", file, url: URL.createObjectURL(file),
-      strength: DEFAULT_UPLOAD_STRENGTH,
-    });
+    // Decode + resize is 100-300 ms on a laptop and can exceed a second on a phone with a
+    // 48 MP shot. Without a state to show for it, dropping a photo looks like a dropped
+    // frame — the box would sit unchanged with no sign anything had happened.
+    setPreparing(true);
+    try {
+      const prepared = await prepareUpload(file);
+      choose({
+        kind: "upload", file: prepared, url: URL.createObjectURL(prepared),
+        strength: DEFAULT_UPLOAD_STRENGTH,
+      });
+    } catch (e) {
+      // UploadRejected carries copy written for the user; anything else is a surprise and
+      // says so rather than pretending to be advice.
+      setIntakeError(e instanceof UploadRejected ? e.message
+                     : "That image couldn't be prepared. Try a different file.");
+    } finally {
+      setPreparing(false);
+    }
   }
 
   // THE one button (§3). One job — make this the base animal — with an honest label
@@ -156,14 +187,39 @@ export default function Designer() {
     drawFrom(next);
   }
 
-  // The draw button only exists where drawing can change something.
+  // The draw button only exists where drawing can change something, and it sits beside
+  // the control that feeds it (SPEC_STEP1_SOURCE_RAIL §5.3).
   //
   // A curated base is a FILE. Picking it in the gallery already copied it into the box
   // (~6 ms, no GPU), and pressing draw again would re-copy the same bytes to the same
   // picture — a button whose only honest label is "do nothing, slowly". A photo and a
   // typed name are the opposite: each press is a new render, so the loop is real.
-  const canRedraw = Boolean(pending) && pending?.kind !== "catalog";
+  //
+  // TYPED redraws from its own row in <SourceRail>, next to the field whose text it
+  // renders — so this button narrows to uploads. Leaving it live for typed too would put
+  // two identical "Draw it again" buttons on screen for ONE source, which is the second
+  // door §2 forbids. The upload's stays here for the same reason typed's went there: it
+  // belongs beside <UploadStrength>, the control that changes what it draws.
+  const canRedraw = pending?.kind === "upload";
   const redrawLabel = pendingDrawn ? "Draw it again · ~10 s" : "Draw it · ~10 s";
+
+  // The draft is exactly what is already in the box → the rail says "Draw it again".
+  // Type over a drawn animal and it reverts to "Draw it", because the draft and the
+  // picture have parted company.
+  const typedIsDrawn = pending?.kind === "typed" && pendingDrawn
+                       && pending.animal === typedDraft.trim();
+
+  // Is the box showing a REAL, finished base animal right now? This is what the commit
+  // button used to be *disabled* on; it now decides whether the button exists at all
+  // (SPEC_STEP1_SOURCE_RAIL §1.7). A greyed-out button beside a spinner asks the user to
+  // work out why it is dead; no button at all, under a box that says "drawing…", says the
+  // same thing without the puzzle. It appears the moment the picture does.
+  const baseIsDrawn = Boolean(state.reference) && !state.referenceBusy
+                      && !(pending && !pendingDrawn);
+
+  // Step 1's controls are mounted — used by BOTH halves of the artifact column: the commit
+  // button's existence, and the negative top margin that aligns it with the rail.
+  const step1Open = showsControls(state, axes, 1);
 
   // Every non-default axis pick, in menu order — "purple · chubby · spotted ·
   // grumpy" reads back exactly what the user chose, whichever axes this animal
@@ -211,9 +267,14 @@ export default function Designer() {
       {/* STEP 1 — pick your base animal. A WORKSHOP, not a menu: the controls sit on
           the left and the animal they produce sits on the right, so try → look → try
           again is one glance instead of a scroll. It stays open until the user says
-          "this one" — filling the box is not the same as choosing. */}
+          "this one" — filling the box is not the same as choosing.
+
+          That sentence described an aspiration until SPEC_STEP1_SOURCE_RAIL; the step was
+          centred, and the whole source question hid behind a click on the picture. It is
+          now literally true: <SourceRail> is the left, the box is the right (§1.1). */}
       <Step
         index={1}
+        layout="split"
         title="Select the Animal to Design"
         summary={state.reference?.display_name}
         tone={state.baseConfirmed ? "confirmed" : "default"}
@@ -227,105 +288,142 @@ export default function Designer() {
         )}
         expandLabel={state.baseConfirmed ? "🔒 Locked — click to change" : "Change"}
         artifact={
-          <ReferenceBox
-            reference={state.reference}
-            busy={state.referenceBusy}
-            locked={state.baseConfirmed}
-            onPhoto={acceptPhoto}
-            onOpen={() => setDialogOpen(true)}
-            pendingUrl={
-              pendingDrawn ? null
-              : pending?.kind === "upload" ? pending.url
-              : pending?.kind === "catalog" ? catalogBaseImageUrl(pending.animal, pending.breed)
-              : null
-            }
-            pendingLabel={
-              pendingDrawn ? null
-              : pending?.kind === "upload" ? pending.file.name
-              : pending?.kind === "catalog" ? pending.label
-              : null
-            }
-          />
-        }
-      >
-        <div className="mx-auto flex max-w-md flex-col items-center gap-4">
-          {/* Only an upload needs a control out here — the likeness-vs-animation trade
-              is real, and it has to be visible while you press draw again. */}
-          {pending?.kind === "upload" && (
-            <UploadStrength
-              strength={pending.strength}
-              onStrength={(s) => setPending({ ...pending, strength: s })}
+          /* `-mt-3` while step 1 is open cancels the row's own `mt-3` (Step.tsx:94), so the
+             picture sits flush with the header baseline instead of a line below it. That is
+             what puts "Use this animal →" on the same line as the rail's last button — the
+             two columns read as one row of work, not as a caption stack drifting below a
+             form. It is scoped to the OPEN state on purpose: collapsed, <Step> wraps the
+             artifact in its own `mt-3` beside a live "🔒 Locked" button, and cancelling the
+             gap there would crowd them. */
+          <div className={`flex flex-col items-center gap-2 ${step1Open ? "-mt-3" : ""}`}>
+            <ReferenceBox
+              reference={state.reference}
+              busy={state.referenceBusy}
+              preparing={preparing}
+              locked={state.baseConfirmed}
+              onPhoto={acceptPhoto}
+              onOpen={() => setDialogOpen(true)}
+              pendingUrl={
+                pendingDrawn ? null
+                : pending?.kind === "upload" ? pending.url
+                : pending?.kind === "catalog" ? catalogBaseImageUrl(pending.animal, pending.breed)
+                : null
+              }
+              pendingLabel={
+                pendingDrawn ? null
+                : pending?.kind === "upload" ? pending.file.name
+                : pending?.kind === "catalog" ? pending.label
+                : null
+              }
             />
-          )}
 
-          <div className="flex flex-wrap items-center justify-center gap-3">
-            {/* DRAW — press it as often as you like. This is the iterate loop: a typed
-                animal re-rolls to a different blue jay, a photo re-redraws at whatever
-                strength is set. It is absent for a curated base (nothing to draw) and
-                once locked (offering to re-roll what you just settled is an invitation
-                to undo it by accident). */}
-            {!state.baseConfirmed && canRedraw && (
+            {/* LOCK — the gate. Step 2 does not exist until this is pressed, which is what
+                makes the draw loop in the rail safe to run forever.
+
+                It lives UNDER THE PICTURE, not in the left column: it commits what the box
+                is showing, so it belongs to the box (§1.7). And it is RENDERED, not
+                disabled — it appears when a finished animal is on screen and is simply
+                absent while one is being drawn.
+
+                It sits in the `artifact` slot, which <Step> renders in EVERY state — so it
+                must gate on `showsControls` itself. Without that it would survive the
+                collapse and offer to re-lock a step that is already locked, which is the
+                header toggle's job (§3.7). Its other half — unlocking — is up there
+                because this whole subtree unmounts the moment the lock lands. */}
+            {step1Open && baseIsDrawn && (
               <button
                 type="button"
-                className="btn"
-                disabled={state.referenceBusy}
-                onClick={() => pending && drawFrom(pending)}
+                className="btn-step"
+                onClick={() => dispatch({ type: "baseAccepted" })}
               >
-                {state.referenceBusy ? "Drawing…" : redrawLabel}
+                Use this animal →
               </button>
             )}
-
-            {/* LOCK — the gate. Step 2 does not exist until this is pressed, which is
-                what makes the loop to its left safe to run forever. Its other half —
-                unlocking — lives in the header, because this whole body unmounts the
-                moment the lock lands. */}
-            <button
-              type="button"
-              className="btn"
-              // Locked out while a draw is in flight AND while a pending pick sits
-              // undrawn (a chosen photo before its Draw press): in both states the
-              // box is not showing `state.reference`, and this button commits
-              // `state.reference` — it must never lock something other than what
-              // the user is looking at.
-              disabled={!state.reference || state.referenceBusy
-                        || Boolean(pending && !pendingDrawn)}
-              onClick={() => dispatch({ type: "baseAccepted" })}
-            >
-              Use this animal →
-            </button>
           </div>
+        }
+      >
+        <div className="flex flex-col gap-5">
+          {/* THE question, on the page (SPEC_STEP1_SOURCE_RAIL §1.1). Two doors are
+              buttons; the third — type any animal — is the door standing open, because
+              its whole answer surface is one text input and hiding that behind a modal
+              hid the product. */}
+          <SourceRail
+            current={pending?.kind ?? null}
+            busy={state.referenceBusy}
+            typedDraft={typedDraft}
+            onTypedDraft={setTypedDraft}
+            typedIsDrawn={typedIsDrawn}
+            onGallery={() => setDialogOpen(true)}
+            onUpload={() => fileRef.current?.click()}
+            onTypedDraw={(animal) => chooseAndDraw({ kind: "typed", animal })}
+          />
 
-          {state.referenceError && (
-            <div className="mono text-xs" style={{ color: "#f87171" }}>{state.referenceError}</div>
+          {/* An upload is the one source with a decision attached, and its two controls
+              travel together: the likeness-vs-animation trade has to be visible while you
+              press draw again, so the slider and its draw button are one block.
+
+              DRAW — press it as often as you like. It is absent for a curated base
+              (nothing to draw), for a typed animal (its own button lives in the rail,
+              beside the field that feeds it) and once locked (offering to re-roll what you
+              just settled is an invitation to undo it by accident). */}
+          {pending?.kind === "upload" && (
+            <div className="flex max-w-[26rem] flex-col gap-3">
+              <UploadStrength
+                strength={pending.strength}
+                onStrength={(s) => setPending({ ...pending, strength: s })}
+              />
+              {!state.baseConfirmed && canRedraw && (
+                <button
+                  type="button"
+                  className="btn self-start"
+                  disabled={state.referenceBusy}
+                  onClick={() => pending && drawFrom(pending)}
+                >
+                  {state.referenceBusy ? "Drawing…" : redrawLabel}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Intake wins when both are set: the newer complaint is about the file the user
+              just handed over, and the stale render error is about one they have moved on
+              from. */}
+          {(intakeError || state.referenceError) && (
+            <div className="mono max-w-[26rem] text-xs" style={{ color: "#f87171" }}>
+              {intakeError ?? state.referenceError}
+            </div>
           )}
         </div>
       </Step>
 
-      {/* The OS file input lives OUTSIDE the dialog: the dialog unmounts the moment
-          "Use my own picture" is clicked, and an <input> unmounted mid-dialog drops
-          its change event on the floor — the file picker would open and then do
-          nothing. */}
+      {/* The OS file input is the ONE live file input on the page, and it lives out here
+          rather than in <SourceRail> because <Step> unmounts its children when step 1
+          locks — an <input> unmounted between the click and the change event drops that
+          event on the floor, so the picker would open and then do nothing. */}
       <input
         ref={fileRef}
         type="file"
-        accept="image/png,image/jpeg,image/webp,image/gif"
+        // From prepareUpload, not spelled out here: the picker's filter and the gate that
+        // enforces it must not be able to drift (§1.10).
+        accept={ACCEPT_ATTR}
         className="hidden"
-        onChange={(e) => acceptPhoto(e.target.files?.[0])}
+        onChange={(e) => {
+          acceptPhoto(e.target.files?.[0]);
+          // Clear it, or picking the SAME file twice fires no change event — which now
+          // matters: reject a photo, fix nothing, pick it again, and the page would sit
+          // silent as though the click had missed.
+          e.target.value = "";
+        }}
       />
-      <BaseAnimalDialog
+      <BaseGalleryDialog
         open={dialogOpen}
         options={options ?? []}
         onClose={() => setDialogOpen(false)}
-        // Both of these draw on the spot. A curated pick is free and instant, and a
-        // typed animal does not exist until it is drawn — so in both cases there is
-        // nothing to preview and approve first.
+        // A curated pick is free and instant, so it draws on the spot — there is nothing
+        // to preview and approve first (§3.2).
         onPickCurated={(o) => chooseAndDraw({
           kind: "catalog", animal: o.animal, breed: o.key, label: o.label,
         })}
-        onPickTyped={(animal) => chooseAndDraw({ kind: "typed", animal })}
-        // A photo is the exception: it lands as a PREVIEW, undrawn, because the user
-        // has to set faithful↔sprite before the redraw is worth spending 10 s on.
-        onPickFile={() => fileRef.current?.click()}
       />
 
       {/* STEP 2 — design it, see it, lock it. The exact shape of step 1: work, look,
@@ -439,7 +537,7 @@ export default function Designer() {
                 user has SEEN this pet and said yes to it. */}
             <button
               type="button"
-              className="btn"
+              className="btn-step"
               // The SAME predicate the frontier gates on — imported, not re-derived.
               // A user who dismissed a failing preview (§5.2) has settled step 2 and must
               // be able to leave it, so this cannot gate on `state.preview` alone. But it
@@ -546,7 +644,8 @@ export default function Designer() {
           </label>
           {/* Buildable from the preview, or — when the preview kept failing and the user
               dismissed it — from the archetype (§5.2). `buildBase` is whichever it is. */}
-          <button type="button" className="btn" disabled={busy || !buildBase} onClick={createPet}>
+          <button type="button" className="btn-step self-start" disabled={busy || !buildBase}
+                  onClick={createPet}>
             {busy ? "Building…" : "Bring it to life · ~3 min"}
           </button>
           {/* Never let this ship silently: a dismissed-failure build animates the
