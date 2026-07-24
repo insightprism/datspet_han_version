@@ -102,14 +102,18 @@ def _healthy(url: str) -> bool:
         return False
 
 
-def _pick_endpoint() -> int:
-    """The least-busy healthy ENABLED endpoint (ties → lowest index)."""
+def _reserve_endpoint() -> int:
+    """Pick the least-busy healthy ENABLED endpoint AND reserve it (bump its in-flight
+    count) in one lock hold, so N jobs fired at once spread across GPUs instead of all
+    racing onto endpoint 0. Health is probed outside the lock (it does network I/O)."""
     eps = _endpoints()
     healthy = [i for i in sorted(_active_set()) if _healthy(eps[i]["url"])]
     if not healthy:
         raise RuntimeError("no ComfyUI endpoint is reachable — is it running?")
     with _JOBS_LOCK:
-        return min(healthy, key=lambda i: (_INFLIGHT.get(i, 0), i))
+        idx = min(healthy, key=lambda i: (_INFLIGHT.get(i, 0), i))
+        _INFLIGHT[idx] = _INFLIGHT.get(idx, 0) + 1   # reserve here, not in _new_job
+        return idx
 
 
 def _lab_dir() -> Path:
@@ -135,9 +139,9 @@ def _new_job(ep_idx: int) -> str:
     _prune_jobs()
     jid = uuid.uuid4().hex[:16]
     with _JOBS_LOCK:
+        # in-flight was already reserved by _reserve_endpoint (kept atomic there)
         _JOBS[jid] = {"state": "running", "phase": "pending", "asset_id": None, "url": None,
                       "ms": None, "error": None, "cancel": False, "t0": time.time(), "ep": ep_idx}
-        _INFLIGHT[ep_idx] = _INFLIGHT.get(ep_idx, 0) + 1
     return jid
 
 
@@ -221,7 +225,7 @@ def _run_job(jid: str, wf: dict, ext: str, ep_idx: int) -> None:
 
 def _start(wf: dict, ext: str) -> dict:
     try:
-        ep_idx = _pick_endpoint()
+        ep_idx = _reserve_endpoint()
     except RuntimeError as e:
         raise HTTPException(503, str(e))
     jid = _new_job(ep_idx)

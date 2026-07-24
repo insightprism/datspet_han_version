@@ -185,35 +185,36 @@ export default function MotionLabPage() {
     } catch (e) { setErr(saveErr(e)); } finally { patch(name, { busy: "" }); }
   }
 
-  // --- "all" (serial; canceling the running job stops the run) ---
+  // --- "all" (CONCURRENT: fire every column at once so the backend spreads them
+  // across GPUs; extras queue in ComfyUI. One column failing/canceling doesn't stop
+  // the others) ---
   async function drawAllAnchors() {
     setBusyAll("draw"); setErr("");
     try {
-      for (const name of columns) {
-        if (!cells[name].clause.trim()) continue;
-        patch(name, { busy: "draw" });
-        const a = await doDrawAnchor(name, cells[name].clause.trim());
-        patch(name, { busy: "" });
-        if (!a) break;
-      }
-    } catch (e) { setErr(genErr(e)); } finally { setBusyAll(""); }
+      await Promise.all(columns.filter((n) => cells[n].clause.trim()).map(async (name) => {
+        try { patch(name, { busy: "draw" }); await doDrawAnchor(name, cells[name].clause.trim()); }
+        catch (e) { setErr(genErr(e)); }
+        finally { patch(name, { busy: "" }); }
+      }));
+    } finally { setBusyAll(""); }
   }
   async function animateAll() {
     setBusyAll("animate"); setErr("");
     try {
-      let b = base ?? await doDrawBase();
+      const b = base ?? await doDrawBase();
       if (!b) return;
-      for (const name of columns) {
-        const clause = cells[name].clause.trim();
-        let source = clause ? cells[name].still : b;
-        if (clause && !source) { patch(name, { busy: "draw" }); source = await doDrawAnchor(name, clause); patch(name, { busy: "" }); if (!source) break; }
-        if (!source) continue;
-        patch(name, { busy: "animate" });
-        const a = await doAnimate(name, source);
-        patch(name, { busy: "" });
-        if (!a) break;
-      }
-    } catch (e) { setErr(genErr(e)); } finally { setBusyAll(""); }
+      await Promise.all(columns.map(async (name) => {
+        try {
+          const clause = cells[name].clause.trim();
+          let source = clause ? cells[name].still : b;
+          if (clause && !source) { patch(name, { busy: "draw" }); source = await doDrawAnchor(name, clause); }
+          if (!source) return;
+          patch(name, { busy: "animate" });
+          await doAnimate(name, source);
+        } catch (e) { setErr(genErr(e)); }
+        finally { patch(name, { busy: "" }); }
+      }));
+    } finally { setBusyAll(""); }
   }
   async function saveAll() {
     if (!detail) return;
