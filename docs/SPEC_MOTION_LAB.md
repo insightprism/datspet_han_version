@@ -264,3 +264,75 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 - **Tests** — the `control`-block validator (`kind` allowed incl. `pose_prompt`, `pose` non-empty —
   the §3.9 guard-test additions), the local-only mounting (routes absent under the pool backend), and
   that a Lab save round-trips through `motion_admin`'s validator identically to a hand-edited profile.
+
+---
+
+## 12. Phase 2 — Multi-pose authoring (PROPOSED 2026-07-24; not yet built)
+
+**Why.** Phase 1 tunes one clause in isolation, but the real build (`make_pet_zip`) draws **every**
+pose from **one base + one seed**, and the failure Phase 1 hides is **cross-pose drift** — a `fly`
+anchor coming out a different red or style than the `walk`. Phase 2 draws all the selected poses from
+the shared base/seed and shows them **side by side**, so the admin catches drift *before* saving —
+the pre-save version of the real app's "Generated poses" strip (which today you only see *after* a
+~3-minute build).
+
+**Shape (agreed decisions).**
+- **Controls:** animal + profile + a **multi-select of poses** + **one shared seed**. The shared seed
+  is load-bearing: `factory.py`'s real pose loop uses the build seed for the base *and* every anchor,
+  so the Lab must too — otherwise the columns aren't the same animal and the comparison is meaningless.
+- **Layout: one grid, a column per selected pose** (decision P2-1). Each column *stacks*: pose name ·
+  clause editor · Draw + still · Animate + loop · Save. You scan across columns to compare.
+- **Scope: every selected pose, including base-driven ones** (decision P2-2). A pose *with* a clause
+  draws a fresh anchor; a pose *without* one shows the **shared base** as its source (labeled "uses
+  base") and animates from it — so the whole pet appears the way the real app draws it.
+
+**Per-column controls.**
+- **Clause editor** — empty ⇒ this pose uses the shared base; a clause ⇒ it becomes an anchored pose
+  (Draw enabled). Editing the clause clears that column's now-stale still + loop.
+- **Draw** — the fresh anchor (`_static_image_wf(_base_prompt(animal, clause), seed)`); for an empty
+  clause the column simply shows the shared base (nothing to draw).
+- **Animate** — the loop from this column's source
+  (`_loop_wf(compose_pose_prompt(animal, pose), source, seed)` — the anchor for a clause pose, the
+  base for a base pose).
+- **Save** — writes this pose's `control` block to the profile.
+
+**Global controls.**
+- **Draw all anchors** — draws every clause column's anchor, **sequentially** (the GPU is serial, so
+  they queue with per-column progress). Base columns need no draw.
+- **Animate all** — ensures each column's source exists (drawing any missing anchors first), then
+  loops every column.
+- **Save all** — sets every edited column's `control` and writes the profile in **one** `motion_admin`
+  PUT.
+
+**Invalidation.** Editing a column's clause clears that column's anchor + loop. Changing the **animal**
+or **seed** clears the base *and* every column — they must be redrawn from the new base/seed.
+
+**The consistency payoff.** The columns side by side surface exactly the drift Phase 1 can't: the
+fresh anchors (`fly`) against the base-derived poses (`walk`/`idle`/`sleep`). This is the pre-save
+check that the whole pet will read as one coherent animal.
+
+**Backend impact: NONE.** The Phase-1 endpoints already work one pose at a time — `/still` (called
+per clause, plus once for the base with an empty clause), `/animate` (per pose, passing the base's
+asset id for base columns), `/asset`, and the `motion_admin` PUT for Save. Phase 2 is **frontend
+orchestration + layout**. A batch "draw-all" backend endpoint is explicitly **not** wanted: per-pose
+calls give per-column progress and single-column re-runs, and the GPU is serial regardless.
+
+**Phase 1 = N-of-1.** Phase 2 *generalizes* the page — one selected pose reproduces today's
+single-column view — it does not fork it.
+
+**Open (minor, settle at build).**
+- **Default pose selection** — all enabled poses (full strip, more GPU) vs a subset. Lean: default to
+  the clause-bearing poses + `walk`/`idle` as the reference, admin adds more.
+- **"Animate all" auto-drawing missing anchors** vs requiring "Draw all anchors" first. Lean: auto
+  (smoother), though it collapses the anchor step; confirm at build.
+- **GPU-serial progress UX** — a per-column spinner + "queued" state; the Lab already runs one
+  generation at a time.
+
+**Decisions (P2 log).**
+
+| # | Question | Answer |
+|---|---|---|
+| P2-1 | Layout | **One grid, a column per pose** (clause + still + loop stacked) |
+| P2-2 | Which poses show panels | **Every selected pose** — base-driven ones show the shared base as their source |
+| P2-3 | Backend change? | **None** — the Phase-1 per-pose endpoints + `motion_admin` PUT suffice; the frontend orchestrates |
+| P2-4 | Seed | **One shared seed** for the base + all anchors (mirrors the real build) |
