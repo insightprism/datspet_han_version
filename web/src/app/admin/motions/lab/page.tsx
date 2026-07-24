@@ -322,34 +322,42 @@ export default function MotionLabPage() {
           const source = isAnchored ? cell.still : base;
           const dirty = cell.clause.trim() !== (detail?.profile.poses[name]?.control?.pose ?? "").trim();
           return (
-            <div key={name} className="card w-56 shrink-0 p-3">
-              <div className="mb-1 flex items-center justify-between">
+            <div key={name} className="card w-56 shrink-0 overflow-hidden p-0">
+              <div className="flex items-center justify-between px-3 pt-3">
                 <span className="font-semibold capitalize" style={{ color: "var(--heading)" }}>{name}</span>
                 <span className="mono text-xs" style={{ color: isAnchored ? "var(--accent)" : "var(--faint)" }}>{isAnchored ? "anchor" : "base"}</span>
               </div>
-              <textarea value={cell.clause} onChange={(e) => patch(name, { clause: e.target.value })}
-                placeholder="pose clause (empty = uses base)"
-                className="mono mb-2 min-h-[48px] w-full resize-y rounded px-2 py-1 text-xs outline-none" style={inputStyle} />
 
-              <div className="mono mb-1 text-xs" style={{ color: "var(--faint)" }}>{isAnchored ? "anchor still" : "uses base"}</div>
-              <CellImg asset={source} size={176}
-                placeholder={cell.busy === "draw" ? runLabel(true, cell.phase, cell.elapsed, "Drawing", "") : isAnchored ? "Draw anchor" : "Draw base"} />
-              <ActionRow label={runLabel(cell.busy === "draw", cell.phase, cell.elapsed, "Drawing", "Draw anchor")}
-                disabled={cell.busy !== "" || !isAnchored} onClick={() => drawAnchor(name)}
-                onCancel={cell.busy === "draw" ? () => cancelJob(cell.jobId) : undefined} />
+              {/* Anchor section */}
+              <div className="m-3 rounded-lg p-2" style={{ background: "#151515", border: "1px solid var(--line)" }}>
+                <div className="mono mb-1 text-xs" style={{ color: "var(--faint)" }}>pose clause → {isAnchored ? "anchor still" : "uses base"}</div>
+                <textarea value={cell.clause} onChange={(e) => patch(name, { clause: e.target.value })}
+                  placeholder="pose clause (empty = uses base)"
+                  className="mono mb-2 min-h-[44px] w-full resize-y rounded px-2 py-1 text-xs outline-none" style={inputStyle} />
+                <CellImg asset={source} size={168}
+                  placeholder={cell.busy === "draw" ? runLabel(true, cell.phase, cell.elapsed, "Drawing", "") : isAnchored ? "Draw anchor" : "Draw base"} />
+                <ActionRow label={runLabel(cell.busy === "draw", cell.phase, cell.elapsed, "Drawing", "Draw anchor")}
+                  disabled={cell.busy !== "" || !isAnchored} onClick={() => drawAnchor(name)}
+                  onCancel={cell.busy === "draw" ? () => cancelJob(cell.jobId) : undefined} />
+              </div>
 
-              <div className="mono mb-1 mt-3 text-xs" style={{ color: "var(--faint)" }}>animation</div>
-              <CellImg asset={cell.loop} size={176}
-                placeholder={cell.busy === "animate" ? runLabel(true, cell.phase, cell.elapsed, "Animating", "") : "Animate"} />
-              <ActionRow label={runLabel(cell.busy === "animate", cell.phase, cell.elapsed, "Animating", "Animate")}
-                disabled={cell.busy !== "" || !source} onClick={() => animateOne(name)}
-                onCancel={cell.busy === "animate" ? () => cancelJob(cell.jobId) : undefined} />
+              {/* Animation section — visually distinct (green) */}
+              <div className="m-3 mt-0 rounded-lg p-2" style={{ background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.22)" }}>
+                <div className="mono mb-1 text-xs font-semibold" style={{ color: "var(--green)" }}>▸ animation</div>
+                <CellImg asset={cell.loop} size={168}
+                  placeholder={cell.busy === "animate" ? runLabel(true, cell.phase, cell.elapsed, "Animating", "") : "Animate"} />
+                <ActionRow label={runLabel(cell.busy === "animate", cell.phase, cell.elapsed, "Animating", "Animate")}
+                  disabled={cell.busy !== "" || !source} onClick={() => animateOne(name)}
+                  onCancel={cell.busy === "animate" ? () => cancelJob(cell.jobId) : undefined} />
+              </div>
 
-              <button onClick={() => saveOne(name)} disabled={cell.busy === "save" || !list?.writable || !dirty}
-                className="mono mt-3 w-full rounded-lg py-1.5 text-xs font-bold disabled:opacity-40"
-                style={{ background: dirty ? "rgba(99,102,241,0.18)" : "transparent", color: "var(--accent)", border: "1px solid rgba(99,102,241,0.4)" }}>
-                {cell.busy === "save" ? "Saving…" : dirty ? "Save clause" : "Saved"}
-              </button>
+              <div className="px-3 pb-3">
+                <button onClick={() => saveOne(name)} disabled={cell.busy === "save" || !list?.writable || !dirty}
+                  className="mono w-full rounded-lg py-1.5 text-xs font-bold disabled:opacity-40"
+                  style={{ background: dirty ? "rgba(99,102,241,0.18)" : "transparent", color: "var(--accent)", border: "1px solid rgba(99,102,241,0.4)" }}>
+                  {cell.busy === "save" ? "Saving…" : dirty ? "Save clause" : "Saved"}
+                </button>
+              </div>
             </div>
           );
         })}
