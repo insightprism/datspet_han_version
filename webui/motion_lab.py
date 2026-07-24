@@ -48,6 +48,7 @@ _DEFAULT_SEED = 42
 _MAX_ANIMAL = 240
 _MAX_CLAUSE = 240
 _JOB_TTL = 15 * 60
+_ASSET_TTL_S = 6 * 3600   # scratch stills/loops live under _lab this long, then get swept (§9)
 _CLIENT_ID = uuid.uuid4().hex
 
 _JOBS: dict[str, dict] = {}
@@ -125,6 +126,20 @@ def _lab_dir() -> Path:
     return d
 
 
+def _prune_lab_assets() -> None:
+    """Sweep scratch stills/loops older than _ASSET_TTL_S (SPEC_MOTION_LAB §9). The only
+    durable output is the JSON clause a Save writes, so these files are pure scratch — the
+    dir stays bounded per authoring session. Best-effort, never raises; called opportunistically
+    on each new job alongside _prune_jobs."""
+    try:
+        cutoff = time.time() - _ASSET_TTL_S
+        for f in _lab_dir().glob("*"):
+            if f.is_file() and f.stat().st_mtime < cutoff:
+                f.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def _clean_seed(seed: Optional[int]) -> int:
     try:
         s = int(seed)
@@ -138,6 +153,7 @@ def _clean_seed(seed: Optional[int]) -> int:
 # ---------------------------------------------------------------------------
 def _new_job(ep_idx: int) -> str:
     _prune_jobs()
+    _prune_lab_assets()
     jid = uuid.uuid4().hex[:16]
     with _JOBS_LOCK:
         # in-flight was already reserved by _reserve_endpoint (kept atomic there)

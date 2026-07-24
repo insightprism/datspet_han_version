@@ -107,3 +107,17 @@ def test_config_lists_endpoints_and_validates(lab_client):
 def test_asset_rejects_bad_ext_and_unknown_id(lab_client):
     assert lab_client.get("/api/admin/motion-lab/asset/abc123.gif").status_code == 404
     assert lab_client.get("/api/admin/motion-lab/asset/nonexistent99.png").status_code == 404
+
+
+def test_prune_lab_assets_sweeps_stale_scratch(lab_client):
+    """§9: scratch stills/loops older than the TTL are swept; fresh ones are kept."""
+    import os
+    import motion_lab
+    d = motion_lab._lab_dir()
+    old, new = d / "old.png", d / "new.webp"
+    old.write_bytes(b"x"); new.write_bytes(b"y")
+    stale = time.time() - motion_lab._ASSET_TTL_S - 60
+    os.utime(old, (stale, stale))
+    motion_lab._prune_lab_assets()
+    assert not old.exists(), "a scratch asset past the TTL should be swept"
+    assert new.exists(), "a fresh scratch asset should be kept"

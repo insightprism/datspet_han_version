@@ -1,11 +1,17 @@
-# SPEC — The Motion Lab (an admin visual workbench for authoring per-pose motion anchors)
+# SPEC — The Motion Lab (an admin visual workbench for authoring per-pose motion anchors) — CLOSED / IMPLEMENTED
 
-**Status:** **IMPLEMENTED** — Phase 1 + Phase 2 + multi-GPU dispatch + the AI suggest-clause helper +
-inline profile CRUD, 2026-07-24. **Rev.4.** Backend `webui/motion_lab.py` (still / animate /
-**suggest-clause** / config / asset endpoints, local-backend only, tested + live-smoke-verified) +
-frontend `web/src/app/admin/motions/lab/page.tsx`, the **multi-pose** view (§12): a column per
-selected pose, all drawn from one shared base + seed, per-pose and "all" Draw/Animate/Save, a
-per-column **✨ suggest** (AI clause draft, §2 — BUILT), and — beyond this spec's original scope —
+> **Status: CLOSED / IMPLEMENTED — 2026-07-24, Rev.5.** All v1 scope (§7) shipped, guard-tested, and
+> live-smoke-verified. The last open item (§9, `_lab` disk hygiene) is closed: a best-effort age
+> sweep of `<GPU 0 out>/_lab` in `webui/motion_lab.py` (`_prune_lab_assets`, 6 h TTL, tested). Deferred
+> by design and explicitly out of v1 — two-keyframe animate, a multi-species spot-check helper, the
+> pool path, and multi-*animal* batch authoring (§9/§7). **Archived; the code is the source of truth
+> from here.**
+
+**What shipped.** Backend `webui/motion_lab.py` (still / animate / **suggest-clause** / config /
+asset endpoints, local-backend only) + frontend `web/src/app/admin/motions/lab/page.tsx`, the
+**multi-pose** view (§12): a column per selected pose from one shared base + seed, per-pose and "all"
+Draw/Animate/Save, a per-column **✨ suggest** (AI clause draft, §2), a **↺ revert**, a save
+**confirmation** (every write goes to the motion profile — §3), and — beyond the original scope —
 inline **Edit / Duplicate / Delete** of the selected profile (§14). Multi-GPU dispatch across one
 ComfyUI per GPU is §13. See `RESEARCH_POSE_MOTION.md` for the design narrative.
 
@@ -214,11 +220,11 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 
 - ~~Field shape it writes.~~ **RESOLVED (§3): `control.kind == "pose_prompt"`** (`{kind, pose}`) — a
   text clause, no sprite/`ref`/`strength`.
-- **Where generated Lab assets live and how long.** **STILL OPEN — the one real housekeeping gap.**
-  As built, stills/loops are copied to `<GPU 0 out>/_lab` and served by `/asset`. The in-memory *job
-  records* expire (15-min TTL, `_prune_jobs`) but the **asset files are never swept** — `_lab` grows
-  unbounded. TODO: a size/age cap on `_lab`, or fold it into the 24 h janitor. (Nothing permanent is
-  authored — the `pose_prompt` kind saves only a JSON clause — so this is disk hygiene, not correctness.)
+- ~~**Where generated Lab assets live and how long.**~~ **RESOLVED.** Stills/loops are copied to
+  `<GPU 0 out>/_lab` and served by `/asset`; `_prune_lab_assets` sweeps files older than 6 h on each
+  new job (best-effort, beside `_prune_jobs`; `test_motion_lab.py` covers it). The only durable output
+  is the JSON clause a Save writes, so the scratch dir stays bounded per authoring session without
+  touching correctness.
 - **Test-animal set for clause validation (§3).** Does the admin type each test animal, or does the
   Lab suggest a few representative species per profile (from the profile's keywords) to spot-check
   the clause against before saving?
