@@ -91,19 +91,19 @@ motion — and both fit the repo's grain (the `Pose` schema already carries `act
 *motion* content; this adds an *anchor*). They differ in **how the pose is imposed**, and that
 difference decides the thing §0.1 says matters most: **consistency.**
 
-**Schema — RESOLVED: it is `SPEC_MOTION_PROFILES` §3.9's `control` block, not a new field.** `Pose`
-already reserves an optional `control: {kind, ref, strength}` (§3.9). The two approaches below are
-two **kinds** on that one block — no `anchor`/`anchor_strength` fields are added:
+**Schema — the `control` block, kind `pose_prompt` (VALIDATED 2026-07-24; see §7.1).** `Pose`
+reserves an optional `control` block (§3.9). The **validated** anchor kind is a fresh-text pose
+prompt; the sprite/img2img kind the earlier draft proposed was **falsified** by the experiment:
 
-| Kind | `ref` / `strength` | Approach |
+| Kind | Fields | Status |
 |---|---|---|
-| `sprite` | `ref` = a shared pose image; `strength` = the img2img denoise | **B-crude / B-hybrid** — redraw the base onto the sprite, then the standard loop (§3.9.1) |
-| `pose_skeleton` / `depth` | `ref` = a skeleton/depth asset; `strength` = control weight | **B-proper** — a control-driven loop (the ceiling) |
+| `pose_prompt` | `pose` = a static pose clause (`"wings spread wide open, mid-flight"`) | **VALIDATED — ships first.** Fresh txt2img anchor (`_base_prompt` with `pose` swapped for `standing`), then the standard loop (§3.9.1, §7.1) |
+| `depth` / `pose_skeleton` | `ref` = depth/skeleton asset; `strength` = control weight | **RESERVED / deferred** — control-driven loop that holds a *custom* pet's identity (the datsPet path); the answer for uploaded/designed pets that fresh-gen can't serve |
+| ~~`sprite`~~ | ~~`ref` = shared pose image; `strength` = denoise~~ | **REJECTED** — no denoise held pose + identity together (§7.1) |
 
-Precedence `pose_skeleton → depth → sprite → prompt`; absent ⇒ animate from the shared base still
-(today, byte-identical, §6). The `sprite` kind **reuses the pose's `action`/`suffix`** as its redraw
-prompt, so nothing per-species is stored. (Approach A — a bare text redraw — is just "no `control`,
-tune the loop prompt," needing no field at all.)
+Precedence `pose_skeleton → depth → pose_prompt → loop-only`; absent ⇒ animate from the shared base
+still (today, byte-identical, §6). **The prose of §2.A/§2.B below is pre-experiment design history;
+§7.1 is the result that supersedes its recommendation.**
 
 **Pipeline (common).** In `factory.py`'s pose loop, per pose: if the pose declares an anchor,
 produce `pose_base` (an img2img over the base — §2.A or §2.B); else `pose_base = base` (today's
@@ -177,10 +177,12 @@ runs on the **current** img2img. `anchor_strength` is the identity↔pose knob �
 | **B-crude** — shared pose *sprite* as img2img source | **high** — one pose per body type | medium (`anchor_strength` knob) | ✅ yes (`_img2img_wf`) | +1 redraw / anchored pose, + author the sprites once |
 | **B-proper** — ControlNet | **high** | high (structure held, identity free) | ❓ needs a Z-Image ControlNet (likely absent) or a model swap | model change |
 
-**Working recommendation (open, decision 10):** **B-crude** is the sweet spot — it delivers the
-consistency §0.1 demands and runs on today's pipeline. A is a weaker fallback that does not fix
-consistency; B-proper is the ideal end state but is gated on the model. §7 should test **A and
-B-crude side by side** on the same bird.
+**Working recommendation — RESOLVED by the §7.1 experiment (2026-07-24):** neither A nor the sprite
+B-crude. The experiment falsified the sprite/img2img redraw (no denoise holds pose + identity), and
+the **fresh-text `pose_prompt` anchor** (a pose clause + the house style, txt2img, then the standard
+loop) delivered pose + identity + style on a cardinal (`L7`). Ships as `SPEC_MOTION_PROFILES` §3.9.1's
+`pose_prompt` kind; the `depth` control (was "B-proper") is deferred for custom/uploaded pets. The
+§2.A/§2.B prose below is retained as pre-experiment design history.
 
 ---
 
@@ -283,6 +285,40 @@ throwaway before writing any code:
 This is the cheapest decisive test — no schema, no plumbing — and it is entirely a GPU-side
 dev-box act.
 
+### 7.1 Results (run 2026-07-24 — 2×RTX 3090, ComfyUI, on a red cardinal)
+
+**The core thesis is CONFIRMED and the mechanism is redirected.**
+
+**Thesis — CONFIRMED.** Same `fly` loop, same cardinal, only the anchor pose differs:
+- Standing/folded anchor → the wings crack open and settle back; a twitch, not flight (the ceiling).
+- Wings-spread anchor → a **full wingbeat cycle** (wings sweep up → down → up across the loop).
+
+So the shared anchor *is* the motion ceiling (§1), and a per-pose spread anchor unlocks real flapping.
+
+**Mechanism — redirected from sprite/img2img to fresh-text.** Each stills-only img2img arm failed on
+a different axis; only a fresh txt2img delivered all three (pose + identity + house style):
+
+| Arm | Pose | Identity | Style |
+|---|---|---|---|
+| A — prompt img2img on the standing base | ❌ stayed folded | ✅ | ✅ |
+| sprite img2img (redraw pet onto a flying sprite), d=0.5–0.6 | ✅ | ❌ generic grey | ❌ |
+| sprite img2img, d=0.75–0.85 | ❌ pose collapses | ✅ | ✅ |
+| **fresh txt2img — pose clause + house style** | ✅ | ✅ | ✅ (**winner**, `L7`) |
+
+No img2img strength separates the axes (the source image fixes pose *and* identity *and* style
+together). The winner — a **fresh txt2img anchor from a pose clause + the house-style prompt**, then
+the standard loop — is *simpler* than the sprite plan (no shared sprite asset, no redraw step) and is
+realized as `SPEC_MOTION_PROFILES` §3.9.1's **`pose_prompt`** kind. **The sprite-redraw hypothesis
+(the old §2.B-crude / `SPEC_POSE_ANCHOR_HYBRID`) is FALSIFIED.**
+
+**Two caveats carried forward.** (1) n=1 species/seed — a breadth pass (more birds, a quad running,
+seed variation) is still owed. (2) Fresh-gen matches a *species*, not a *custom/uploaded* pet — those
+fly as a generic species and need the `depth` control kind (B-proper, §8), deferred. **Decision
+(2026-07-24): ship `pose_prompt` now for typed species; scope `depth` for custom pets later.**
+
+Artifacts: `…/scratchpad/pose_anchor_exp/` — `L1` (standing → twitch), `L3` (spread → flaps),
+`L7` (the styled flapping cardinal), `10` (the winning anchor still).
+
 ---
 
 ## 8. Open questions (this is a draft — these are the live ones)
@@ -327,7 +363,7 @@ dev-box act.
 | # | Question | Answer | Why |
 |---|---|---|---|
 | 1 | Is "no movement" a pose-availability problem? | **No** | The pose is generated; it is a motion-*range* problem bounded by the shared anchor (§0/§1) |
-| 2 | Where does the per-pose anchor live? | **Content — `SPEC_MOTION_PROFILES` §3.9's `control` block, `kind: "sprite"` (RESOLVED)** | Reuses the reserved kind-discriminated block, no new field; `ref`=sprite, `strength`=denoise, redraw prompt reuses `action`/`suffix` (§2, §3.9.1) |
+| 2 | Where does the per-pose anchor live? | **Content — `SPEC_MOTION_PROFILES` §3.9's `control` block, `kind: "pose_prompt"` (RESOLVED)** | Reuses the reserved kind-block; the validated kind is a `pose` text clause driving a fresh txt2img anchor (`sprite` was rejected by §7.1) (§2, §3.9.1) |
 | 3 | Fresh anchor per pose, or img2img from the base? | **img2img from the base** | Identity is anchored on the one still §0.1 relies on; a fresh txt2img would drift the bird (§4) |
 | 4 | Which poses get anchors? | **Only silhouette-changing ones (fly/run/jump)** | Bounds cost and identity-drift to where it is needed (§5) |
 | 5 | Backward compatibility? | **A pose with no anchor is byte-identical to today** | Purely additive; existing pets unchanged, guard-test pinned (§6) |
@@ -335,7 +371,7 @@ dev-box act.
 | 7 | Transition seam between different-silhouette loops | **OPEN** | Depends on the host runtime's pose-switch behaviour (§8) |
 | 8 | `anchor_strength` value(s) | **OPEN — needs a calibration sweep** | The identity↔pose knob; guessing it is the whack-a-mole this repo avoids (§8) |
 | 9 | Spread-anchor vs. two-keyframe (up/down) | **OPEN — both arms of the §7 experiment** | Two-keyframe may get motion with less identity risk (§8) |
-| 10 | Prompt anchor (A) or reusable pose control (B)? | **Lean B-crude, pending §7** | B fixes §0.1's *consistency* — one canonical pose per body type, shared across species; A only raises the per-pet odds and each bird still varies. B-proper (ControlNet) is the ideal but is model-gated (decision 11) (§2) |
+| 10 | Prompt anchor (A) or reusable pose control (B)? | **RESOLVED by §7.1 — neither: a fresh-text `pose_prompt` anchor wins** | The experiment falsified the sprite/img2img redraw (B-crude/hybrid) — no denoise holds pose+identity. A fresh txt2img from a pose clause + house style delivers pose+identity+style; ships as the `pose_prompt` kind. `depth` control (was B-proper) is deferred for custom pets (§7.1, §3.9.1) |
 | 11 | Can we do proper pose conditioning here? | **YES — via Wan's own control path, NOT a Z-Image ControlNet (`SPEC_MOTION_PROFILES` §3.9)** | §3.9 already reserved the per-pose `control` field (skeleton/depth) + the skeleton→depth→prompt rule, and names the mechanism: Wan 2.2 I2V "Animate"/VACE driven by a pose skeleton or depth video. The still-model-ControlNet worry (Rev.2) was the wrong layer — the control drives the *video motion*, not the anchor still. The build is Wan's control path (the SD-1.5 wiring from `datsPet` does not port; §3.9) + authoring the per-pose skeletons |
 
 ---

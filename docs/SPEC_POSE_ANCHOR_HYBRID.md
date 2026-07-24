@@ -1,8 +1,18 @@
 # SPEC — Hybrid pose anchor (pose from a shared sprite, identity from the prompt)
 
-**Status:** proposed / **DRAFT for review**, 2026-07-24. **Rev.1.** A design-in-progress doc,
-NOT implementation-ready. No code is written; the first committed step is the **experiment**
-(§7), not a build.
+**Status:** **SUPERSEDED / retained for design history**, 2026-07-24. **Rev.2.**
+
+> **⚠️ Rev.2 — the central mechanism of this spec was FALSIFIED by the §7 experiment (2026-07-24).**
+> This spec's premise — take a shared pose *sprite* and **img2img-redraw** the target animal onto it
+> (pose from the sprite, identity from the prompt) — **does not work**: no denoise value holds pose
+> *and* identity at once (low → the pet stays the generic sprite; high → the flight pose collapses).
+> See `SPEC_POSE_ANCHORS` §7.1 for the full result. **The validated mechanism is a *fresh txt2img*
+> anchor from a pose clause + the house style** (`SPEC_MOTION_PROFILES` §3.9.1, the `pose_prompt`
+> kind) — simpler than this spec (no sprite asset, no redraw step). For *custom/uploaded* pets, whose
+> specific identity a fresh txt2img can't hold, the reserved answer is the **`depth` control kind**
+> (B-proper, deferred). **Read this doc only for the design history of why the sprite approach was
+> tried and rejected; the live design is §3.9.1 + `SPEC_POSE_ANCHORS` §7.1.** The sections below are
+> left as written (pre-experiment).
 
 **What this is.** The concrete, stills-only technique to make a pet actually *move* in a pose
 (a bird that flaps, a dog that runs) **without** losing the animal's identity and **without** a

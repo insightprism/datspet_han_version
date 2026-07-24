@@ -435,7 +435,7 @@ authoring as a chore.
 > worker → keyword fallback + warning, never an error; profile additions install node-first, the
 > §B.1 habit applied to content).
 
-### 3.9 Control-signal tier — a forward-compatible placeholder for skeleton-driven motion (Rev.3; Rev.4 adds the `sprite` kind, §3.9.1)
+### 3.9 Control-signal tier — a forward-compatible placeholder for skeleton-driven motion (Rev.3; Rev.4 adds the `pose_prompt` kind, §3.9.1)
 
 **Why this belongs in the design now, even though it ships empty.** A text prompt asks the model to
 *improvise* the motion; a **control signal** — a pose skeleton, or a depth-map reference — *constrains*
@@ -464,7 +464,7 @@ object; a pose with no `control` is prompt-driven exactly as today:
   "action": "trotting with short quick legs, low to the ground",
   "suffix": ", stubby-legged waddle, no camera movement",
   "control": {                          // OPTIONAL — absent today; the placeholder
-    "kind": "pose_skeleton",            // "pose_skeleton" | "depth" | "sprite" (§3.9.1)
+    "kind": "pose_skeleton",            // "pose_skeleton" | "depth" | "pose_prompt" (§3.9.1)
     "ref": "corgi/walk.skeleton.mp4",   // path within the profile dir, shipped with the handler
     "strength": 1.0                     // how hard the signal constrains (0..1)
   }
@@ -482,28 +482,39 @@ builds a pose, it checks for `control`:
   control workflow exists: an older/handler-only-prompt node simply ignores `control` and generates
   from the prompt, never erroring.
 
-So the precedence within a pose is **skeleton → depth → sprite → prompt**, mirroring the profile-level
-"most-specific-wins": use the most specific control available, fall back to the most general (the
-prompt) when it isn't. Per pose, per profile — a `corgi.json` could skeleton-drive only its `walk`
-(where gait fidelity matters most) and leave every other pose prompt-driven.
+So the precedence within a pose is **skeleton → depth → pose_prompt → loop-only**, mirroring the
+profile-level "most-specific-wins": use the most specific control available, fall back to the most
+general (the plain loop) when it isn't. Per pose, per profile — a `corgi.json` could skeleton-drive
+only its `walk` (where gait fidelity matters most) and leave every other pose loop-driven.
 
-**§3.9.1 The `sprite` kind — the stills-layer control that ships first (Rev.4).** Between prompt-only
-and a true skeleton/depth signal sits a third, cruder kind that needs **no new engine capability**: a
-**pose *sprite*** used as an img2img *source*. `ref` points at a shared per-body-type pose image (a
-generic wings-spread bird, `avian/fly.pose.png`); the engine img2img-redraws the pose's own base
-still onto it at `strength`, producing a *"this animal, in that pose"* anchor still, then runs the
-**standard prompt-driven `_loop_wf`** from that still. It differs from `pose_skeleton`/`depth` in
-*which pipeline stage* it acts on — the sprite reshapes the **anchor still**, then the normal loop
-runs; skeleton/depth constrain the **video motion** itself — which is why its precedence sits *below*
-them and *above* prompt. Crucially the sprite kind **reuses the pose's existing `action`/`suffix`** as
-its redraw prompt (spliced with `{animal}` by `compose_pose_prompt`, already templated), so it needs
-**no new field and stores no per-species string**: the block stays `{kind, ref, strength}`. This is
-the mechanism `SPEC_POSE_ANCHOR_HYBRID` specifies and the **first `control` kind slated to ship** —
-feasible on today's `_img2img_wf`, gated only on the §7 validation experiment. It is also the
-**resolution of the "pose anchor vs. control field" question** raised across the sibling specs: the
-"pose anchor" is *realized as* this `control` block, sprite kind — one field, not two. Engine dispatch
-is per-kind (the plugin pattern this block was built for): `sprite` → redraw-then-standard-loop;
-`pose_skeleton`/`depth` → control-driven loop.
+**§3.9.1 The `pose_prompt` kind — the fresh-anchor control that ships first (Rev.4; VALIDATED 2026-07-24).**
+Between loop-only and a true skeleton/depth signal sits a **text** kind that needs **no new engine
+capability**: a **pose-description prompt** that generates a *fresh anchor still*. `pose` holds a
+static pose clause (`"wings spread wide open, mid-flight, flying"`); the engine txt2img-generates the
+anchor as `_base_prompt(animal)` **with the `pose` clause swapped in for `standing`** — so the house
+style (`simple flat shading, storybook style`) and the species identity ride the same prompt that
+makes every base still — then runs the **standard `_loop_wf`** from that fresh anchor. It acts at the
+**anchor-still** stage (skeleton/depth constrain the **video motion** itself), which is why it sits
+below them and above loop-only. Block shape for this kind: `{kind: "pose_prompt", pose: "<clause>"}` —
+**no `ref`, no `strength`** (it is txt2img, not img2img).
+
+**Why a fresh-text anchor and NOT a sprite/img2img redraw (the §7 experiment result).** The
+2026-07-24 validation (`SPEC_POSE_ANCHORS` §7) confirmed the core thesis — a wings-spread anchor
+produces a **full wingbeat** where a folded anchor only twitches — then tested *how* to build that
+anchor. An img2img redraw of a shared pose **sprite** (an earlier plan) **failed**: no denoise value
+held pose *and* identity at once (low denoise → generic-grey identity; high → the flight pose
+collapsed). Img2img from the standing base failed too (the folded base traps the wings). **Only a
+fresh txt2img with a pose clause + the house style** produced a recognizably-styled animal in the
+pose that then flapped cleanly (a red cardinal, `pose_anchor_exp/L7`). So the shipped kind is
+`pose_prompt` (a text clause), **not** a sprite `ref`.
+
+**The `depth` kind stays reserved for the case `pose_prompt` cannot serve — custom pets.** A fresh
+txt2img matches a *species* (all cardinals look alike) but not a **user's uploaded or custom-designed**
+pet — that pet would fly as a *generic* cardinal, not *their* bird. Holding a custom identity *and*
+imposing a pose needs a control signal *on the base* (img2img from the base + a depth/pose ControlNet),
+i.e. the `depth`/`pose_skeleton` kinds — the datsPet-validated path (below), deferred as its own
+build (`SPEC_POSE_ANCHORS` §8). Engine dispatch is per-kind (the plugin pattern this block was built
+for): `pose_prompt` → fresh-anchor-then-standard-loop; `pose_skeleton`/`depth` → control-driven loop.
 
 **What this does NOT commit us to now (scope guard).** §3.9 reserves the *shape and the fallback
 rule* only. It does **not** add a control-capable ComfyUI workflow, does **not** ship any `.skeleton`

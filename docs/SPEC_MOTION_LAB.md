@@ -4,19 +4,19 @@
 implementation-ready. No code is written.
 
 **What this is.** A new **admin web surface** that lets an admin *watch the pose-anchor pipeline
-run, step by step*, on a chosen animal + pose — see each intermediate result, edit the redraw
-prompt and strength, **re-run any step in seconds**, and **save the working recipe back into the
-motion profile**. It is the authoring UI for the technique in `SPEC_POSE_ANCHOR_HYBRID`.
+run, step by step*, on a chosen animal + pose — see each intermediate result, edit the **pose
+clause**, **re-run any step in seconds**, and **save the working clause back into the motion
+profile**. It is the authoring UI for the `pose_prompt` mechanism validated in `SPEC_POSE_ANCHORS`
+§7.1.
 
 **Why it's needed (the justifying problem).** Making each species actually *move* in each pose is
-**many iterations** — the redraw prompt, the strength, and the shared pose sprite all have to be
-tuned per body type, and often per awkward species (a penguin is not a songbird). Doing that today
-means editing profile JSON, rebuilding a **whole ~3-minute pet**, and eyeballing a zip — a blind
-loop that can't even tell you *which* step failed (was it the anchor still, or the animation off
-it?). The Lab makes the loop **visual, isolated, and instant**: each step's output is on screen, and
-changing the prompt re-runs just the affected steps. Without it, the pose-anchor grind is
-impractical at the scale the registry is *meant* to grow to (`SPEC_MOTION_PROFILES` §3.8, "hundreds
-of entries").
+**many iterations** — the pose clause has to be tuned per body type, and often per awkward species (a
+penguin is not a songbird). Doing that today means editing profile JSON, rebuilding a **whole
+~3-minute pet**, and eyeballing a zip — a blind loop that can't even tell you *which* step failed
+(was it the anchor still, or the animation off it?). The Lab makes the loop **visual, isolated, and
+instant**: each step's output is on screen, and changing the clause re-runs just the affected steps.
+Without it, the pose-anchor grind is impractical at the scale the registry is *meant* to grow to
+(`SPEC_MOTION_PROFILES` §3.8, "hundreds of entries").
 
 **Where it sits.** Directly **on top of the motion profiles admin** (`SPEC_MOTION_PROFILE_ADMIN`).
 Its saves **are** motion-profile writes, through the **same** `motion_admin` validator and write
@@ -25,18 +25,17 @@ discipline the existing editor uses). It is a **richer editor for the same conte
 store.
 
 **Relationship to the other specs.**
-- **`SPEC_POSE_ANCHOR_HYBRID`** defines *what* the Lab authors — the per-pose anchor recipe (shared
-  sprite + redraw prompt template + strength) and the redraw/caption mechanisms. The Lab is the tool
-  that makes that recipe by hand, fast.
-- **`SPEC_POSE_ANCHORS` §7** describes the *single-anchor experiment* — pick a bird, make a
-  wings-spread anchor, animate, judge. **The Lab is the productized version of that experiment**: the
-  MVP Lab loop *is* §7 made repeatable (see §8, sequencing).
+- **`SPEC_POSE_ANCHORS` §7.1** defines *what* the Lab authors — the per-pose `pose_prompt` anchor
+  (a text clause driving a fresh txt2img anchor), and the experiment that validated it. **The Lab is
+  the productized version of that experiment**: the MVP Lab loop *is* §7 made repeatable (see §8,
+  sequencing). (`SPEC_POSE_ANCHOR_HYBRID` is the superseded sprite-redraw draft — history only.)
+- **`SPEC_MOTION_PROFILES` §3.9.1** owns the `pose_prompt` field the Lab writes.
 - **`SPEC_MOTION_PROFILE_ADMIN`** is the host admin surface it extends; **`SPEC_MOTION_PROFILES`** is
   the content it reads and writes.
 
 **Repos touched (proposed):** `datsme-pet-factory_wu` — a new `webui/motion_lab.py` admin router,
 a new `web/src/app/admin/motions/lab/` page, and exposing `factory.py`'s existing step functions
-(`_base_sprite` / `_img2img_wf` / `_loop_wf`) as individually-callable admin actions. Saves reuse
+(`render_design_still` / `_static_image_wf` / `_loop_wf`) as individually-callable admin actions. Saves reuse
 `webui/motion_admin.py`. **GPU-dev-box / `PET_GEN_BACKEND=local` only** (§5) — no prod, no new pool
 contract.
 
@@ -46,18 +45,18 @@ contract.
 
 The example, verbatim from the request: *an admin wants a **cardinal** that **walks** and **flies**.*
 
-1. The generic **avian walk** pose sprite shows (the shared body-type anchor).
-2. The Lab drafts (or the admin writes) a **redraw prompt** that stamps a cardinal into that walking
-   pose; the admin can edit it.
-3. Run the redraw → the **cardinal-in-the-walk-pose anchor still** appears.
-4. Run the animation → the **walking cardinal sprite** plays.
-5. Not flapping right? Edit the prompt or strength, **re-run steps 3–4** — seconds, not a 3-min
-   rebuild. Repeat until it moves and still looks like a cardinal.
-6. **Save** the working recipe onto `avian.walk` — now every bird inherits it — or onto a specific
-   `cardinal.json`/`penguin.json` pose if this species needs its own (`SPEC_MOTION_PROFILES` §3.7).
+1. The pose's **clause** shows (`"wings spread wide open, mid-flight"` for `fly`) — the shared
+   body-type knob; the Lab can draft one from the pose name (AI helper) or the admin writes it.
+2. Run **Fresh anchor** → a txt2img **cardinal in that pose, in the house style** appears (the base
+   still sits beside it for identity/style comparison).
+3. Run **Animate** → the **flying cardinal loop** plays.
+4. Not flapping right, or the pose off? Edit the **clause**, **re-run** — seconds, not a 3-min
+   rebuild. Repeat until it moves and still reads as a cardinal in the right style.
+5. **Save** the clause onto `avian.fly` — now every bird inherits it — or onto a specific
+   `penguin.json` pose if that body needs its own (`SPEC_MOTION_PROFILES` §3.7).
 
-The same loop runs for `fly`. The point is that all four intermediate artifacts (base, sprite,
-anchor still, animation) are **on screen at once**, each re-runnable in isolation.
+The point is that the base still, the anchor still, and the animation are **on screen at once**, each
+re-runnable in isolation.
 
 ---
 
@@ -68,57 +67,54 @@ Lab calls them individually instead of only inside `make_pet_zip`.
 
 | # | Step | Output shown | Backing function (today) | Editable inputs |
 |---|---|---|---|---|
-| 1 | **Base still** | the designed animal, standing | `_base_sprite` / `render_design_still` | animal name, (optional) design axes |
-| 2 | **Shared pose sprite** | the body-type pose anchor (e.g. `avian/fly.pose.png`) | static content read from the profile dir | — (or "author sprite", §2) |
-| 3 | **Redraw → anchor still** | *this* animal in the pose | `_img2img_wf(prompt, source, seed, denoise)` | **redraw prompt**, **strength (denoise)**, source = sprite or base |
-| 4 | **Animate → moving sprite** | the animated loop | `_loop_wf(prompt, anchor_still, seed)` | motion prompt (the pose's `action`/`suffix`), length/fps |
+| 1 | **Base still** (reference) | the designed animal, standing | `_base_sprite` / `render_design_still` | animal name, (optional) design axes |
+| 2 | **Pose clause** | the text clause for this pose (`"wings spread wide open, mid-flight"`) | content on the pose (`control.pose`) | **the pose clause** — the core knob |
+| 3 | **Fresh anchor still** | *this* animal in the pose | `_static_image_wf(_base_prompt(animal)` with the clause swapped for `standing`) | the pose clause, seed |
+| 4 | **Animate → moving sprite** | the animated loop | `_loop_wf(action/suffix, anchor_still, seed)` | motion prompt (the pose's `action`/`suffix`), length/fps |
 
-Editing step 3's prompt/strength and re-running 3→4 is the **inner loop**. Step 1 rarely changes;
-step 2 is authored once per body-type pose.
-
----
-
-## 2. Two authoring modes
-
-**(a) Author the shared pose sprite** — once per body-type pose. Generate a clean generic
-"flying bird" / "running quadruped" (via `_base_sprite`/`_static_image_wf` with a generic prompt),
-cut it out with the pipeline's birefnet, preview it, and **save it as the profile's pose sprite**
-(`avian/fly.pose.png`, stored like `animal_catalog`'s `base.png`). Upstream, infrequent.
-
-**(b) Author the redraw recipe** — the iterative grind. Tune the **redraw prompt template** and the
-**strength** that stamp a concrete animal onto the shared sprite (`SPEC_POSE_ANCHOR_HYBRID` §2.1),
-tested live on a real animal, until it moves and holds identity. This is what the Lab exists for.
-
-**AI assist (optional).** A "suggest prompt" action drafts the redraw prompt from the sprite +
-animal using the AI engine (`SPEC_DATSPET_AI_ENGINE` — a `pose_caption`/redraw-prompt purpose,
-`SPEC_POSE_ANCHOR_HYBRID` §2.2). The admin edits the draft and re-runs. The engine is already built;
-this is one `ai_purposes/` entry, not new plumbing.
+Editing step 2's clause and re-running 3→4 is the **inner loop**. Step 1 is the standing reference
+(for identity/style comparison only); the fresh anchor (step 3) is **txt2img, not img2img**, so there
+is no sprite asset and no strength knob (the sprite/redraw path was rejected, §7.1 of `SPEC_POSE_ANCHORS`).
 
 ---
 
-## 3. What "Save" writes — `control.kind == "sprite"`, no per-species string (RESOLVED)
+## 2. The authoring loop
 
-The field-shape question is resolved (`SPEC_MOTION_PROFILES` §3.9.1): the anchor is a **`control`
-block** on the pose — `{ kind: "sprite", ref: "<sprite path>", strength: <float> }`. Two consequences
-for the Lab, both **simplifying**:
+**Tune the pose clause** — the iterative grind, and the whole reason the Lab exists. For an anchored
+pose the admin edits the **pose clause** (`control.pose`), runs the fresh anchor + loop, and iterates
+until the animal moves *and* still reads as itself in the house style — tested live on one or more
+concrete species. The clause is per-body-type content, reused across every species in the profile
+(§3), with a specific profile as the escape hatch for a divergent body.
 
-- **There is no redraw-prompt to save.** The `sprite` kind **reuses the pose's existing
-  `action`/`suffix`** as its redraw prompt (already `{animal}`-spliced by `compose_pose_prompt`). So
-  the Lab introduces no new prompt field, and the earlier "must save a `{animal}` template, never a
-  literal 'cardinal'" hazard **dissolves** — nothing per-species is written. The prompt the admin
-  tunes *is* `action`/`suffix`, the pose fields the motions editor already owns and validates.
-- **The Lab's save is `{kind, ref, strength}` plus (optionally) edited `action`/`suffix`** — all
-  through `motion_admin`'s existing validator + `motion_profiles.reload()`, so a saved block is
-  immediately live and can never be one the build rejects.
-- **Save target** is a pose in a profile: `avian.fly` for the shared/body-type recipe (every bird
-  inherits it), or a specific `penguin.fly` via the specificity mechanism (`SPEC_MOTION_PROFILES`
-  §3.7) when a body genuinely diverges. The Lab lets the admin **spot-check against several concrete
-  animals** (cardinal, robin, blue jay) before saving — the sprite and strength are the *reusable*
-  content, validated on real cases.
+**AI assist (optional).** A "suggest clause" action drafts a pose clause from the pose name + animal
+using the AI engine (`SPEC_DATSPET_AI_ENGINE` — one `ai_purposes/` entry). The admin edits and
+re-runs. The engine is already built; this is content, not new plumbing.
 
-*(If §7's experiment shows the redraw needs a static-pose prompt distinct from the motion
-`action`/`suffix`, the `control` block gains an optional `redraw_prompt` then — a further §3.9
-kind-field, still one block. v1 reuses `action`/`suffix`.)*
+*(There is no sprite-authoring mode — the sprite/img2img approach was rejected by the §7.1 experiment.
+The deferred `depth` kind for custom pets, if built, would add its own asset-authoring flow then.)*
+
+---
+
+## 3. What "Save" writes — `control.kind == "pose_prompt"` (VALIDATED 2026-07-24)
+
+The §7.1 experiment settled both the field and the mechanism (`SPEC_MOTION_PROFILES` §3.9.1): the
+anchor is a **`control` block**, `{ kind: "pose_prompt", pose: "<static pose clause>" }`. So the Lab's
+core knob is a **text pose clause** (`"wings spread wide open, mid-flight"`) that drives a *fresh
+txt2img* anchor (`_base_prompt` with the clause swapped for `standing`, so the house style and the
+species ride along), then the standard loop.
+
+- **The Lab's save is `{kind: "pose_prompt", pose}`** — through `motion_admin`'s validator +
+  `motion_profiles.reload()`, so a saved block is immediately live and can never be one the build
+  rejects. **No `ref`, no `strength`, no sprite asset** (the sprite/img2img redraw was rejected, §7.1).
+- **The pose clause is per-body-type content, reused across species** — `avian.fly.control.pose`
+  serves every bird; a divergent body (penguin) gets its own via specificity (`SPEC_MOTION_PROFILES`
+  §3.7). The Lab lets the admin **spot-check the clause on several concrete animals** (cardinal,
+  robin, blue jay) before saving.
+- **Custom/uploaded pets are out of scope for this kind** — a fresh txt2img matches a *species*, not a
+  user's specific pet (§7.1); those await the deferred `depth` kind, which the Lab need not author in v1.
+
+Because the clause is a generic pose description carrying no per-species string, there is **no
+literal-species hazard** — the earlier "never save a literal 'cardinal'" concern is moot.
 
 ---
 
@@ -130,14 +126,12 @@ An admin router mounted like the others, gated by `admin_common`'s adm-claim (id
 timing:
 
 - `POST /api/admin/motion-lab/base` → render the base still for an animal (reuses
-  `render_design_still`). Returns a still URL.
-- `POST /api/admin/motion-lab/sprite` → read/preview a profile's pose sprite; `PUT` to save a
-  generated one (mode 2a).
-- `POST /api/admin/motion-lab/redraw` → `_img2img_wf(prompt, source_url, seed, denoise=strength)` →
-  anchor still URL. **The inner-loop endpoint.**
-- `POST /api/admin/motion-lab/animate` → `_loop_wf(prompt, anchor_still_url, seed)` → loop
+  `render_design_still`). Returns a still URL (the standing reference).
+- `POST /api/admin/motion-lab/anchor` → `_static_image_wf(_base_prompt(animal)` with the `pose`
+  clause swapped for `standing`) → fresh anchor still URL. **The inner-loop endpoint.**
+- `POST /api/admin/motion-lab/animate` → `_loop_wf(action/suffix, anchor_still_url, seed)` → loop
   (webp/gif) URL.
-- `POST /api/admin/motion-lab/suggest-prompt` → AI draft (optional, §2).
+- `POST /api/admin/motion-lab/suggest-clause` → AI draft of the pose clause (optional, §2).
 - **Save** reuses `motion_admin`'s existing profile-write endpoint — the Lab does not get its own
   store or write path.
 
@@ -192,11 +186,10 @@ through `motion_admin` (§3), local-backend only (§5), optional AI prompt sugge
 
 ## 8. Sequencing — how this relates to actually building the anchors
 
-1. **Prove the technique once, by hand** (`SPEC_POSE_ANCHOR_HYBRID` §7): one bird, does a
-   wings-spread anchor flap *and* stay the same bird? Cheapest possible de-risk — don't build a UI to
-   discover the redraw doesn't move.
-2. **Build the Lab MVP** = §1 steps 3–4 on a fixed animal/pose, re-runnable. This *is* the §7 loop
-   made repeatable, so steps 1 and 2 can converge if you'd rather prove-in-the-tool.
+1. **Prove the technique once, by hand** — **DONE** (`SPEC_POSE_ANCHORS` §7.1): a `pose_prompt` anchor
+   flew a cardinal that both flaps *and* stays a cardinal in the house style. The de-risk is spent.
+2. **Build the Lab MVP** = §1 steps 2–4 on a fixed animal/pose, re-runnable. This *is* the §7.1 loop
+   made repeatable.
 3. **Grind the registry** with the Lab: per body type first (the shared recipe on `avian`,
    `quadruped`), then specific profiles for the animals that don't port — the exact "many iterations
    per species" this spec is justified by. Each save is immediately live (§3).
@@ -208,16 +201,17 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 
 ## 9. Open questions (live — this is a draft)
 
-- ~~Field shape it writes.~~ **RESOLVED (§3): `control.kind == "sprite"`** on §3.9's `{kind, ref,
-  strength}` block — no `anchor` field, no per-species prompt (reuses `action`/`suffix`).
+- ~~Field shape it writes.~~ **RESOLVED (§3): `control.kind == "pose_prompt"`** (`{kind, pose}`) — a
+  text clause, no sprite/`ref`/`strength`.
 - **Where generated Lab assets live and how long.** Anchor stills and animations are scratch; reuse
-  the preview/reference serving + the 24 h janitor, or a dedicated ephemeral admin bucket? Saved
-  sprites (mode 2a) are permanent profile content and go in the profile dir.
-- **Test-animal set for template validation (§3).** Does the admin type each test animal, or does the
+  the preview/reference serving + the 24 h janitor, or a dedicated ephemeral admin bucket? (Nothing
+  permanent is authored — the `pose_prompt` kind saves only a JSON clause.)
+- **Test-animal set for clause validation (§3).** Does the admin type each test animal, or does the
   Lab suggest a few representative species per profile (from the profile's keywords) to spot-check
-  the template against before saving?
-- **Sprite authoring quality bar (mode 2a).** How clean must the generic pose sprite be, and does the
-  Lab enforce the birefnet cutout + side-profile framing, or leave it to the admin's eye?
+  the clause against before saving?
+- **Does one clause generalize across a profile's species?** The clause is authored on `avian.fly`
+  and reused by every bird — the Lab should make it easy to confirm a clause tuned on a cardinal also
+  flies a robin/sparrow before it ships (the breadth pass §7.1 still owes).
 - **Two-keyframe animate.** `_loop_wf` today uses `start==end`; `SPEC_POSE_ANCHORS` §8's two-keyframe
   variant (wings-up start, wings-down end) would need the Lab's animate step to accept two stills.
   Worth exposing as an option once the single-anchor path is proven.
@@ -233,36 +227,37 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 | # | Question | Answer | Why |
 |---|---|---|---|
 | 1 | Does this need its own store? | **No — saves go through `motion_admin`** | The Lab edits motion-profile content; reusing the validator means nothing saved can break the build (§3) |
-| 2 | Does the pipeline need refactoring to expose steps? | **No — `_base_sprite`/`_img2img_wf`/`_loop_wf` are already separate** | The Lab calls them individually instead of via `make_pet_zip`; only new admin endpoints wrap them (§1/§4) |
+| 2 | Does the pipeline need refactoring to expose steps? | **No — `render_design_still`/`_static_image_wf`/`_loop_wf` are already separate** | The Lab calls them individually instead of via `make_pet_zip`; only new admin endpoints wrap them (§1/§4) |
 | 3 | Prod feature or dev tool? | **Local-backend GPU-dev-box tool; inert in GPU-less prod** | It drives `factory.py`/ComfyUI; keeps the deploy gate ("`import numpy` must fail") intact (§5) |
-| 4 | What does Save persist? | **`control: {kind:"sprite", ref, strength}` + optionally edited `action`/`suffix` — NO per-species prompt** | The sprite kind reuses `action`/`suffix` (already `{animal}`-spliced), so no template is stored and the literal-species hazard dissolves (§3, §3.9.1) |
+| 4 | What does Save persist? | **`control: {kind:"pose_prompt", pose:"<clause>"}` — a per-body-type pose clause, NO per-species string** | Validated by §7.1: a fresh txt2img from the clause + house style. No `ref`/`strength`/sprite (that path was rejected) (§3, §3.9.1) |
 | 5 | Save target granularity | **A pose in a profile — `avian.fly` (shared) or a specific `penguin.fly` (§3.7)** | Authors the reusable recipe by default; specificity is the escape hatch (§3) |
 | 6 | New pool contract? | **No (v1) — local only; pool step-execution deferred** | Authoring is a dev-box act; the fixed pool handlers don't expose arbitrary steps (§5/§7) |
-| 7 | Build before or after proving the technique? | **After a one-bird hand-proof (§7); the Lab MVP then IS that loop repeatable** | Don't build a UI to find out the redraw won't flap; but the MVP is small (§8) |
-| 8 | Field shape written | **RESOLVED — `control.kind == "sprite"` on §3.9's `{kind, ref, strength}` block** | Reuses the reserved kind-block; no new field, no per-species prompt (§3, `SPEC_MOTION_PROFILES` §3.9.1) |
+| 7 | Build before or after proving the technique? | **After the §7.1 hand-proof (done — `pose_prompt` validated on a cardinal); the Lab MVP IS that loop repeatable** | The technique is proven; the Lab now scales the per-species grind. The MVP is small (§8) |
+| 8 | Field shape written | **RESOLVED — `control.kind == "pose_prompt"` (`{kind, pose}`)** | The §7.1-validated kind; sprite/img2img was tested and rejected (§3, `SPEC_MOTION_PROFILES` §3.9.1) |
 
 ---
 
 ## 11. Where it would touch the code
 
-- `webui/motion_lab.py` (new) — the admin router: `base` / `sprite` / `redraw` / `animate` /
-  `suggest-prompt` actions wrapping `factory.py`'s existing step functions; gated by `admin_common`;
-  mounted only under the local backend (§5). Save delegates to `motion_admin`.
-- `webui/motion_admin.py` — extend the profile-write validator to accept a populated `control` block
-  (`kind` in the allowed set incl. `sprite`, `ref` resolves to a file in the profile dir, `strength`
-  in range) — the §3.9 guard-test additions, shared with the Lab. No prompt-template guard is needed
-  (the sprite kind stores no per-species string, §3).
+- `webui/motion_lab.py` (new) — the admin router: `base` / `anchor` / `animate` / `suggest-clause`
+  actions wrapping `factory.py`'s existing step functions (`render_design_still`, `_static_image_wf`,
+  `_loop_wf`); gated by `admin_common`; mounted only under the local backend (§5). Save delegates to
+  `motion_admin`.
+- `webui/motion_admin.py` — extend the profile-write validator to accept a populated `control` block:
+  `kind` in the allowed set (incl. `pose_prompt`), and for `pose_prompt` a non-empty `pose` clause
+  (for the deferred `depth`/`pose_skeleton` kinds, a `ref` that resolves + a `strength` in range) —
+  the §3.9 guard-test additions, shared with the Lab.
 - `web/src/app/admin/motions/lab/page.tsx` (new) — the stepper UI: animal + pose pickers, a vertical
-  stack of step cards each showing its output with a re-run control, prompt/strength editors, "save
+  stack of step cards each showing its output with a re-run control, the **pose-clause editor**, "save
   to profile". Mirrors the existing `admin/motions/page.tsx` pattern and the design page's
   seq-stamped async discipline (`useDesignFlow` — drop stale results) so a slow re-run can't
   overwrite a newer one.
 - `web/src/lib/api.ts` — the Lab's admin endpoints (the one adapter that knows their URLs, per
   repo convention).
-- `pet_factory/ai_purposes/pose_caption.json` (optional, §2) — one purpose for the "suggest prompt"
+- `pet_factory/ai_purposes/pose_clause.json` (optional, §2) — one purpose for the "suggest clause"
   action; no engine change.
-- `pet_factory/motion_profiles/` — the pose sprites authored via mode 2a live here as content.
-- **Tests** — the `control`-block validator (`kind` allowed incl. `sprite`, `ref` resolves,
-  `strength` in range — the §3.9 guard-test additions), the local-only mounting (routes absent under
-  the pool backend), and that a Lab save round-trips through `motion_admin`'s validator identically
-  to a hand-edited profile.
+- `pet_factory/motion_profiles/` — the per-pose `control.pose` clauses live here as JSON content (no
+  binary assets for the `pose_prompt` kind).
+- **Tests** — the `control`-block validator (`kind` allowed incl. `pose_prompt`, `pose` non-empty —
+  the §3.9 guard-test additions), the local-only mounting (routes absent under the pool backend), and
+  that a Lab save round-trips through `motion_admin`'s validator identically to a hand-edited profile.
