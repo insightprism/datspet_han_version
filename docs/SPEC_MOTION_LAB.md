@@ -346,7 +346,10 @@ ComfyUI is one-GPU-per-instance and serial, so the Lab dispatches each job acros
 set of **endpoints** — one ComfyUI per GPU. Endpoint 0 is the primary (`factory`'s
 ComfyUI on GPU 0); endpoint 1 is a second ComfyUI on GPU 1 (conventional `:19963` +
 `<ComfyUI>/output_gpu1`, overridable via `PET_LAB_COMFY_URL_2` /
-`PET_LAB_COMFY_OUTPUT_DIR_2`; started with **`start_comfyui_gpu1.sh`**, `--cuda-device 1`).
+`PET_LAB_COMFY_OUTPUT_DIR_2`; started with **`start_comfyui_gpu1.sh`**, `--cuda-device 1`). The
+backend launcher **`start_petmaker_backend_only.sh` auto-starts it** on a ≥2-GPU box (skipped if one
+is already up on `:19963`, or with `PET_LAB_GPU1_AUTOSTART=0`) and stops it when the backend exits —
+so "start the backend" brings the second GPU online automatically.
 
 - **Dispatch:** each job goes to the **least-busy healthy enabled** endpoint (tracked
   in-flight counts). With both GPUs up, two jobs run at once — **~2× on a batch**
