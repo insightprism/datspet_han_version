@@ -27,7 +27,7 @@ type Phase = LabJob["phase"];
 
 type Cell = {
   clause: string; still: LabAsset | null; loop: LabAsset | null;
-  busy: "" | "draw" | "animate" | "save"; jobId: string | null; elapsed: number; phase: Phase;
+  busy: "" | "draw" | "animate" | "save" | "suggest"; jobId: string | null; elapsed: number; phase: Phase;
 };
 type Cells = Record<string, Cell>;
 
@@ -85,6 +85,8 @@ export default function MotionLabPage() {
   const [editErrors, setEditErrors] = useState<string[]>([]);
   const [editBusy, setEditBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
+  // Save writes straight to the motion profile (overwriting the stored clause), so it is confirmed.
+  const [confirmSave, setConfirmSave] = useState<{ kind: "one" | "all"; name?: string } | null>(null);
 
   const loadConfig = () => motionLab.config().then((c) => setEndpoints(c.endpoints)).catch(() => {});
   async function toggleGpu(index: number) {
@@ -196,6 +198,21 @@ export default function MotionLabPage() {
       setNotice(`Saved ${profileKey}.${name} — live now.`);
       setDetail(await motionAdmin.get(profileKey));
     } catch (e) { setErr(saveErr(e)); } finally { patch(name, { busy: "" }); }
+  }
+  // AI draft of the pose clause (SPEC_MOTION_LAB §2). Best-effort: it fills the box;
+  // the admin edits + re-runs. A fresh clause invalidates this column's renders.
+  async function suggestClause(name: string) {
+    patch(name, { busy: "suggest" }); setErr(""); setNotice("");
+    try {
+      const { clause } = await motionLab.suggestClause(animal, name, detail?.profile.movement_class ?? "");
+      patch(name, { clause: clause.trim(), still: null, loop: null });
+    } catch (e) { setErr(e instanceof AdminApiError ? e.message : "Suggest failed."); }
+    finally { patch(name, { busy: "" }); }
+  }
+  // Revert an edited clause to the one saved in the profile (nothing was written, so this
+  // is a pure local reset). Clears this column's now-mismatched renders.
+  function revertClause(name: string) {
+    patch(name, { clause: detail?.profile.poses[name]?.control?.pose ?? "", still: null, loop: null });
   }
 
   // --- "all" (CONCURRENT: fire every column at once so the backend spreads them
@@ -421,7 +438,7 @@ export default function MotionLabPage() {
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <BatchBtn label="Draw all anchors" busy={busyAll === "draw"} onClick={drawAllAnchors} disabled={anyBusy || !columns.length} />
         <BatchBtn label="Animate all" busy={busyAll === "animate"} onClick={animateAll} disabled={anyBusy || !columns.length} />
-        <button onClick={saveAll} disabled={busyAll === "save" || !detail || !list?.writable || !anyDirty}
+        <button onClick={() => setConfirmSave({ kind: "all" })} disabled={busyAll === "save" || !detail || !list?.writable || !anyDirty}
           className="mono rounded-lg py-2 px-4 text-sm font-bold disabled:opacity-45"
           style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "var(--heading)" }}>
           {busyAll === "save" ? "Saving…" : "Save all"}
@@ -446,14 +463,32 @@ export default function MotionLabPage() {
 
               {/* Anchor section */}
               <div className="m-3 rounded-lg p-2" style={{ background: "#151515", border: "1px solid var(--line)" }}>
-                <div className="mono mb-1 text-xs" style={{ color: "var(--faint)" }}>pose clause → {isAnchored ? "anchor still" : "uses base"}</div>
+                <div className="mono mb-1 flex items-center justify-between gap-2 text-xs" style={{ color: "var(--faint)" }}>
+                  <span>pose clause → {isAnchored ? "anchor still" : "uses base"}</span>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {dirty && (
+                      <button onClick={() => revertClause(name)} disabled={cell.busy !== ""}
+                        className="mono rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-40"
+                        style={{ color: "var(--muted)", borderColor: "var(--line)" }}
+                        title="Revert to the saved clause (nothing was saved yet)">
+                        ↺ revert
+                      </button>
+                    )}
+                    <button onClick={() => suggestClause(name)} disabled={cell.busy !== ""}
+                      className="mono rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-40"
+                      style={{ color: "var(--gold)", borderColor: "var(--line)" }}
+                      title="Draft a pose clause with AI, then edit it">
+                      {cell.busy === "suggest" ? "…" : "✨ suggest"}
+                    </button>
+                  </div>
+                </div>
                 <textarea value={cell.clause} onChange={(e) => patch(name, { clause: e.target.value })}
                   placeholder="pose clause (empty = uses base)"
                   className="mono mb-2 min-h-[44px] w-full resize-y rounded px-2 py-1 text-xs outline-none" style={inputStyle} />
                 <CellImg asset={source} size={168}
                   placeholder={cell.busy === "draw" ? runLabel(true, cell.phase, cell.elapsed, "Drawing", "") : isAnchored ? "Draw anchor" : "Draw base"} />
                 <ActionRow label={runLabel(cell.busy === "draw", cell.phase, cell.elapsed, "Drawing", "Draw anchor")}
-                  disabled={cell.busy !== "" || !isAnchored} onClick={() => drawAnchor(name)}
+                  disabled={cell.busy !== "" || !isAnchored} onClick={() => drawAnchor(name)} tone="draw"
                   onCancel={cell.busy === "draw" ? () => cancelJob(cell.jobId) : undefined} />
               </div>
 
@@ -463,14 +498,16 @@ export default function MotionLabPage() {
                 <CellImg asset={cell.loop} size={168}
                   placeholder={cell.busy === "animate" ? runLabel(true, cell.phase, cell.elapsed, "Animating", "") : "Animate"} />
                 <ActionRow label={runLabel(cell.busy === "animate", cell.phase, cell.elapsed, "Animating", "Animate")}
-                  disabled={cell.busy !== "" || !source} onClick={() => animateOne(name)}
+                  disabled={cell.busy !== "" || !source} onClick={() => animateOne(name)} tone="animate"
                   onCancel={cell.busy === "animate" ? () => cancelJob(cell.jobId) : undefined} />
               </div>
 
               <div className="px-3 pb-3">
-                <button onClick={() => saveOne(name)} disabled={cell.busy === "save" || !list?.writable || !dirty}
+                <button onClick={() => setConfirmSave({ kind: "one", name })} disabled={cell.busy === "save" || !list?.writable || !dirty}
                   className="mono w-full rounded-lg py-1.5 text-xs font-bold disabled:opacity-40"
-                  style={{ background: dirty ? "rgba(99,102,241,0.18)" : "transparent", color: "var(--accent)", border: "1px solid rgba(99,102,241,0.4)" }}>
+                  style={dirty
+                    ? { background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "var(--heading)", border: "1px solid rgba(99,102,241,0.5)" }
+                    : { background: "#1c1c1c", color: "var(--faint)", border: "1px solid var(--line)" }}>
                   {cell.busy === "save" ? "Saving…" : dirty ? "Save clause" : "Saved"}
                 </button>
               </div>
@@ -497,6 +534,17 @@ export default function MotionLabPage() {
       <ConfirmModal open={confirmDel} title={`Delete "${profileKey}"?`}
         body="This removes the profile file and its registry entry. Animals that resolved to it fall back to a coarser profile."
         onConfirm={deleteProfile} onCancel={() => setConfirmDel(false)} />
+      {/* Save writes to the motion profile (overwriting the stored clause) — confirm it. */}
+      <ConfirmModal open={!!confirmSave} tone="primary"
+        title={confirmSave?.kind === "all"
+          ? `Save all clauses to "${profileKey}"?`
+          : `Save clause to "${profileKey}.${confirmSave?.name}"?`}
+        body={confirmSave?.kind === "all"
+          ? `This writes the edited pose clauses into the "${profileKey}" motion profile, OVERWRITING their current clauses. It goes live immediately for every animal that uses this profile.`
+          : `This writes the clause into ${profileKey}.${confirmSave?.name} in the "${profileKey}" motion profile, OVERWRITING its current clause. It goes live immediately for every animal that uses this profile.`}
+        confirmLabel={confirmSave?.kind === "all" ? "Save all to profile" : "Save to profile"}
+        onConfirm={() => { const c = confirmSave; setConfirmSave(null); if (c?.kind === "all") saveAll(); else if (c?.name) saveOne(c.name); }}
+        onCancel={() => setConfirmSave(null)} />
     </main>
   );
 }
@@ -519,18 +567,23 @@ function CancelBtn({ onClick }: { onClick: () => void }) {
   );
 }
 
-function ActionRow({ label, disabled, onClick, onCancel }: {
-  label: string; disabled: boolean; onClick: () => void; onCancel?: () => void;
+function ActionRow({ label, disabled, onClick, onCancel, tone }: {
+  label: string; disabled: boolean; onClick: () => void; onCancel?: () => void; tone: "draw" | "animate";
 }) {
+  // Filled buttons, distinct from the card background — draw = indigo, animate = green
+  // (matching its green animation section).
+  const btn = tone === "animate"
+    ? { background: "rgba(52,211,153,0.16)", color: "var(--green)", borderColor: "rgba(52,211,153,0.45)" }
+    : { background: "rgba(99,102,241,0.18)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.5)" };
   return (
     <div className="mt-2 flex items-center gap-1">
       <button onClick={onClick} disabled={disabled}
-        className="mono flex-1 rounded border px-2 py-1 text-xs disabled:opacity-40"
-        style={{ color: "var(--accent)", borderColor: "var(--line)" }}>{label}</button>
+        className="mono flex-1 rounded border px-2 py-1 text-xs font-semibold disabled:opacity-40"
+        style={btn}>{label}</button>
       {onCancel && (
         <button onClick={onCancel} title="Cancel"
           className="mono rounded border px-2 py-1 text-xs"
-          style={{ color: "#f87171", borderColor: "rgba(239,68,68,0.4)" }}>✕</button>
+          style={{ color: "#f87171", borderColor: "rgba(239,68,68,0.4)", background: "rgba(239,68,68,0.12)" }}>✕</button>
       )}
     </div>
   );

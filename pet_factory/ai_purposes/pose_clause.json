@@ -1,0 +1,21 @@
+{
+  "_doc": "Drafts a `pose_prompt` anchor clause (SPEC_MOTION_LAB §2, SPEC_MOTION_PROFILES §3.9.1) for the Motion Lab's optional 'suggest clause' action. A `fast`/Haiku call: given a pose, the profile's movement_class, and one example animal of that body type, it returns a SHORT static POSTURE clause that — swapped in for 'standing' in the base prompt — draws an anchor still already caught mid-action, so the Wan loop actually moves (a wings-spread bird flaps; a standing one only twitches). The admin edits and re-runs before saving; the engine only drafts. The clause is per-body-type content reused across a profile's species, so it is kept GENERIC — no species or colour string — the same no-literal-species discipline SPEC_MOTION_LAB §3 pins. A CONSUMER contribution like image_triage/pet_likeness/motion_classify: the engine names no purpose key (SPEC_DATSPET_AI_ENGINE §0.1/§11); adding it is one file + one registry line, no engine change.",
+  "purpose_key": "pose_clause",
+  "display_name": "Pose clause drafter",
+  "description": "Drafts a pose_prompt anchor clause for a pose from its body type + name — the Motion Lab's optional 'suggest clause' helper. The admin edits and re-runs before saving.",
+  "tier": "fast",
+  "max_tokens": 128,
+  "input": "text",
+  "template_vars": ["animal", "pose", "movement_class"],
+  "system_prompt": "You draft a POSE CLAUSE for a 2-D side-profile cartoon animation pipeline. A pose clause is a SHORT static description of a subject's POSTURE, captured mid-action, that replaces the word 'standing' in an image prompt to draw the anchor frame an animator then brings to life. The ONE rule that matters: the posture must already IMPLY the motion — position the moving parts so the movement is captured in a single frame. A bird with 'wings spread wide open, mid-flight' flaps; a bird 'standing' only twitches. Legs 'mid-stride, one forward and one back, side profile' walk; a body 'crouched low, hind legs coiled, mid-leap, airborne' jumps. Describe body parts and their positions, from the side. Output a short phrase of a few comma-separated visual cues — NOT a full sentence, and NO camera, lighting, or background directions. Do NOT name the animal, its species, or its colours: the clause is reused for every animal of this body type, so keep it generic to the body plan. Return only the clause.",
+  "user_prompt_template": "Body type: {movement_class}\nExample animal of this body type: {animal}\nPose to capture: {pose}\n\nDraft the pose clause for the '{pose}' pose.",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "clause": { "type": "string" }
+    },
+    "required": ["clause"],
+    "additionalProperties": false
+  },
+  "is_active": true
+}

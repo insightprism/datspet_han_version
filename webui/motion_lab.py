@@ -35,6 +35,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
+import ai_engine
 import datsme_integration
 from pet_factory import motion_profiles as mp
 
@@ -254,6 +255,12 @@ class ConfigBody(BaseModel):
     active: list[int]
 
 
+class SuggestBody(BaseModel):
+    animal: str
+    pose: str
+    movement_class: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -285,6 +292,30 @@ def start_animate(body: AnimateBody):
     pf = _pf()
     wf = pf._loop_wf(mp.compose_pose_prompt(animal, pose), str(still), _clean_seed(body.seed))
     return _start(wf, "webp")
+
+
+@router.post("/suggest-clause")
+def suggest_clause(body: SuggestBody):
+    """AI draft of a pose_prompt clause (SPEC_MOTION_LAB §2). Best-effort: the admin
+    edits and re-runs before saving. Degrades to a clear error when the engine is
+    inert (no DATSPET_AI_API_KEY) — the whole Lab stays usable without it."""
+    animal = (body.animal or "").strip()[:_MAX_ANIMAL]
+    pose = (body.pose or "").strip()[:40]
+    if not animal or not pose:
+        raise HTTPException(400, "animal and pose are required")
+    try:
+        result, _ = ai_engine.call_purpose("pose_clause", variables={
+            "animal": animal, "pose": pose,
+            "movement_class": (body.movement_class or "").strip() or "unknown",
+        })
+    except ai_engine.AIUnavailable:
+        raise HTTPException(503, "AI is not configured — set DATSPET_AI_API_KEY to use suggest.")
+    except ai_engine.AIError as e:
+        raise HTTPException(502, f"AI draft failed: {e}")
+    clause = (result.get("clause") or "").strip()
+    if not clause:
+        raise HTTPException(502, "the AI returned an empty clause — try again")
+    return {"clause": clause}
 
 
 @router.get("/job/{job_id}")

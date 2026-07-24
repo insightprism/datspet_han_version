@@ -1,11 +1,13 @@
 # SPEC — The Motion Lab (an admin visual workbench for authoring per-pose motion anchors)
 
-**Status:** **IMPLEMENTED** — Phase 1 + Phase 2, 2026-07-24. **Rev.3.** Backend `webui/motion_lab.py`
-(still / animate / asset endpoints, local-backend only, tested + live-smoke-verified) + frontend
-`web/src/app/admin/motions/lab/page.tsx`, now the **multi-pose** view (§12): a column per selected
-pose, all drawn from one shared base + seed, per-pose and "all" Draw/Animate/Save. Backend was
-unchanged for Phase 2 (frontend orchestration of the same per-pose endpoints). The optional AI
-"suggest-clause" helper (§2) is still not built. See `RESEARCH_POSE_MOTION.md` for the design narrative.
+**Status:** **IMPLEMENTED** — Phase 1 + Phase 2 + multi-GPU dispatch + the AI suggest-clause helper +
+inline profile CRUD, 2026-07-24. **Rev.4.** Backend `webui/motion_lab.py` (still / animate /
+**suggest-clause** / config / asset endpoints, local-backend only, tested + live-smoke-verified) +
+frontend `web/src/app/admin/motions/lab/page.tsx`, the **multi-pose** view (§12): a column per
+selected pose, all drawn from one shared base + seed, per-pose and "all" Draw/Animate/Save, a
+per-column **✨ suggest** (AI clause draft, §2 — BUILT), and — beyond this spec's original scope —
+inline **Edit / Duplicate / Delete** of the selected profile (§14). Multi-GPU dispatch across one
+ComfyUI per GPU is §13. See `RESEARCH_POSE_MOTION.md` for the design narrative.
 
 **What this is.** A new **admin web surface** that lets an admin *watch the pose-anchor pipeline
 run, step by step*, on a chosen animal + pose — see each intermediate result, edit the **pose
@@ -90,9 +92,14 @@ until the animal moves *and* still reads as itself in the house style — tested
 concrete species. The clause is per-body-type content, reused across every species in the profile
 (§3), with a specific profile as the escape hatch for a divergent body.
 
-**AI assist (optional).** A "suggest clause" action drafts a pose clause from the pose name + animal
-using the AI engine (`SPEC_DATSPET_AI_ENGINE` — one `ai_purposes/` entry). The admin edits and
-re-runs. The engine is already built; this is content, not new plumbing.
+**AI assist (optional) — BUILT 2026-07-24.** A per-column **✨ suggest** action drafts a pose clause
+from the pose name + the profile's `movement_class` + one example animal, using the AI engine
+(`ai_purposes/pose_clause.json`, one registry entry — no engine change, `SPEC_DATSPET_AI_ENGINE`
+§0.1/§11). It fills the clause box; the admin edits and re-runs. The draft is kept **generic to the
+body plan** — no species or colour string (§3) — and the whole Lab stays usable with the engine inert:
+no `DATSPET_AI_API_KEY` → the button 503s with a clear message and everything else still works.
+Endpoint: `POST /api/admin/motion-lab/suggest-clause`. Live-verified across avian/quadruped/winged/
+serpentine body types.
 
 *(There is no sprite-authoring mode — the sprite/img2img approach was rejected by the §7.1 experiment.
 The deferred `depth` kind for custom pets, if built, would add its own asset-authoring flow then.)*
@@ -207,9 +214,11 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 
 - ~~Field shape it writes.~~ **RESOLVED (§3): `control.kind == "pose_prompt"`** (`{kind, pose}`) — a
   text clause, no sprite/`ref`/`strength`.
-- **Where generated Lab assets live and how long.** Anchor stills and animations are scratch; reuse
-  the preview/reference serving + the 24 h janitor, or a dedicated ephemeral admin bucket? (Nothing
-  permanent is authored — the `pose_prompt` kind saves only a JSON clause.)
+- **Where generated Lab assets live and how long.** **STILL OPEN — the one real housekeeping gap.**
+  As built, stills/loops are copied to `<GPU 0 out>/_lab` and served by `/asset`. The in-memory *job
+  records* expire (15-min TTL, `_prune_jobs`) but the **asset files are never swept** — `_lab` grows
+  unbounded. TODO: a size/age cap on `_lab`, or fold it into the 24 h janitor. (Nothing permanent is
+  authored — the `pose_prompt` kind saves only a JSON clause — so this is disk hygiene, not correctness.)
 - **Test-animal set for clause validation (§3).** Does the admin type each test animal, or does the
   Lab suggest a few representative species per profile (from the profile's keywords) to spot-check
   the clause against before saving?
@@ -219,8 +228,9 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 - **Two-keyframe animate.** `_loop_wf` today uses `start==end`; `SPEC_POSE_ANCHORS` §8's two-keyframe
   variant (wings-up start, wings-down end) would need the Lab's animate step to accept two stills.
   Worth exposing as an option once the single-anchor path is proven.
-- **Concurrency UX.** With one GPU, how does the Lab present "a real pet generation is running, your
-  re-run is queued"? A simple honest banner, or a soft lock while a build holds the GPU?
+- ~~**Concurrency UX.**~~ **RESOLVED.** Generation is an async job (§ built): per-column elapsed timer,
+  a "pending…" state while queued on the serial GPU, and a Cancel per job. Multi-GPU dispatch (§13)
+  spreads concurrent jobs across ComfyUI instances; a job simply queues when all are busy.
 - **Pool path (deferred).** If authoring ever needs to run on a pool GPU node (no local GPU box), the
   step endpoints would need pool handler tasks — a separate spec, explicitly out of v1 (§5).
 
@@ -258,8 +268,11 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
   overwrite a newer one.
 - `web/src/lib/api.ts` — the Lab's admin endpoints (the one adapter that knows their URLs, per
   repo convention).
-- `pet_factory/ai_purposes/pose_clause.json` (optional, §2) — one purpose for the "suggest clause"
-  action; no engine change.
+- `pet_factory/ai_purposes/pose_clause.json` (§2) — **BUILT** — one `fast`/text purpose for the
+  "suggest clause" action (vars `animal`/`pose`/`movement_class`, returns `{clause}`); registered in
+  `ai_purposes/registry.json`; no engine change. `webui/motion_lab.py` gains the
+  `/suggest-clause` endpoint; `api.ts` the `motionLab.suggestClause` adapter; the Lab a per-column
+  **✨ suggest** button.
 - `pet_factory/motion_profiles/` — the per-pose `control.pose` clauses live here as JSON content (no
   binary assets for the `pose_prompt` kind).
 - **Tests** — the `control`-block validator (`kind` allowed incl. `pose_prompt`, `pose` non-empty —
@@ -364,3 +377,27 @@ so "start the backend" brings the second GPU online automatically.
 - **The production pipeline is untouched** — `make_pet_zip` still uses GPU 0 only. The
   shared pool is deliberately NOT used (§5): the Lab stays local, and the idle local
   GPU is the clean win.
+
+---
+
+## 14. Inline profile CRUD (IMPLEMENTED 2026-07-24 — beyond the original scope)
+
+The Lab surfaces the motion-profile **Edit / Duplicate / Delete** actions (from
+`SPEC_MOTION_PROFILE_ADMIN`) for the *selected* profile, so an admin never leaves the Lab to fork or
+fix a profile. The header is arranged **animation → motion → poses**: line 1 is the animation base
+(animal · seed · base still), line 2 is the motion profile (`profile ▾  Edit  Duplicate  Delete`),
+and the pose strip sits directly below it (the available poses come from the selected profile).
+
+- **Edit** opens the **same** `ProfileEditor` the Motions page uses, in a `ModalOverlay`. The editor
+  was extracted to `web/src/app/admin/motions/ProfileEditor.tsx` (content-only) and is now hosted in
+  a card on the Motions page and in a modal here — **one editor, two hosts**, the shell-vs-content
+  split the overlay primitive already draws. On save it reloads the pose menu and keeps the drawn base.
+- **Duplicate** prompts for a new key, copies via `motionAdmin.duplicate`, and **switches the Lab to
+  the copy** so it can be tuned immediately (the "fork `winged_flyer` → butterfly, then tune the
+  clauses" workflow).
+- **Delete** goes through the shared `ConfirmModal`, guarded off for the **default** and
+  **catalog-pinned** profiles (identical rule to the Motions list).
+
+All three reuse the existing validated `motion_admin` endpoints and the shared `ModalOverlay` /
+`ConfirmModal` primitives — no new backend, no parallel store. This is really an extension of
+`SPEC_MOTION_PROFILE_ADMIN` onto the Lab surface; it is recorded here because it ships on the Lab page.

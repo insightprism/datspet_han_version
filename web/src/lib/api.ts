@@ -382,6 +382,9 @@ export const motionLab = {
   cancel: (job_id: string): Promise<unknown> => labFetch(`/cancel/${encodeURIComponent(job_id)}`, { method: "POST" }),
   config: (): Promise<{ endpoints: LabEndpoint[] }> => labFetch("/config"),
   setConfig: (active: number[]): Promise<unknown> => labFetch("/config", { method: "PUT", body: JSON.stringify({ active }) }),
+  // AI draft of a pose clause (optional; 503s if DATSPET_AI_API_KEY is unset — SPEC_MOTION_LAB §2).
+  suggestClause: (animal: string, pose: string, movement_class: string): Promise<{ clause: string }> =>
+    labFetch("/suggest-clause", { method: "POST", body: JSON.stringify({ animal, pose, movement_class }) }),
   // The asset endpoint carries the adm cookie (same-origin <img> sends credentials).
   assetUrl: (url: string): string => `${API_URL}${url}`,
 };

@@ -17,13 +17,18 @@ interface Props {
   title: string;
   body: string;
   confirmLabel?: string;
+  /** "danger" (default) = red confirm for destructive actions; "primary" = indigo for commits (e.g. Save). */
+  tone?: "danger" | "primary";
   onConfirm: () => void;
   onCancel: () => void;
 }
 
 export default function ConfirmModal({
-  open, title, body, confirmLabel = "Delete", onConfirm, onCancel,
+  open, title, body, confirmLabel = "Delete", tone = "danger", onConfirm, onCancel,
 }: Props) {
+  const confirmStyle = tone === "primary"
+    ? { background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "var(--heading)", borderColor: "rgba(99,102,241,0.5)" }
+    : { background: "rgba(239,68,68,0.15)", color: "#f87171", borderColor: "rgba(239,68,68,0.4)" };
   return (
     <ModalOverlay open={open} onClose={onCancel} labelledBy="confirm-title" maxWidth="max-w-sm">
       <h2 id="confirm-title" className="mb-2 text-lg font-semibold"
@@ -44,7 +49,7 @@ export default function ConfirmModal({
           <button
             onClick={onConfirm}
             className="mono flex-1 rounded-lg border px-4 py-2.5 text-sm font-semibold"
-            style={{ background: "rgba(239,68,68,0.15)", color: "#f87171", borderColor: "rgba(239,68,68,0.4)" }}
+            style={confirmStyle}
           >
             {confirmLabel}
           </button>
