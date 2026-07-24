@@ -135,7 +135,7 @@ See **A5**. This is the sharpest edge in the whole procedure.
 
 - [ ] **B4. GPU-less gate — the posture is the product.**
       ```bash
-      webui/venv/bin/python -c "from pet_factory import motion_profiles, tiers, body_shapes"  # must PASS
+      webui/venv/bin/python -c "from pet_factory import motion_profiles, tiers, design_axes"  # must PASS  (body_shapes was absorbed into design_axes)
       webui/venv/bin/python -c "import numpy"                                                 # must FAIL
       webui/venv/bin/pip list | grep -iE "^(rembg|onnxruntime|numpy|torch) "                  # must be EMPTY
       ```
