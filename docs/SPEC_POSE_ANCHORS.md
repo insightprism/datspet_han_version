@@ -319,6 +319,39 @@ fly as a generic species and need the `depth` control kind (B-proper, §8), defe
 Artifacts: `…/scratchpad/pose_anchor_exp/` — `L1` (standing → twitch), `L3` (spread → flaps),
 `L7` (the styled flapping cardinal), `10` (the winning anchor still).
 
+### 7.2 Breadth pass (run 2026-07-24 — resolving §7.1 caveat 1: does one clause generalize?)
+
+Ran the exact `pose_prompt` recipe (fresh txt2img, house style, a **fixed** pose clause, only the
+animal varies) across a body type, plus seed variation and the divergent case:
+
+| Animal | Body / pose | Motion | Identity | Style | Notes |
+|---|---|---|---|---|---|
+| robin | avian / fly | ✅ full flap | ✅ | ✅ | seeds 42 & 7 both clean |
+| sparrow | avian / fly | ✅ full flap | ✅ | ✅ | |
+| blue jay | avian / fly | ✅ full flap | ✅ | ✅ | the bird that "didn't fly" originally |
+| **penguin** | avian / fly | ✅ grounded flipper-flap | ✅ | ✅ | **divergent** — the shared "flying" clause gives a plausible grounded flap, *not* flight |
+| tabby cat | quadruped / run | ✅ trotting gait | ✅ | ✅ | one shared run clause |
+| corgi | quadruped / run | ✅ running gait | ✅ | ✅ | seeds 42 & 7 both clean |
+
+**Findings.**
+1. **One clause per body type works.** The songbird fly clause flew robin/sparrow/blue jay; the
+   quadruped run clause ran cat/corgi — the clause is a **body-type-level content asset**, exactly the
+   registry model (§3.7). §7.1 caveat 1 (generalization) is **resolved for typed species**.
+2. **Seed-robust.** Robin and corgi both held across two seeds — not a lucky draw.
+3. **Graceful degradation + specificity confirmed.** The penguin (flightless, divergent body) got
+   plausible-but-different motion from the shared clause (a grounded flipper-flap, not flight) — **not
+   garbage**, and improvable with a specific `penguin.json` clause. Exactly the purpose of the §3.7
+   specificity escape hatch, now demonstrated.
+4. **Style has family resemblance, drifts slightly across species** (birds painterly, cat/corgi
+   chibi). Within one pet (same animal, all poses) this is a non-issue; the cross-species drift is
+   cosmetic. One end-to-end check still owed: the fresh anchor's style vs the *actual base still* of
+   the same pet (both are house-style-generated, so they should match).
+
+**Verdict: `pose_prompt` is validated for typed species across body types (avian + quadruped).
+Cleared to implement.** The custom/uploaded-pet gap (§7.1 caveat 2) remains the deferred `depth` job.
+
+Artifacts: `…/scratchpad/pose_anchor_breadth/` — `b1–b4` birds, `q1–q2` quads, `_montage.png` each.
+
 ---
 
 ## 8. Open questions (this is a draft — these are the live ones)
