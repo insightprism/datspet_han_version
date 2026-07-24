@@ -44,6 +44,10 @@ CANONICAL_POSES = (
 REQUIRED_POSES = ("walk", "idle")
 # Allowed runtime_role values (must match datsme_me RuntimeRole, types.ts:10).
 ALLOWED_ROLES = frozenset({"rest", "active", "timed", "triggered"})
+# Allowed per-pose control kinds (§3.9.1). `pose_prompt` is realized (a fresh-anchor
+# text clause); `pose_skeleton`/`depth` are reserved for the deferred control-signal
+# tier (custom-pet identity) and validated only for shape until they ship.
+ALLOWED_CONTROL_KINDS = frozenset({"pose_prompt", "pose_skeleton", "depth"})
 # Hard platform ceiling on poses per build (§8). Realized builds are tier-bounded lower.
 MAX_POSES = 10
 
@@ -56,7 +60,7 @@ class Pose:
     runtime_role: Optional[str] = None
     action: Optional[str] = None
     suffix: str = ""
-    control: Optional[dict] = None   # §3.9 skeleton/depth placeholder — None at launch
+    control: Optional[dict] = None   # §3.9.1 per-pose control block; None = loop-only (today)
 
 
 @dataclass(frozen=True)
@@ -215,3 +219,19 @@ def compose_pose_prompt(animal: str, pose: Pose) -> str:
     "sitting calmly", suffix=the old WALK/IDLE_SUFFIX) reproduce today's prompts
     byte-for-byte. This is the backward-compat pin (§6)."""
     return f"cute cartoon {animal} {pose.action}, side profile, facing right{pose.suffix}"
+
+
+def anchor_clause(pose: Optional[Pose]) -> Optional[str]:
+    """The `pose_prompt` anchor clause for a pose (§3.9.1), or None if the pose has
+    no pose_prompt control. Centralizes the kind check so the factory and the tests
+    agree on what a pose_prompt control is: a `{kind:"pose_prompt", pose:"<clause>"}`
+    block whose clause is a non-empty string. The factory swaps this clause in for
+    "standing" in the base prompt to draw a fresh anchor still that can actually move
+    (a wings-spread bird flaps; a standing one only twitches). Any other kind — or
+    None — yields None, and the caller loops from the shared base (byte-identical to
+    today, §6)."""
+    control = pose.control if pose else None
+    if control and control.get("kind") == "pose_prompt":
+        clause = (control.get("pose") or "").strip()
+        return clause or None
+    return None

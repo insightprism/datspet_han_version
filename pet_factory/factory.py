@@ -366,10 +366,13 @@ def _prep_reference_image(src, *, isolate: bool = False) -> Path:
     return Path(out)
 
 
-def _base_prompt(animal: str) -> str:
+def _base_prompt(animal: str, pose: str = "standing") -> str:
     # "facing right" matters: DatsMe authors pets facing right and mirrors them
-    # for leftward movement, so the source must face right.
-    return (f"a cute cartoon {animal}, side profile view, facing right, standing, "
+    # for leftward movement, so the source must face right. `pose` defaults to
+    # "standing" (the base still); a per-pose anchor (§3.9.1 pose_prompt) passes its
+    # clause here instead, so the anchor is the SAME prompt as the base with only the
+    # pose word changed — the fly pose and the walk pose stay the same animal.
+    return (f"a cute cartoon {animal}, side profile view, facing right, {pose}, "
             "soft pastel colors, muted palette, simple flat shading, white background, "
             "storybook style")
 
@@ -628,13 +631,26 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
     # Loop the selected poses — each a Wan I2V generation from the same base sprite.
     # Progress is distributed across the N poses over the [0.10, 0.85] band (the
     # 0.85→1.0 tail is the cutout + pack step, unchanged).
+    # §3.9.1 pose_prompt anchors are validated for the TYPED-animal path (§7.1/§7.2):
+    # a fresh anchor drawn from the animal string. Reference-based pets (designer /
+    # uploads) keep the shared base until the `depth` kind ships — their identity
+    # lives in pixels a txt2img anchor can't reproduce.
+    typed = reference_image is None
     pose_files = {}
     n = len(pose_names)
     for i, name in enumerate(pose_names):
         pose = profile.pose(name)
         frac = 0.10 + (0.75 * i / max(1, n))
         prog(f"Animating the {name}…", round(frac, 3))
-        pose_files[name] = _run(_loop_wf(mp.compose_pose_prompt(animal, pose), str(base), seed))
+        start = base
+        clause = mp.anchor_clause(pose) if typed else None
+        if clause:
+            # A fresh anchor still in the pose (same _base_prompt as the standing base,
+            # the pose clause swapped in) so the loop animates from a pose that can
+            # move — a wings-spread bird flaps where a standing one only twitches.
+            start = COMFY_OUTPUT_DIR / _run(_static_image_wf(_base_prompt(animal, clause), seed))
+            _wait_stable(start)
+        pose_files[name] = _run(_loop_wf(mp.compose_pose_prompt(animal, pose), str(start), seed))
 
     prog("Cutting out backgrounds & packing…", 0.85)
     # Unload ComfyUI's Wan models so the GPU has room for birefnet (the next job

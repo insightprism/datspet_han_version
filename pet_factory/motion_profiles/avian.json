@@ -13,6 +13,6 @@
     "jump":  { "enabled": true,  "runtime_role": "triggered", "action": "flapping up in a startled hop", "suffix": ", wings flaring out in a quick upward flutter then settling, one reaction flutter, no camera movement, no panning" },
     "play":  { "enabled": true,  "runtime_role": "triggered", "action": "bobbing and fluttering playfully", "suffix": ", lively wing flicks and head bobs, cheerful reaction loop, no camera movement, no panning" },
     "swim":  { "enabled": false },
-    "fly":   { "enabled": true,  "runtime_role": "active", "action": "flying with steady wing beats", "suffix": ", wings beating up and down in a smooth flight cycle, hovering in place, no horizontal movement of the body, no camera movement, no panning" }
+    "fly":   { "enabled": true,  "runtime_role": "active", "action": "flying with steady wing beats", "suffix": ", wings beating up and down in a smooth flight cycle, hovering in place, no horizontal movement of the body, no camera movement, no panning", "control": { "kind": "pose_prompt", "pose": "wings spread wide open, mid-flight, flying" } }
   }
 }

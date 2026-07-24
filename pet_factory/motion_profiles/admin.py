@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import (
+    ALLOWED_CONTROL_KINDS,
     ALLOWED_ROLES,
     CANONICAL_POSES,
     REQUIRED_POSES,
@@ -118,6 +119,26 @@ def validate_profile(
                 errors.append(
                     f"pose {name!r} runtime_role {role!r} not in {sorted(ALLOWED_ROLES)}"
                 )
+
+        # --- optional control block (§3.9.1) ---
+        # A control never removes the prompt fallback: an enabled pose still needs a
+        # valid action/suffix (checked above), so a pose with no supported control
+        # kind degrades to the loop-only path. Here we only pin the block's SHAPE.
+        control = spec.get("control")
+        if control is not None:
+            if not isinstance(control, dict):
+                errors.append(f"pose {name!r} control must be an object")
+            elif control.get("kind") not in ALLOWED_CONTROL_KINDS:
+                errors.append(
+                    f"pose {name!r} control.kind {control.get('kind')!r} not in "
+                    f"{sorted(ALLOWED_CONTROL_KINDS)}"
+                )
+            elif control["kind"] == "pose_prompt":
+                clause = control.get("pose")
+                if not isinstance(clause, str) or not clause.strip():
+                    errors.append(
+                        f"pose {name!r} control kind 'pose_prompt' requires a non-empty 'pose' clause"
+                    )
 
     # --- walk + idle must be enabled ---
     for req in REQUIRED_POSES:
