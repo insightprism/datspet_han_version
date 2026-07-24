@@ -199,6 +199,12 @@ hardcoded form.
 Refines `SPEC_POSE_ANCHORS` §7 with the hybrid as the **primary arm**. All on the dev-box GPU, no
 schema and no plumbing first.
 
+> **`SPEC_MOTION_LAB` productizes this loop.** A first hand-run proves the technique flaps at all;
+> the Motion Lab then turns "pick animal + pose → see the sprite → edit the redraw prompt → run →
+> watch it animate → save to the profile" into a repeatable admin UI, which is what makes the
+> per-species grind (steps 2.1 across many birds/quads) practical. Prove once by hand, then author
+> in the Lab.
+
 1. Author **one** generic `avian/fly` pose sprite (wings open, side profile) — generate it with the
    existing Z-Image generator and cut it out with the pipeline's birefnet, then hand-pick a clean one.
 2. Produce a **flying-cardinal anchor three ways** from the same *designed* cardinal base:
