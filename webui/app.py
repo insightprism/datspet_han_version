@@ -163,6 +163,14 @@ app.include_router(ai_admin.router)
 import settings_admin
 app.include_router(settings_admin.router)
 
+# The Motion Lab (SPEC_MOTION_LAB): the fifth admin surface — a visual workbench for
+# authoring pose_prompt clauses (§3.9.1) by running the generation STEPS. LOCAL backend
+# only: it drives ComfyUI through pet_factory, so its router is mounted only here, never
+# on the GPU-less prod tier (§5). Save is the existing motion_admin PUT.
+if PET_GEN_BACKEND == "local":
+    import motion_lab
+    app.include_router(motion_lab.router)
+
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 ALLOWED_IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 

@@ -1,7 +1,10 @@
 # SPEC — The Motion Lab (an admin visual workbench for authoring per-pose motion anchors)
 
-**Status:** proposed / **DRAFT for review**, 2026-07-24. **Rev.1.** Design-in-progress; NOT
-implementation-ready. No code is written.
+**Status:** **IMPLEMENTED** (MVP), 2026-07-24. **Rev.2.** Backend `webui/motion_lab.py` (still /
+animate / asset endpoints, local-backend only) + frontend `web/src/app/admin/motions/lab/page.tsx`
+(the base → clause → anchor → animate stepper, Save via `motion_admin`) are built and tested
+(`webui/tests/test_motion_lab.py`; live-smoke-verified end to end). The optional AI "suggest-clause"
+helper (§2) is not built yet. See `RESEARCH_POSE_MOTION.md` for the design narrative.
 
 **What this is.** A new **admin web surface** that lets an admin *watch the pose-anchor pipeline
 run, step by step*, on a chosen animal + pose — see each intermediate result, edit the **pose

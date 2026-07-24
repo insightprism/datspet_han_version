@@ -265,11 +265,18 @@ export const CANONICAL_POSES = [
 export const REQUIRED_POSES = ["walk", "idle"] as const;
 export const POSE_ROLES = ["rest", "active", "timed", "triggered"] as const;
 
+export interface MotionPoseControl {
+  kind: string;          // "pose_prompt" | "pose_skeleton" | "depth"
+  pose?: string;         // the pose_prompt clause (§3.9.1)
+  ref?: string;
+  strength?: number;
+}
 export interface MotionPoseSpec {
   enabled: boolean;
   runtime_role?: string | null;
   action?: string | null;
   suffix?: string;
+  control?: MotionPoseControl | null;
 }
 export interface MotionProfileFile {
   key: string;
@@ -344,6 +351,24 @@ export const motionAdmin = {
     motionFetch(`/${encodeURIComponent(key)}`, { method: "DELETE" }),
   duplicate: (key: string, new_key: string, new_label: string): Promise<{ profile: MotionProfileFile }> =>
     motionFetch(`/${encodeURIComponent(key)}/duplicate`, { method: "POST", body: JSON.stringify({ new_key, new_label }) }),
+};
+
+// ---------------------------------------------------------------------------
+// The Motion Lab (SPEC_MOTION_LAB) — the pose_prompt authoring workbench. These
+// endpoints run the generation STEPS (a still, a loop) and exist ONLY on the local
+// GPU backend (they 404 on the prod tier). Save is the motionAdmin.update above.
+// ---------------------------------------------------------------------------
+export interface LabAsset { asset_id: string; url: string; ms: number; kind?: string }
+const labFetch = (path: string, init?: RequestInit) =>
+  adminApiFetch("/api/admin/motion-lab", path, init);
+export const motionLab = {
+  // clause "" → the standing base; a clause → the pose anchor (§3.9.1).
+  still: (animal: string, clause: string, seed?: number): Promise<LabAsset> =>
+    labFetch("/still", { method: "POST", body: JSON.stringify({ animal, clause, seed }) }),
+  animate: (asset_id: string, animal: string, profile_key: string, pose_name: string, seed?: number): Promise<LabAsset> =>
+    labFetch("/animate", { method: "POST", body: JSON.stringify({ asset_id, animal, profile_key, pose_name, seed }) }),
+  // The asset endpoint carries the adm cookie (same-origin <img> sends credentials).
+  assetUrl: (url: string): string => `${API_URL}${url}`,
 };
 
 // ---------------------------------------------------------------------------
