@@ -131,12 +131,14 @@ This rides the existing engine-vs-content boundary; nothing here makes the engin
 - **Reused across every species that resolves to the profile.** A cardinal, blue jay, robin, and
   sparrow all resolve to `avian` and share `avian/fly.pose.png` — that *is* the reuse. Authoring is
   once per body type, not per animal.
-- **The per-pose field is additive.** It slots onto the canonical `Pose` alongside
-  `action`/`suffix`, either as a new `anchor` block (`SPEC_POSE_ANCHORS` §2) or by populating
-  `SPEC_MOTION_PROFILES` §3.9's reserved `control` with a `sprite` kind. **Decision (open, §8):**
-  which of the two field shapes — the §3.9 `control` block is the pre-reserved home, but its
-  documented precedence is `skeleton → depth → prompt`; a redraw *sprite* is a fourth kind and may
-  read more cleanly as its own `anchor` field. Reconcile with §3.9 before writing the schema.
+- **The per-pose field is `SPEC_MOTION_PROFILES` §3.9's `control` block — RESOLVED.** No new field.
+  The redraw sprite is a new **`kind`** on the existing `{kind, ref, strength}` block
+  (`§3.9.1`): `control: { kind: "sprite", ref: "avian/fly.pose.png", strength: 0.5 }`. Precedence
+  is `pose_skeleton → depth → sprite → prompt`. The sprite kind **reuses the pose's `action`/`suffix`**
+  as its redraw prompt (already `{animal}`-spliced by `compose_pose_prompt`), so it stores **no
+  per-species string** and needs no `prompt_template` field. This is the least-divergent answer — it
+  reuses the seam §3.9 already built for "future kinds," and the engine dispatches per-kind (sprite →
+  redraw-then-standard-loop). The "pose anchor" of this spec *is* `control.kind == "sprite"`.
 - **Silhouette-match caveat + the specificity escape hatch.** The shared sprite must roughly match
   the target's silhouette. Songbirds share one; a **penguin** or **flamingo** does not — a shared
   songbird sprite would bleed the wrong body. Those birds get their **own** sprite via the
@@ -236,10 +238,10 @@ schema and no plumbing first.
 
 ## 8. Open questions (live — this is a draft)
 
-- **Field shape: reuse §3.9 `control`, or a new `anchor` block?** The §3.9 `control` is the
-  pre-reserved home but its precedence is `skeleton → depth → prompt`; a redraw *sprite* is a fourth
-  kind. Decide whether it is a `control: {kind: "sprite", …}` or a sibling `anchor` field, and
-  reconcile the two specs so there is one field, not two overlapping ones.
+- ~~Field shape: reuse §3.9 `control`, or a new `anchor` block?~~ **RESOLVED (§3): `control.kind ==
+  "sprite"`** on §3.9's `{kind, ref, strength}` block — one field, precedence
+  `pose_skeleton → depth → sprite → prompt`, redraw prompt reuses `action`/`suffix`. See
+  `SPEC_MOTION_PROFILES` §3.9.1.
 - **`anchor_strength` calibration (2.1).** One value per body type is the hypothesis (§2.1); §7
   must confirm it generalises across the profile's species. This is a bounded sweep, not a guess —
   the calibration-harness discipline (`SPEC_PET_DESIGN_AXES` §8).
@@ -275,7 +277,7 @@ schema and no plumbing first.
 | 6 | Which poses get an anchor? | **Only silhouette-changing ones (fly/run/jump)** | Bounds cost and identity-drift to where it is needed (§5) |
 | 7 | Backward compatibility? | **A pose with no anchor is byte-identical to today** | Purely additive, guard-test pinned (§6) |
 | 8 | Build first or validate first? | **Validate — the three-arm experiment before any code** | The design hinges on unmeasured "does it flap, and does identity hold?" (§7) |
-| 9 | Field shape (`anchor` vs §3.9 `control`) | **OPEN — reconcile with §3.9 so there is one field** | §3.9's `control` is reserved but its precedence is skeleton→depth→prompt; a sprite is a fourth kind (§8) |
+| 9 | Field shape (`anchor` vs §3.9 `control`) | **RESOLVED — `control.kind == "sprite"` on §3.9's `{kind, ref, strength}` block** | Reuses the seam §3.9 built for "future kinds"; precedence `pose_skeleton → depth → sprite → prompt`; redraw prompt reuses `action`/`suffix`, so no per-species string is stored (`SPEC_MOTION_PROFILES` §3.9.1) |
 | 10 | `anchor_strength` value(s) | **OPEN — one per body type, confirm it generalises (§7)** | Bounded calibration, not the per-photo whack-a-mole (§8) |
 
 ---

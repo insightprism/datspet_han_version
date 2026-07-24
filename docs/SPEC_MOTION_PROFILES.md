@@ -435,7 +435,7 @@ authoring as a chore.
 > worker → keyword fallback + warning, never an error; profile additions install node-first, the
 > §B.1 habit applied to content).
 
-### 3.9 Control-signal tier — a forward-compatible placeholder for skeleton-driven motion (Rev.3)
+### 3.9 Control-signal tier — a forward-compatible placeholder for skeleton-driven motion (Rev.3; Rev.4 adds the `sprite` kind, §3.9.1)
 
 **Why this belongs in the design now, even though it ships empty.** A text prompt asks the model to
 *improvise* the motion; a **control signal** — a pose skeleton, or a depth-map reference — *constrains*
@@ -464,7 +464,7 @@ object; a pose with no `control` is prompt-driven exactly as today:
   "action": "trotting with short quick legs, low to the ground",
   "suffix": ", stubby-legged waddle, no camera movement",
   "control": {                          // OPTIONAL — absent today; the placeholder
-    "kind": "pose_skeleton",            // "pose_skeleton" | "depth" | (future kinds)
+    "kind": "pose_skeleton",            // "pose_skeleton" | "depth" | "sprite" (§3.9.1)
     "ref": "corgi/walk.skeleton.mp4",   // path within the profile dir, shipped with the handler
     "strength": 1.0                     // how hard the signal constrains (0..1)
   }
@@ -482,10 +482,28 @@ builds a pose, it checks for `control`:
   control workflow exists: an older/handler-only-prompt node simply ignores `control` and generates
   from the prompt, never erroring.
 
-So the precedence within a pose is **skeleton → (depth) → prompt**, mirroring the profile-level
+So the precedence within a pose is **skeleton → depth → sprite → prompt**, mirroring the profile-level
 "most-specific-wins": use the most specific control available, fall back to the most general (the
 prompt) when it isn't. Per pose, per profile — a `corgi.json` could skeleton-drive only its `walk`
 (where gait fidelity matters most) and leave every other pose prompt-driven.
+
+**§3.9.1 The `sprite` kind — the stills-layer control that ships first (Rev.4).** Between prompt-only
+and a true skeleton/depth signal sits a third, cruder kind that needs **no new engine capability**: a
+**pose *sprite*** used as an img2img *source*. `ref` points at a shared per-body-type pose image (a
+generic wings-spread bird, `avian/fly.pose.png`); the engine img2img-redraws the pose's own base
+still onto it at `strength`, producing a *"this animal, in that pose"* anchor still, then runs the
+**standard prompt-driven `_loop_wf`** from that still. It differs from `pose_skeleton`/`depth` in
+*which pipeline stage* it acts on — the sprite reshapes the **anchor still**, then the normal loop
+runs; skeleton/depth constrain the **video motion** itself — which is why its precedence sits *below*
+them and *above* prompt. Crucially the sprite kind **reuses the pose's existing `action`/`suffix`** as
+its redraw prompt (spliced with `{animal}` by `compose_pose_prompt`, already templated), so it needs
+**no new field and stores no per-species string**: the block stays `{kind, ref, strength}`. This is
+the mechanism `SPEC_POSE_ANCHOR_HYBRID` specifies and the **first `control` kind slated to ship** —
+feasible on today's `_img2img_wf`, gated only on the §7 validation experiment. It is also the
+**resolution of the "pose anchor vs. control field" question** raised across the sibling specs: the
+"pose anchor" is *realized as* this `control` block, sprite kind — one field, not two. Engine dispatch
+is per-kind (the plugin pattern this block was built for): `sprite` → redraw-then-standard-loop;
+`pose_skeleton`/`depth` → control-driven loop.
 
 **What this does NOT commit us to now (scope guard).** §3.9 reserves the *shape and the fallback
 rule* only. It does **not** add a control-capable ComfyUI workflow, does **not** ship any `.skeleton`

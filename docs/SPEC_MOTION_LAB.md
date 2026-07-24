@@ -96,26 +96,29 @@ this is one `ai_purposes/` entry, not new plumbing.
 
 ---
 
-## 3. What "Save" writes — a template, not a literal prompt (load-bearing)
+## 3. What "Save" writes — `control.kind == "sprite"`, no per-species string (RESOLVED)
 
-The prompt the admin tunes is **animal-specific** ("cute cartoon **red cardinal**, wings spread…").
-But `avian.fly` is **per body type** — shared by every bird. So the Lab must save a **template with
-the animal spliced in**, never the literal "cardinal" string — exactly how `compose_pose_prompt`
-already splices `{animal}` into `action`/`suffix`.
+The field-shape question is resolved (`SPEC_MOTION_PROFILES` §3.9.1): the anchor is a **`control`
+block** on the pose — `{ kind: "sprite", ref: "<sprite path>", strength: <float> }`. Two consequences
+for the Lab, both **simplifying**:
 
-- The saved anchor recipe on a pose = `{ sprite: ref, prompt_template: "…{animal}…", strength: float }`
-  (the field shape is `SPEC_POSE_ANCHOR_HYBRID` §8's open `anchor`-vs-§3.9-`control` decision — the
-  Lab writes whatever that resolves to).
-- The Lab **displays the resolved prompt** for the test animal (cardinal) but **persists the
-  template**. A guard in the save path rejects a template that hard-codes a species where `{animal}`
-  belongs (the same class of check `motion_admin` already runs).
-- **Save target** is a pose in a profile: `avian.fly` for the shared/body-type recipe, or a
-  specific `penguin.fly` via the specificity mechanism when a body genuinely diverges. The Lab lets
-  the admin **test the template against several concrete animals** (cardinal, robin, blue jay)
-  before saving — authoring the *reusable* recipe, validated on real cases.
+- **There is no redraw-prompt to save.** The `sprite` kind **reuses the pose's existing
+  `action`/`suffix`** as its redraw prompt (already `{animal}`-spliced by `compose_pose_prompt`). So
+  the Lab introduces no new prompt field, and the earlier "must save a `{animal}` template, never a
+  literal 'cardinal'" hazard **dissolves** — nothing per-species is written. The prompt the admin
+  tunes *is* `action`/`suffix`, the pose fields the motions editor already owns and validates.
+- **The Lab's save is `{kind, ref, strength}` plus (optionally) edited `action`/`suffix`** — all
+  through `motion_admin`'s existing validator + `motion_profiles.reload()`, so a saved block is
+  immediately live and can never be one the build rejects.
+- **Save target** is a pose in a profile: `avian.fly` for the shared/body-type recipe (every bird
+  inherits it), or a specific `penguin.fly` via the specificity mechanism (`SPEC_MOTION_PROFILES`
+  §3.7) when a body genuinely diverges. The Lab lets the admin **spot-check against several concrete
+  animals** (cardinal, robin, blue jay) before saving — the sprite and strength are the *reusable*
+  content, validated on real cases.
 
-All writes go through `motion_admin`'s validator + `motion_profiles.reload()`, so a saved recipe is
-immediately live and can never be one the build rejects.
+*(If §7's experiment shows the redraw needs a static-pose prompt distinct from the motion
+`action`/`suffix`, the `control` block gains an optional `redraw_prompt` then — a further §3.9
+kind-field, still one block. v1 reuses `action`/`suffix`.)*
 
 ---
 
@@ -205,8 +208,8 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 
 ## 9. Open questions (live — this is a draft)
 
-- **Field shape it writes.** Blocked on `SPEC_POSE_ANCHOR_HYBRID` §8 (`anchor` field vs reserved
-  §3.9 `control`). The Lab writes whatever that resolves to; the two specs must agree on one field.
+- ~~Field shape it writes.~~ **RESOLVED (§3): `control.kind == "sprite"`** on §3.9's `{kind, ref,
+  strength}` block — no `anchor` field, no per-species prompt (reuses `action`/`suffix`).
 - **Where generated Lab assets live and how long.** Anchor stills and animations are scratch; reuse
   the preview/reference serving + the 24 h janitor, or a dedicated ephemeral admin bucket? Saved
   sprites (mode 2a) are permanent profile content and go in the profile dir.
@@ -232,11 +235,11 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 | 1 | Does this need its own store? | **No — saves go through `motion_admin`** | The Lab edits motion-profile content; reusing the validator means nothing saved can break the build (§3) |
 | 2 | Does the pipeline need refactoring to expose steps? | **No — `_base_sprite`/`_img2img_wf`/`_loop_wf` are already separate** | The Lab calls them individually instead of via `make_pet_zip`; only new admin endpoints wrap them (§1/§4) |
 | 3 | Prod feature or dev tool? | **Local-backend GPU-dev-box tool; inert in GPU-less prod** | It drives `factory.py`/ComfyUI; keeps the deploy gate ("`import numpy` must fail") intact (§5) |
-| 4 | What does Save persist? | **A prompt *template* (`{animal}` spliced) + strength + sprite ref — never a literal species** | `avian.fly` is shared across birds; matches how `compose_pose_prompt` splices `{animal}` (§3) |
+| 4 | What does Save persist? | **`control: {kind:"sprite", ref, strength}` + optionally edited `action`/`suffix` — NO per-species prompt** | The sprite kind reuses `action`/`suffix` (already `{animal}`-spliced), so no template is stored and the literal-species hazard dissolves (§3, §3.9.1) |
 | 5 | Save target granularity | **A pose in a profile — `avian.fly` (shared) or a specific `penguin.fly` (§3.7)** | Authors the reusable recipe by default; specificity is the escape hatch (§3) |
 | 6 | New pool contract? | **No (v1) — local only; pool step-execution deferred** | Authoring is a dev-box act; the fixed pool handlers don't expose arbitrary steps (§5/§7) |
 | 7 | Build before or after proving the technique? | **After a one-bird hand-proof (§7); the Lab MVP then IS that loop repeatable** | Don't build a UI to find out the redraw won't flap; but the MVP is small (§8) |
-| 8 | Field shape written | **OPEN — follows `SPEC_POSE_ANCHOR_HYBRID` §8** | The two specs must converge on one anchor field (§9) |
+| 8 | Field shape written | **RESOLVED — `control.kind == "sprite"` on §3.9's `{kind, ref, strength}` block** | Reuses the reserved kind-block; no new field, no per-species prompt (§3, `SPEC_MOTION_PROFILES` §3.9.1) |
 
 ---
 
@@ -245,8 +248,10 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 - `webui/motion_lab.py` (new) — the admin router: `base` / `sprite` / `redraw` / `animate` /
   `suggest-prompt` actions wrapping `factory.py`'s existing step functions; gated by `admin_common`;
   mounted only under the local backend (§5). Save delegates to `motion_admin`.
-- `webui/motion_admin.py` — extend the profile-write validator to accept the anchor recipe fields
-  (sprite ref, prompt template, strength) and to reject a template that hard-codes a species (§3).
+- `webui/motion_admin.py` — extend the profile-write validator to accept a populated `control` block
+  (`kind` in the allowed set incl. `sprite`, `ref` resolves to a file in the profile dir, `strength`
+  in range) — the §3.9 guard-test additions, shared with the Lab. No prompt-template guard is needed
+  (the sprite kind stores no per-species string, §3).
 - `web/src/app/admin/motions/lab/page.tsx` (new) — the stepper UI: animal + pose pickers, a vertical
   stack of step cards each showing its output with a re-run control, prompt/strength editors, "save
   to profile". Mirrors the existing `admin/motions/page.tsx` pattern and the design page's
@@ -257,6 +262,7 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 - `pet_factory/ai_purposes/pose_caption.json` (optional, §2) — one purpose for the "suggest prompt"
   action; no engine change.
 - `pet_factory/motion_profiles/` — the pose sprites authored via mode 2a live here as content.
-- **Tests** — the template-safety save guard (rejects a hard-coded species), the local-only mounting
-  (routes absent under the pool backend), and that a Lab save round-trips through `motion_admin`'s
-  validator identically to a hand-edited profile.
+- **Tests** — the `control`-block validator (`kind` allowed incl. `sprite`, `ref` resolves,
+  `strength` in range — the §3.9 guard-test additions), the local-only mounting (routes absent under
+  the pool backend), and that a Lab save round-trips through `motion_admin`'s validator identically
+  to a hand-edited profile.

@@ -91,12 +91,19 @@ motion — and both fit the repo's grain (the `Pose` schema already carries `act
 *motion* content; this adds an *anchor*). They differ in **how the pose is imposed**, and that
 difference decides the thing §0.1 says matters most: **consistency.**
 
-**Schema (common to both).** `Pose` today is `{enabled, runtime_role, action, suffix}`. Add:
+**Schema — RESOLVED: it is `SPEC_MOTION_PROFILES` §3.9's `control` block, not a new field.** `Pose`
+already reserves an optional `control: {kind, ref, strength}` (§3.9). The two approaches below are
+two **kinds** on that one block — no `anchor`/`anchor_strength` fields are added:
 
-| Field | Meaning |
-|---|---|
-| `anchor` | How to produce the pose-specific still. In Approach A a **text redraw prompt**; in Approach B a **reference to a shared pose asset**. **Optional** — absent ⇒ animate from the shared base still (today's behaviour, byte-identical, §6). |
-| `anchor_strength` | *(optional)* the img2img denoise for producing the anchor. The identity↔pose-change knob (§4); needs calibration (§7/§8). |
+| Kind | `ref` / `strength` | Approach |
+|---|---|---|
+| `sprite` | `ref` = a shared pose image; `strength` = the img2img denoise | **B-crude / B-hybrid** — redraw the base onto the sprite, then the standard loop (§3.9.1) |
+| `pose_skeleton` / `depth` | `ref` = a skeleton/depth asset; `strength` = control weight | **B-proper** — a control-driven loop (the ceiling) |
+
+Precedence `pose_skeleton → depth → sprite → prompt`; absent ⇒ animate from the shared base still
+(today, byte-identical, §6). The `sprite` kind **reuses the pose's `action`/`suffix`** as its redraw
+prompt, so nothing per-species is stored. (Approach A — a bare text redraw — is just "no `control`,
+tune the loop prompt," needing no field at all.)
 
 **Pipeline (common).** In `factory.py`'s pose loop, per pose: if the pose declares an anchor,
 produce `pose_base` (an img2img over the base — §2.A or §2.B); else `pose_base = base` (today's
@@ -320,7 +327,7 @@ dev-box act.
 | # | Question | Answer | Why |
 |---|---|---|---|
 | 1 | Is "no movement" a pose-availability problem? | **No** | The pose is generated; it is a motion-*range* problem bounded by the shared anchor (§0/§1) |
-| 2 | Where does the per-pose anchor live? | **Content — a `Pose.anchor` field in the profile JSON** | Matches the existing action/suffix "motion is content" pattern; adding one is a data edit (§2) |
+| 2 | Where does the per-pose anchor live? | **Content — `SPEC_MOTION_PROFILES` §3.9's `control` block, `kind: "sprite"` (RESOLVED)** | Reuses the reserved kind-discriminated block, no new field; `ref`=sprite, `strength`=denoise, redraw prompt reuses `action`/`suffix` (§2, §3.9.1) |
 | 3 | Fresh anchor per pose, or img2img from the base? | **img2img from the base** | Identity is anchored on the one still §0.1 relies on; a fresh txt2img would drift the bird (§4) |
 | 4 | Which poses get anchors? | **Only silhouette-changing ones (fly/run/jump)** | Bounds cost and identity-drift to where it is needed (§5) |
 | 5 | Backward compatibility? | **A pose with no anchor is byte-identical to today** | Purely additive; existing pets unchanged, guard-test pinned (§6) |
