@@ -1,44 +1,65 @@
 "use client";
 
 /**
- * Motion Lab (SPEC_MOTION_LAB) — the visual workbench for authoring pose_prompt
- * clauses (§3.9.1). Pick an animal + a profile's pose, watch the pipeline run its
- * steps — the standing base, the fresh anchor drawn from the pose clause, then the
- * Wan loop — edit the clause and re-run in seconds, and save the clause to the
- * profile. Save is the same motion_admin write the profile editor uses, so a saved
- * clause can never be one the build rejects.
+ * Motion Lab (SPEC_MOTION_LAB, incl. §12 Phase 2 — multi-pose authoring). Tune the
+ * pose_prompt clauses (§3.9.1) for MULTIPLE poses at once, all drawn from ONE shared
+ * base + seed, so cross-pose colour/style drift is visible before you save — the
+ * pre-save version of the real app's "Generated poses" strip.
  *
- * LOCAL backend only: the generation endpoints drive ComfyUI, so on the prod tier
- * they 404 (the router isn't mounted). Same admin gate as the profile editor.
+ * One column per selected pose: clause · anchor still · animation · save. A pose with
+ * a clause draws a fresh anchor; a pose without one animates from the shared base
+ * (P2-2). The shared seed is load-bearing — the real build uses one seed for the base
+ * and every anchor (P2-4), so the columns are the same animal.
+ *
+ * LOCAL backend only: the generation endpoints drive ComfyUI. Same admin gate as the
+ * profile editor. Save is the existing motion_admin write (per-pose or all-at-once).
  */
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  motionAdmin, motionLab, getDatsmeSession, AdminApiError,
-  type MotionAdminList, type MotionProfileDetail, type LabAsset,
+  motionAdmin, motionLab, getDatsmeSession, AdminApiError, CANONICAL_POSES,
+  type MotionAdminList, type MotionProfileDetail, type MotionProfileFile, type LabAsset,
 } from "@/lib/api";
 
 const DEFAULT_SEED = 42;
 const inputStyle = { background: "#1c1c1c", border: "1px solid var(--line)", color: "var(--heading)" };
 const labelCls = "mono mb-1 block text-xs tracking-wide";
 
+type Cell = { clause: string; still: LabAsset | null; loop: LabAsset | null; busy: "" | "draw" | "animate" | "save" };
+type Cells = Record<string, Cell>;
+
+const genErr = (e: unknown) => e instanceof AdminApiError ? e.message : "Generation failed — is ComfyUI up?";
+const saveErr = (e: unknown) => e instanceof AdminApiError ? (e.errors[0] ?? e.message) : "Save failed.";
+
+// Clone the profile and set/remove `control` for the named poses (empty clause → remove).
+function profileWithClauses(base: MotionProfileFile, clauses: Record<string, string>): MotionProfileFile {
+  const p = structuredClone(base);
+  for (const [name, raw] of Object.entries(clauses)) {
+    const c = raw.trim();
+    const pose = { ...p.poses[name] };
+    if (c) pose.control = { kind: "pose_prompt", pose: c };
+    else delete pose.control;
+    p.poses[name] = pose;
+  }
+  return p;
+}
+
 export default function MotionLabPage() {
   const [gate, setGate] = useState<"checking" | "ok" | "denied">("checking");
   const [list, setList] = useState<MotionAdminList | null>(null);
   const [profileKey, setProfileKey] = useState("");
   const [detail, setDetail] = useState<MotionProfileDetail | null>(null);
-  const [poseName, setPoseName] = useState("");
   const [animal, setAnimal] = useState("robin");
   const [seed, setSeed] = useState(DEFAULT_SEED);
-  const [clause, setClause] = useState("");
   const [base, setBase] = useState<LabAsset | null>(null);
-  const [anchor, setAnchor] = useState<LabAsset | null>(null);
-  const [loop, setLoop] = useState<LabAsset | null>(null);
-  const [busy, setBusy] = useState<"" | "base" | "anchor" | "animate" | "save">("");
+  const [cells, setCells] = useState<Cells>({});
+  const [selected, setSelected] = useState<string[]>([]);
+  const [busyBase, setBusyBase] = useState(false);
+  const [busyAll, setBusyAll] = useState<"" | "draw" | "animate" | "save">("");
   const [notice, setNotice] = useState("");
   const [err, setErr] = useState("");
 
-  // Gate on mount + load the profile list. A 401 → bounce to the host admin-launch.
+  // Gate on mount + load the profile list.
   useEffect(() => {
     motionAdmin.list().then((l) => {
       setList(l);
@@ -49,75 +70,117 @@ export default function MotionLabPage() {
       if (e instanceof AdminApiError && (e.status === 401 || e.status === 403)) {
         const s = await getDatsmeSession().catch(() => null);
         const origin = s?.signin_url ? new URL(s.signin_url).origin : "";
-        if (origin) {
-          window.location.href = `${origin}/api/integrations/admin-launch?return=/admin/motions/lab`;
-          return;
-        }
+        if (origin) { window.location.href = `${origin}/api/integrations/admin-launch?return=/admin/motions/lab`; return; }
       }
       setGate("denied");
     });
   }, []);
 
-  // Load the selected profile's poses; pick a sensible starting pose.
+  // Load the profile's poses; seed the cells + a sensible default selection.
   useEffect(() => {
     if (!profileKey) return;
     motionAdmin.get(profileKey).then((d) => {
       setDetail(d);
-      const enabled = Object.entries(d.profile.poses).filter(([, p]) => p.enabled).map(([n]) => n);
-      const withAnchor = enabled.find((n) => d.profile.poses[n].control?.kind === "pose_prompt");
-      setPoseName(withAnchor ?? enabled.find((n) => ["fly", "run", "jump"].includes(n)) ?? enabled[0] ?? "");
+      const enabled = CANONICAL_POSES.filter((n) => d.profile.poses[n]?.enabled);
+      const next: Cells = {};
+      for (const n of enabled) next[n] = { clause: d.profile.poses[n].control?.pose ?? "", still: null, loop: null, busy: "" };
+      setCells(next);
+      const withClause = enabled.filter((n) => d.profile.poses[n].control?.kind === "pose_prompt");
+      const def = enabled.filter((n) => ["walk", "idle"].includes(n) || withClause.includes(n));
+      setSelected(def.length ? def : enabled.slice(0, 3));
+      setBase(null);
     }).catch(() => setDetail(null));
   }, [profileKey]);
 
-  // When the pose changes, load its clause and drop the stale anchor/loop.
-  useEffect(() => {
-    if (!detail || !poseName) return;
-    setClause(detail.profile.poses[poseName]?.control?.pose ?? "");
-    setAnchor(null);
-    setLoop(null);
-  }, [detail, poseName]);
+  // Editing the animal or seed invalidates every rendered still/loop (they're from the old pair).
+  function clearRenders() {
+    setBase(null);
+    setCells((c) => Object.fromEntries(Object.entries(c).map(([n, cell]) => [n, { ...cell, still: null, loop: null }])));
+  }
+  const patch = (name: string, p: Partial<Cell>) => setCells((c) => ({ ...c, [name]: { ...c[name], ...p } }));
 
-  const run = useCallback(async (kind: "base" | "anchor" | "animate", fn: () => Promise<void>) => {
-    setBusy(kind);
-    setErr("");
-    try {
-      await fn();
-    } catch (e) {
-      setErr(e instanceof AdminApiError ? e.message : "Generation failed — is ComfyUI up?");
-    } finally {
-      setBusy("");
-    }
-  }, []);
+  // --- core generation ops (return the asset AND set state, so "all" loops can chain) ---
+  async function doDrawBase(): Promise<LabAsset> {
+    const b = await motionLab.still(animal, "", seed);
+    setBase(b);
+    return b;
+  }
+  async function doDrawAnchor(name: string, clause: string): Promise<LabAsset> {
+    const still = await motionLab.still(animal, clause, seed);
+    patch(name, { still, loop: null });
+    return still;
+  }
+  async function doAnimate(name: string, source: LabAsset): Promise<LabAsset> {
+    const loop = await motionLab.animate(source.asset_id, animal, profileKey, name, seed);
+    patch(name, { loop });
+    return loop;
+  }
 
-  const genBase = () => run("base", async () => setBase(await motionLab.still(animal, "", seed)));
-  const genAnchor = () => run("anchor", async () => {
-    setAnchor(await motionLab.still(animal, clause.trim(), seed));
-    setLoop(null);
-  });
-  const animate = () => run("animate", async () => {
-    if (anchor) setLoop(await motionLab.animate(anchor.asset_id, animal, profileKey, poseName, seed));
-  });
-
-  async function save() {
+  // --- per-cell buttons ---
+  async function drawBase() {
+    setBusyBase(true); setErr("");
+    try { await doDrawBase(); } catch (e) { setErr(genErr(e)); } finally { setBusyBase(false); }
+  }
+  async function drawAnchor(name: string) {
+    const clause = cells[name].clause.trim();
+    if (!clause) return;
+    patch(name, { busy: "draw" }); setErr("");
+    try { await doDrawAnchor(name, clause); } catch (e) { setErr(genErr(e)); } finally { patch(name, { busy: "" }); }
+  }
+  async function animateOne(name: string) {
+    const clause = cells[name].clause.trim();
+    const source = clause ? cells[name].still : base;
+    if (!source) { setErr(clause ? "Draw this pose's anchor first." : "Draw the base first."); return; }
+    patch(name, { busy: "animate" }); setErr("");
+    try { await doAnimate(name, source); } catch (e) { setErr(genErr(e)); } finally { patch(name, { busy: "" }); }
+  }
+  async function saveOne(name: string) {
     if (!detail) return;
-    setBusy("save");
-    setErr("");
-    setNotice("");
+    patch(name, { busy: "save" }); setErr(""); setNotice("");
     try {
-      const profile = structuredClone(detail.profile);
-      const pose = { ...profile.poses[poseName] };
-      const c = clause.trim();
-      if (c) pose.control = { kind: "pose_prompt", pose: c };
-      else delete pose.control;
-      profile.poses[poseName] = pose;
-      await motionAdmin.update(profileKey, profile, detail.label);
-      setNotice(`Saved ${profileKey}.${poseName} — live now: new generations use this clause.`);
+      await motionAdmin.update(profileKey, profileWithClauses(detail.profile, { [name]: cells[name].clause }), detail.label);
+      setNotice(`Saved ${profileKey}.${name} — live now.`);
       setDetail(await motionAdmin.get(profileKey));
-    } catch (e) {
-      setErr(e instanceof AdminApiError ? (e.errors[0] ?? e.message) : "Save failed.");
-    } finally {
-      setBusy("");
-    }
+    } catch (e) { setErr(saveErr(e)); } finally { patch(name, { busy: "" }); }
+  }
+
+  // --- "all" buttons (the GPU is serial → run sequentially) ---
+  async function drawAllAnchors() {
+    setBusyAll("draw"); setErr("");
+    try {
+      for (const name of columns) {
+        const clause = cells[name].clause.trim();
+        if (!clause) continue;
+        patch(name, { busy: "draw" });
+        await doDrawAnchor(name, clause);
+        patch(name, { busy: "" });
+      }
+    } catch (e) { setErr(genErr(e)); } finally { setBusyAll(""); }
+  }
+  async function animateAll() {
+    setBusyAll("animate"); setErr("");
+    try {
+      let b = base ?? await doDrawBase();
+      for (const name of columns) {
+        const clause = cells[name].clause.trim();
+        let source = clause ? cells[name].still : b;
+        if (clause && !source) source = await doDrawAnchor(name, clause);   // auto-draw a missing anchor
+        if (!source) continue;
+        patch(name, { busy: "animate" });
+        await doAnimate(name, source);
+        patch(name, { busy: "" });
+      }
+    } catch (e) { setErr(genErr(e)); } finally { setBusyAll(""); }
+  }
+  async function saveAll() {
+    if (!detail) return;
+    setBusyAll("save"); setErr(""); setNotice("");
+    try {
+      const clauses = Object.fromEntries(columns.map((n) => [n, cells[n].clause]));
+      await motionAdmin.update(profileKey, profileWithClauses(detail.profile, clauses), detail.label);
+      setNotice(`Saved ${columns.length} pose(s) to ${profileKey} — live now.`);
+      setDetail(await motionAdmin.get(profileKey));
+    } catch (e) { setErr(saveErr(e)); } finally { setBusyAll(""); }
   }
 
   if (gate === "checking") {
@@ -135,9 +198,10 @@ export default function MotionLabPage() {
     );
   }
 
-  const enabledPoses = detail ? Object.entries(detail.profile.poses).filter(([, p]) => p.enabled).map(([n]) => n) : [];
-  const savedClause = detail?.profile.poses[poseName]?.control?.pose ?? "";
-  const dirty = clause.trim() !== savedClause.trim();
+  const enabledPoses = detail ? CANONICAL_POSES.filter((n) => detail.profile.poses[n]?.enabled) : [];
+  const columns = CANONICAL_POSES.filter((n) => selected.includes(n) && cells[n]);
+  const busy = busyBase || busyAll !== "";
+  const anyDirty = columns.some((n) => cells[n].clause.trim() !== (detail?.profile.poses[n]?.control?.pose ?? "").trim());
 
   return (
     <main>
@@ -146,17 +210,17 @@ export default function MotionLabPage() {
         <Link href="/admin/motions" className="mono text-sm underline" style={{ color: "var(--accent)" }}>← Motion profiles</Link>
       </div>
       <p className="mono mb-4 text-xs" style={{ color: "var(--faint)" }}>
-        Tune a pose clause and watch it move. The anchor is a fresh still drawn from the clause; a wings-spread bird flaps where a standing one only twitches.
+        Author multiple poses from one base + seed and compare them side by side — catch colour/style drift before you save.
       </p>
 
       {notice && <div className="mono mb-3 text-sm" style={{ color: "var(--green)" }}>{notice}</div>}
       {err && <div className="mono mb-3 text-sm" style={{ color: "var(--accent)" }}>{err}</div>}
 
       {/* Controls */}
-      <div className="card mb-5 grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
+      <div className="card mb-4 grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
         <div className="col-span-2 md:col-span-1">
           <label className={labelCls} style={{ color: "var(--muted)" }}>animal</label>
-          <input value={animal} onChange={(e) => setAnimal(e.target.value)}
+          <input value={animal} onChange={(e) => { setAnimal(e.target.value); clearRenders(); }}
             className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
         </div>
         <div>
@@ -167,73 +231,107 @@ export default function MotionLabPage() {
           </select>
         </div>
         <div>
-          <label className={labelCls} style={{ color: "var(--muted)" }}>pose</label>
-          <select value={poseName} onChange={(e) => setPoseName(e.target.value)}
-            className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
-            {enabledPoses.map((n) => (
-              <option key={n} value={n}>
-                {n}{detail?.profile.poses[n].control?.kind === "pose_prompt" ? " ✓" : ""}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className={labelCls} style={{ color: "var(--muted)" }}>seed</label>
-          <input type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value) || DEFAULT_SEED)}
+          <label className={labelCls} style={{ color: "var(--muted)" }}>seed (shared)</label>
+          <input type="number" value={seed} onChange={(e) => { setSeed(Number(e.target.value) || DEFAULT_SEED); clearRenders(); }}
             className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
         </div>
+        <div className="flex items-end">
+          <RunBtn label="Draw base" busy={busyBase} onClick={drawBase} disabled={busy} />
+        </div>
       </div>
 
-      {/* Step 1 — base (the standing reference, same seed → same animal) */}
-      <StepCard n={1} title="Base still" subtitle="the standing reference — same animal, for identity/style comparison"
-        action={<RunBtn label="Draw base" busy={busy === "base"} onClick={genBase} />}>
-        <AssetView asset={base} kind="png" placeholder="Draw the base to see the standing animal." />
-      </StepCard>
+      {/* Shared base — the reference every pose is checked against */}
+      <div className="card mb-4 flex items-center gap-4 p-4">
+        <div>
+          <div className="font-semibold" style={{ color: "var(--heading)" }}>Base still (shared)</div>
+          <div className="mono text-xs" style={{ color: "var(--faint)" }}>the standing reference + the seed every anchor reuses</div>
+        </div>
+        <CellImg asset={base} size={120} placeholder="Draw base" />
+      </div>
 
-      {/* Step 2 — clause + anchor */}
-      <StepCard n={2} title="Pose clause → anchor" subtitle={`replaces "standing" in the base prompt (e.g. "wings spread wide open, mid-flight")`}
-        action={<RunBtn label="Draw anchor" busy={busy === "anchor"} onClick={genAnchor} disabled={!clause.trim()} />}>
-        <textarea value={clause} onChange={(e) => setClause(e.target.value)}
-          placeholder="the pose clause…"
-          className="mono mb-3 min-h-[60px] w-full resize-y rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-        <AssetView asset={anchor} kind="png" placeholder="Edit the clause, then draw the anchor — this animal, in the pose." />
-      </StepCard>
+      {/* Pose selection */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="mono text-xs" style={{ color: "var(--muted)" }}>poses:</span>
+        {enabledPoses.map((n) => {
+          const on = selected.includes(n);
+          const hasClause = cells[n]?.clause.trim() || detail?.profile.poses[n]?.control?.kind === "pose_prompt";
+          return (
+            <button key={n} onClick={() => setSelected((s) => on ? s.filter((x) => x !== n) : [...s, n])}
+              className="mono rounded-full border px-3 py-1 text-xs capitalize"
+              style={on
+                ? { background: "rgba(99,102,241,0.18)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.5)" }
+                : { color: "var(--faint)", borderColor: "var(--line)" }}>
+              {n}{hasClause ? " ✎" : ""}
+            </button>
+          );
+        })}
+      </div>
 
-      {/* Step 3 — animate */}
-      <StepCard n={3} title="Animate" subtitle="the Wan loop from the anchor, using this pose's action/suffix"
-        action={<RunBtn label="Animate" busy={busy === "animate"} onClick={animate} disabled={!anchor} />}>
-        <AssetView asset={loop} kind="webp" placeholder="Draw an anchor first, then animate to see it move." />
-      </StepCard>
-
-      {/* Save */}
-      <div className="mt-5 flex flex-wrap items-center gap-3">
-        <button onClick={save} disabled={busy === "save" || !detail || !list?.writable || !dirty}
-          className="mono rounded-lg py-2.5 px-5 text-sm font-bold disabled:opacity-45"
+      {/* Global actions */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <RunBtn label="Draw all anchors" busy={busyAll === "draw"} onClick={drawAllAnchors} disabled={busy || !columns.length} />
+        <RunBtn label="Animate all" busy={busyAll === "animate"} onClick={animateAll} disabled={busy || !columns.length} />
+        <button onClick={saveAll} disabled={busy || !detail || !list?.writable || !anyDirty}
+          className="mono rounded-lg py-2 px-4 text-sm font-bold disabled:opacity-45"
           style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "var(--heading)" }}>
-          {busy === "save" ? "Saving…" : `Save clause → ${profileKey}.${poseName}`}
+          {busyAll === "save" ? "Saving…" : "Save all"}
         </button>
-        {dirty && <span className="mono text-xs" style={{ color: "var(--gold)" }}>unsaved clause change</span>}
+        {anyDirty && <span className="mono text-xs" style={{ color: "var(--gold)" }}>unsaved changes</span>}
         {!list?.writable && <span className="mono text-xs" style={{ color: "var(--orange)" }}>read-only instance</span>}
       </div>
-    </main>
-  );
-}
 
-function StepCard({ n, title, subtitle, action, children }: {
-  n: number; title: string; subtitle: string; action: ReactNode; children: ReactNode;
-}) {
-  return (
-    <div className="card mb-4 p-4">
-      <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
-          <span className="mono text-xs" style={{ color: "var(--faint)" }}>step {n}</span>
-          <div className="font-semibold" style={{ color: "var(--heading)" }}>{title}</div>
-          <div className="mono text-xs" style={{ color: "var(--faint)" }}>{subtitle}</div>
-        </div>
-        {action}
+      {/* Columns — one per selected pose */}
+      <div className="flex gap-3 overflow-x-auto pb-3">
+        {columns.map((name) => {
+          const cell = cells[name];
+          const isAnchored = !!cell.clause.trim();
+          const source = isAnchored ? cell.still : base;
+          const saved = detail?.profile.poses[name]?.control?.pose ?? "";
+          const dirty = cell.clause.trim() !== saved.trim();
+          return (
+            <div key={name} className="card w-56 shrink-0 p-3">
+              <div className="mb-1 flex items-center justify-between">
+                <span className="font-semibold capitalize" style={{ color: "var(--heading)" }}>{name}</span>
+                <span className="mono text-xs" style={{ color: isAnchored ? "var(--accent)" : "var(--faint)" }}>
+                  {isAnchored ? "anchor" : "base"}
+                </span>
+              </div>
+              <textarea value={cell.clause} onChange={(e) => patch(name, { clause: e.target.value })}
+                placeholder="pose clause (empty = uses base)"
+                className="mono mb-2 min-h-[48px] w-full resize-y rounded px-2 py-1 text-xs outline-none" style={inputStyle} />
+
+              <div className="mono mb-1 text-xs" style={{ color: "var(--faint)" }}>{isAnchored ? "anchor still" : "uses base"}</div>
+              <CellImg asset={source} size={176} placeholder={isAnchored ? "Draw anchor" : "Draw base"} />
+              <button onClick={() => drawAnchor(name)} disabled={busy || !isAnchored}
+                className="mono mt-2 w-full rounded border px-2 py-1 text-xs disabled:opacity-40"
+                style={{ color: "var(--accent)", borderColor: "var(--line)" }}>
+                {cell.busy === "draw" ? "Drawing…" : "Draw anchor"}
+              </button>
+
+              <div className="mono mb-1 mt-3 text-xs" style={{ color: "var(--faint)" }}>animation</div>
+              <CellImg asset={cell.loop} size={176} placeholder="Animate" />
+              <button onClick={() => animateOne(name)} disabled={busy || !source}
+                className="mono mt-2 w-full rounded border px-2 py-1 text-xs disabled:opacity-40"
+                style={{ color: "var(--accent)", borderColor: "var(--line)" }}>
+                {cell.busy === "animate" ? "Animating…" : "Animate"}
+              </button>
+
+              <button onClick={() => saveOne(name)} disabled={busy || !list?.writable || !dirty}
+                className="mono mt-3 w-full rounded-lg py-1.5 text-xs font-bold disabled:opacity-40"
+                style={{ background: dirty ? "rgba(99,102,241,0.18)" : "transparent", color: "var(--accent)", border: "1px solid rgba(99,102,241,0.4)" }}>
+                {cell.busy === "save" ? "Saving…" : dirty ? "Save clause" : "Saved"}
+              </button>
+            </div>
+          );
+        })}
+        {!columns.length && (
+          <div className="mono flex h-40 w-full items-center justify-center rounded-lg text-xs"
+            style={{ color: "var(--faint)", background: "#151515", border: "1px dashed var(--line)" }}>
+            Select one or more poses above.
+          </div>
+        )}
       </div>
-      {children}
-    </div>
+    </main>
   );
 }
 
@@ -249,18 +347,17 @@ function RunBtn({ label, busy, onClick, disabled }: {
   );
 }
 
-function AssetView({ asset, kind, placeholder }: { asset: LabAsset | null; kind: "png" | "webp"; placeholder: string }) {
+function CellImg({ asset, size, placeholder }: { asset: LabAsset | null; size: number; placeholder: string }) {
   if (!asset) {
-    return <div className="mono flex h-40 items-center justify-center rounded-lg text-xs"
-      style={{ color: "var(--faint)", background: "#151515", border: "1px dashed var(--line)" }}>{placeholder}</div>;
+    return <div className="mono flex items-center justify-center rounded-lg text-xs"
+      style={{ width: size, height: size, color: "var(--faint)", background: "#151515", border: "1px dashed var(--line)" }}>
+      {placeholder}
+    </div>;
   }
   return (
-    <div className="flex items-center gap-3">
-      <div className="overflow-hidden rounded-lg" style={{ width: 176, height: 176, background: "#fff", border: "1px solid var(--line)" }}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={motionLab.assetUrl(asset.url)} alt={kind} className="h-full w-full object-contain" />
-      </div>
-      <span className="mono text-xs" style={{ color: "var(--faint)" }}>{(asset.ms / 1000).toFixed(1)}s</span>
+    <div className="overflow-hidden rounded-lg" style={{ width: size, height: size, background: "#fff", border: "1px solid var(--line)" }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={motionLab.assetUrl(asset.url)} alt="" className="h-full w-full object-contain" />
     </div>
   );
 }

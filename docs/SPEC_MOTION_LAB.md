@@ -1,10 +1,11 @@
 # SPEC — The Motion Lab (an admin visual workbench for authoring per-pose motion anchors)
 
-**Status:** **IMPLEMENTED** (MVP), 2026-07-24. **Rev.2.** Backend `webui/motion_lab.py` (still /
-animate / asset endpoints, local-backend only) + frontend `web/src/app/admin/motions/lab/page.tsx`
-(the base → clause → anchor → animate stepper, Save via `motion_admin`) are built and tested
-(`webui/tests/test_motion_lab.py`; live-smoke-verified end to end). The optional AI "suggest-clause"
-helper (§2) is not built yet. See `RESEARCH_POSE_MOTION.md` for the design narrative.
+**Status:** **IMPLEMENTED** — Phase 1 + Phase 2, 2026-07-24. **Rev.3.** Backend `webui/motion_lab.py`
+(still / animate / asset endpoints, local-backend only, tested + live-smoke-verified) + frontend
+`web/src/app/admin/motions/lab/page.tsx`, now the **multi-pose** view (§12): a column per selected
+pose, all drawn from one shared base + seed, per-pose and "all" Draw/Animate/Save. Backend was
+unchanged for Phase 2 (frontend orchestration of the same per-pose endpoints). The optional AI
+"suggest-clause" helper (§2) is still not built. See `RESEARCH_POSE_MOTION.md` for the design narrative.
 
 **What this is.** A new **admin web surface** that lets an admin *watch the pose-anchor pipeline
 run, step by step*, on a chosen animal + pose — see each intermediate result, edit the **pose
@@ -267,7 +268,7 @@ the technique is proven (step 1) — but its MVP is small because the steps alre
 
 ---
 
-## 12. Phase 2 — Multi-pose authoring (PROPOSED 2026-07-24; not yet built)
+## 12. Phase 2 — Multi-pose authoring (IMPLEMENTED 2026-07-24)
 
 **Why.** Phase 1 tunes one clause in isolation, but the real build (`make_pet_zip`) draws **every**
 pose from **one base + one seed**, and the failure Phase 1 hides is **cross-pose drift** — a `fly`
