@@ -506,16 +506,17 @@ over a handful of finalists, not over the corpus.
 | **2** | ✅ **CODE DONE.** **B (local)** — `_crop_to_subject`, `isolate=` on `_prep_reference_image` → `_base_sprite` → `render_design_still` → `_render_still`, upload branch sets `isolate=True`. 8 guard tests (§7) + the upload-isolates / preview-does-not assertions. Real-GPU verified: cat-in-grass → tight crop on white; a real OOM degraded to the raw photo. **Note: this is live on `PET_GEN_BACKEND=local` ONLY — prod runs `pool`, whose branch does not forward `isolate`, so uploads in prod are unchanged until Phase 3.** **Remaining: the corpus measurement — rows B/A/A+B + the fallback-rate finding above** | the fleet |
 | **2.1** | ✅ **DONE + proven live.** **E — the captioner (§2.5).** Contributed `image_triage.json` + `pet_likeness.json`; `_caption_upload` calls `call_purpose(image=…)` from the upload branch, triage-gates then names, prefills `uploadNoun`, extends the redraw prompt; degrades to the manual field on any failure / not-an-animal; the "AI enabled" toggle gates it; human's word wins. Live-verified: real Haiku call → `{subject:"dog", features:…}`, usage row + derived cost. **Web-tier — reached prod WITHOUT the Phase 3 fleet gate** | the AI engine (hard dependency); Phase 3; the fleet; B; D |
 | **3** | **B (pool) + the runtime toggle (§2.2).** A small `app_settings` KV store (`db.py`) + a new **Settings** admin tab with an `upload_isolate` switch (**default OFF**); `create_reference` reads it to gate `isolate` on BOTH the local and pool paths; `_render_still` forwards `params["isolate_subject"]` only when the switch is on; `pet_preview_handler` → **v3** accepts it. **The switch is the A/B harness (test on local now), the fleet gate (the param ships only when on), and the kill-switch.** The GPU partition (`WORKER_TASKS=pet_preview` on one 3090) is an **optional, deferred** env-var change — add it only if the measured `subject isolation failed` rate is high; the cutout fails soft, so nothing breaks without it | — |
-| **4** | **D** — the candidate strip | B |
+| **4** | ✅ **DONE.** **D — the candidate strip.** Every drawn base joins `state.rolls` in the reducer (newest-first, capped at `ROLL_LIMIT=4`, deduped by id, source-agnostic); `<CandidateStrip>` renders the last N under the box in the step-1 workshop; clicking one re-selects it via `pickRoll` — a real fill (`referenceRequested → referenceFilled`), so it unlocks step 2 against the outgoing base exactly as a fresh draw would. Zero backend (the ids were already kept). 4 reducer tests | B |
 | **5** | **Measure** (§4) end to end, then decide whether anything **still** in §8 is warranted | — |
 
 **Phase 1 is worth doing this week regardless of everything else.** One line on the client,
 kills `exactly pet` in *both* redraws, recovers the coat axis, and makes a stale comment true.
 
-**Sequencing note for Phase 4.** D lands in `designFlow.ts`, whose `referenceRequested` and
-`baseUnlocked` cases are under active edit at the time of writing — and those are precisely the
-transitions §2.4's two rules constrain. Land that work first, then build D on top of it; do not
-develop the two in parallel against the same reducer.
+**Sequencing note for Phase 4 (resolved).** D lands in `designFlow.ts`, whose `referenceRequested`
+and `baseUnlocked` cases were under active edit while Phase 2.1 shipped — and those are precisely
+the transitions §2.4's two rules constrain. That work landed first (committed), and D was built on
+top of it: `pickRoll` reuses `referenceRequested`, so it inherits the same seq-bump + lock reset
+those cases already own, rather than re-implementing the invalidation.
 
 ---
 

@@ -32,7 +32,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   fetchCatalog, catalogBaseOptions, referenceImageUrl, catalogBaseImageUrl,
-  type CatalogBaseOption,
+  type CatalogBaseOption, type PetReference,
 } from "@/lib/api";
 import { usePetJob } from "@/hooks/usePetJob";
 import PetJobResult from "@/components/PetJobResult";
@@ -41,6 +41,7 @@ import { showsControls, isReachable, previewSettled } from "./designFlow";
 import Step from "./Step";
 import ReferenceBox from "./ReferenceBox";
 import SourceRail from "./SourceRail";
+import CandidateStrip from "./CandidateStrip";
 import BaseGalleryDialog from "./BaseGalleryDialog";
 import type { PendingSource } from "./pendingSource";
 import { prepareUpload, UploadRejected, ACCEPT_ATTR } from "./prepareUpload";
@@ -49,7 +50,7 @@ import PoseStep from "./PoseStep";
 
 export default function Designer() {
   const flow = useDesignFlow();
-  const { state, dispatch, axes, entitlement, maxPoses, fillReference, makePreview } = flow;
+  const { state, dispatch, axes, entitlement, maxPoses, fillReference, makePreview, pickRoll } = flow;
   const { job, error: jobError, submit, reset, stop, busy, done } = usePetJob();
   const [options, setOptions] = useState<CatalogBaseOption[] | null>(null);
   // The pending pick and the typed draft live HERE, not in the surfaces that show them.
@@ -236,6 +237,15 @@ export default function Designer() {
     drawFrom(next);
   }
 
+  /** Re-select a drawn base from the candidate strip (SPEC_UPLOAD_LIKENESS §2.4). Clearing
+   *  `pending` abandons any undrawn source so the box shows the picked roll (not a stale
+   *  upload preview); `pickRoll` does the fill + invalidation. */
+  function selectRoll(roll: PetReference) {
+    setPending(null);
+    setPendingDrawn(true);
+    pickRoll(roll);
+  }
+
   // NO DRAW BUTTON LIVES HERE ANY MORE (SPEC_STEP1_SOURCE_RAIL §1.11). Each door owns the
   // controls for its own source: typed draws from beside its text field, an upload from
   // beside its strength chips, and a curated base has nothing to draw at all — it is a
@@ -359,6 +369,17 @@ export default function Designer() {
                 : null
               }
             />
+
+            {/* KEEP THE ROLLS (SPEC_UPLOAD_LIKENESS §2.4). Only in the workshop (step 1
+                open): once the base is locked, choosing among candidates is over. The strip
+                self-hides below two rolls. */}
+            {step1Open && (
+              <CandidateStrip
+                rolls={state.rolls}
+                currentId={state.reference?.reference_id ?? null}
+                onPick={selectRoll}
+              />
+            )}
 
             {/* LOCK — the gate. Step 2 does not exist until this is pressed, which is what
                 makes the draw loop in the rail safe to run forever.

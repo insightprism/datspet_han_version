@@ -101,6 +101,16 @@ export function useDesignFlow() {
     }
   }, [state.seq]);
 
+  // §2.4 (D — keep the rolls): re-select a base already in the strip. It is a FILL, not
+  // a cheaper path — same seq bump + invalidation as a fresh draw (referenceRequested →
+  // referenceFilled), so step 2 can never stay locked against an outgoing base. No fetch:
+  // the reference already exists, so request and fill fire back to back (React batches
+  // them into one render, so there is no "Drawing…" flash).
+  const pickRoll = useCallback((reference: PetReference) => {
+    dispatch({ type: "referenceRequested" });
+    dispatch({ type: "referenceFilled", seq: stateSeqAfterBump(state.seq), reference });
+  }, [state.seq]);
+
   const makePreview = useCallback(async () => {
     if (!state.reference) return;
     dispatch({ type: "previewRequested" });
@@ -129,7 +139,7 @@ export function useDesignFlow() {
 
   return {
     state, dispatch, axes, entitlement, maxPoses,
-    fillReference, makePreview,
+    fillReference, makePreview, pickRoll,
     frontier: frontier(state, axes),
     expanded: expandedStep(state, axes),
     hasDesign: hasDesign(state, axes),

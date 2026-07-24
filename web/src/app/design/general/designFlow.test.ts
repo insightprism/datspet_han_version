@@ -196,3 +196,47 @@ describe("a seq bump must not strand a busy flag", () => {
     expect(s.previewBusy).toBe(false);
   });
 });
+
+describe("§2.4 — keep the rolls (the candidate strip)", () => {
+  /** A real draw: request (bump seq) then a matching fill — the pickRoll path is the
+   *  same two dispatches, so this doubles as the pick harness. */
+  function draw(s: DesignFlowState, id: string, name = id): DesignFlowState {
+    s = designFlowReducer(s, { type: "referenceRequested" });
+    return designFlowReducer(s, { type: "referenceFilled", seq: s.seq, reference: ref(id, name) });
+  }
+
+  it("accumulates drawn bases newest-first", () => {
+    let s = initialState(0.85);
+    s = draw(s, "a"); s = draw(s, "b"); s = draw(s, "c");
+    expect(s.rolls.map((r) => r.reference_id)).toEqual(["c", "b", "a"]);
+    expect(s.reference?.reference_id).toBe("c");
+  });
+
+  it("caps the strip at ROLL_LIMIT, dropping the oldest", () => {
+    let s = initialState(0.85);
+    for (const id of ["a", "b", "c", "d", "e"]) s = draw(s, id);
+    expect(s.rolls.map((r) => r.reference_id)).toEqual(["e", "d", "c", "b"]);  // ROLL_LIMIT = 4
+    expect(s.rolls).toHaveLength(4);
+  });
+
+  it("re-picking a roll neither duplicates nor reorders it (dedup by id)", () => {
+    let s = initialState(0.85);
+    s = draw(s, "a"); s = draw(s, "b"); s = draw(s, "c");
+    s = draw(s, "a");  // pick the oldest again — same id comes back through referenceFilled
+    expect(s.rolls.map((r) => r.reference_id)).toEqual(["c", "b", "a"]);  // order unchanged
+    expect(s.reference?.reference_id).toBe("a");                          // but it IS the base now
+  });
+
+  it("picking a roll is not cheaper than a draw: it unlocks step 2 against the outgoing base", () => {
+    let s = atStepTwo();                 // r1 drawn AND baseAccepted (step 2 open)
+    expect(s.baseConfirmed).toBe(true);
+    s = draw(s, "r2");                    // draw a second base
+    s = designFlowReducer(s, { type: "baseAccepted" });
+    // Now re-pick r1 from the strip (referenceRequested -> referenceFilled with r1).
+    s = designFlowReducer(s, { type: "referenceRequested" });
+    s = designFlowReducer(s, { type: "referenceFilled", seq: s.seq, reference: ref("r1", "tabby") });
+    expect(s.baseConfirmed).toBe(false);          // step 2 re-locked against the new base
+    expect(s.preview).toBeNull();                 // and the preview voided
+    expect(s.reference?.reference_id).toBe("r1");
+  });
+});

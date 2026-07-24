@@ -40,6 +40,17 @@ export interface DesignFlowState {
   referenceError: string | null;
 
   /**
+   * The last N drawn bases, kept pickable (SPEC_UPLOAD_LIKENESS §2.4, lever D — "keep
+   * the rolls"). Every Draw already minted its own reference record and nothing deletes
+   * it, so this is "stop dropping the ids": best-of-N with the owner judging, at zero
+   * extra GPU. Newest first, capped at ROLL_LIMIT, deduped by id. SOURCE-AGNOSTIC — a
+   * typed "blue jay" and an uploaded dog share the strip; keying it per door would empty
+   * it on a re-roll from the other door. Only step-1 fills join it (step 2's preview is
+   * a previewLanded, not a referenceFilled), so it is exactly "base candidates".
+   */
+  rolls: PetReference[];
+
+  /**
    * Has the user SAID this is the base animal they want?
    *
    * Filling the box is not choosing — step 1 is a workshop, not a menu. A user tries
@@ -122,9 +133,15 @@ export interface DesignFlowState {
 
 export const MAX_ACCESSORIES = 3;
 
+/** How many drawn bases the candidate strip keeps (SPEC_UPLOAD_LIKENESS §2.4). Four is
+ *  enough to compare an A/B (isolation off vs on) plus a couple of re-rolls without the
+ *  strip becoming a scroll. */
+export const ROLL_LIMIT = 4;
+
 export function initialState(strength: number): DesignFlowState {
   return {
     reference: null, referenceBusy: false, referenceError: null, baseConfirmed: false,
+    rolls: [],
     color: "", accessories: [], axisPicks: {}, extra: "", strength,
     preview: null, previewBusy: false, previewError: null, designConfirmed: false,
     previewFailureDismissed: false,
@@ -267,9 +284,17 @@ export function designFlowReducer(
 
     case "referenceFilled": {
       if (action.seq !== state.seq) return state;   // a stale fill must not land
+      // §2.4 — the drawn base joins the candidate strip, newest first, capped, deduped by
+      // id. A re-pick (pickRoll) comes back through THIS case, so the dedup is what keeps
+      // it from duplicating or reordering an existing roll: known → leave the strip as is.
+      const known = state.rolls.some((r) => r.reference_id === action.reference.reference_id);
+      const rolls = known
+        ? state.rolls
+        : [action.reference, ...state.rolls].slice(0, ROLL_LIMIT);
       return {
         ...state,
         reference: action.reference,
+        rolls,
         referenceBusy: false,
         referenceError: null,
         // A new picture is a new question: the user has to look at it before it can
