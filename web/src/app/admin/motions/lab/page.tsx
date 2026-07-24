@@ -10,12 +10,15 @@
  * generations may be fired at once — they QUEUE on the serial GPU and read "pending…"
  * until they start. LOCAL backend only. Save is the existing motion_admin write.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   motionAdmin, motionLab, getDatsmeSession, AdminApiError, CANONICAL_POSES,
   type MotionAdminList, type MotionProfileDetail, type MotionProfileFile, type LabAsset, type LabJob, type LabEndpoint,
 } from "@/lib/api";
+import { ProfileEditor, type Draft } from "../ProfileEditor";
+import ModalOverlay from "@/components/ModalOverlay";
+import ConfirmModal from "@/components/ConfirmModal";
 
 const DEFAULT_SEED = 42;
 const inputStyle = { background: "#1c1c1c", border: "1px solid var(--line)", color: "var(--heading)" };
@@ -77,6 +80,11 @@ export default function MotionLabPage() {
   const [endpoints, setEndpoints] = useState<LabEndpoint[]>([]);
   const [notice, setNotice] = useState("");
   const [err, setErr] = useState("");
+  // Profile CRUD (surfaced from the Motions page for the selected profile).
+  const [editDraft, setEditDraft] = useState<Draft | null>(null);
+  const [editErrors, setEditErrors] = useState<string[]>([]);
+  const [editBusy, setEditBusy] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
 
   const loadConfig = () => motionLab.config().then((c) => setEndpoints(c.endpoints)).catch(() => {});
   async function toggleGpu(index: number) {
@@ -104,9 +112,10 @@ export default function MotionLabPage() {
     });
   }, []);
 
-  useEffect(() => {
-    if (!profileKey) return;
-    motionAdmin.get(profileKey).then((d) => {
+  // Load a profile into the Lab: its detail, the pose menu, and the default selection.
+  // resetBase=false on a same-profile reload (an Edit save) so the drawn base survives.
+  const loadProfileDetail = useCallback((key: string, resetBase = true) => {
+    motionAdmin.get(key).then((d) => {
       setDetail(d);
       const enabled = CANONICAL_POSES.filter((n) => d.profile.poses[n]?.enabled);
       const next: Cells = {};
@@ -115,9 +124,13 @@ export default function MotionLabPage() {
       const withClause = enabled.filter((n) => d.profile.poses[n].control?.kind === "pose_prompt");
       const def = enabled.filter((n) => ["walk", "idle"].includes(n) || withClause.includes(n));
       setSelected(def.length ? def : enabled.slice(0, 3));
-      setBase(null);
+      if (resetBase) setBase(null);
     }).catch(() => setDetail(null));
-  }, [profileKey]);
+  }, []);
+
+  useEffect(() => {
+    if (profileKey) loadProfileDetail(profileKey);
+  }, [profileKey, loadProfileDetail]);
 
   function clearRenders() {
     setBase(null);
@@ -227,6 +240,52 @@ export default function MotionLabPage() {
     } catch (e) { setErr(saveErr(e)); } finally { setBusyAll(""); }
   }
 
+  // --- profile CRUD for the selected profile (same motion_admin write the Motions page uses) ---
+  const refreshList = useCallback(() => motionAdmin.list().then(setList).catch(() => {}), []);
+
+  async function openEditProfile() {
+    setErr(""); setEditErrors([]);
+    try {
+      const d = await motionAdmin.get(profileKey);
+      setEditDraft({ profile: d.profile, label: d.label, editingKey: profileKey });
+    } catch { setErr("Could not load the profile to edit."); }
+  }
+  async function saveEditProfile() {
+    if (!editDraft?.editingKey) return;
+    setEditBusy(true); setEditErrors([]);
+    try {
+      await motionAdmin.update(editDraft.editingKey, editDraft.profile, editDraft.label);
+      setNotice(`Saved ${editDraft.editingKey} — live now.`);
+      setEditDraft(null);
+      await refreshList();
+      loadProfileDetail(profileKey, false);   // rebuild the pose menu; keep the drawn base
+    } catch (e) {
+      setEditErrors(e instanceof AdminApiError ? (e.errors.length ? e.errors : [e.message]) : ["Save failed."]);
+    } finally { setEditBusy(false); }
+  }
+  async function duplicateProfile() {
+    const newKey = window.prompt(`Duplicate "${profileKey}" as (new key, lowercase/underscore):`, `${profileKey}_copy`);
+    if (!newKey) return;
+    setErr("");
+    try {
+      await motionAdmin.duplicate(profileKey, newKey, `Copy of ${profileKey}`);
+      await refreshList();
+      setProfileKey(newKey);   // switch the Lab to the copy so you can tune it immediately
+      setNotice(`Duplicated to "${newKey}" — tune it, then Save.`);
+    } catch (e) { setErr(e instanceof AdminApiError ? e.message : "Duplicate failed."); }
+  }
+  async function deleteProfile() {
+    setConfirmDel(false);
+    const deleted = profileKey;
+    setErr("");
+    try {
+      await motionAdmin.remove(deleted);
+      const l = await motionAdmin.list(); setList(l);
+      setProfileKey(l.default || l.profiles[0]?.key || "");   // fall back to the default
+      setNotice(`Deleted "${deleted}".`);
+    } catch (e) { setErr(e instanceof AdminApiError ? e.message : "Delete failed."); }
+  }
+
   const cancelJob = (jobId: string | null) => { if (jobId) motionLab.cancel(jobId).catch(() => {}); };
 
   if (gate === "checking") {
@@ -248,6 +307,9 @@ export default function MotionLabPage() {
   const columns = CANONICAL_POSES.filter((n) => selected.includes(n) && cells[n]);
   const anyBusy = baseBusy || busyAll !== "" || Object.values(cells).some((c) => c.busy);
   const anyDirty = columns.some((n) => cells[n].clause.trim() !== (detail?.profile.poses[n]?.control?.pose ?? "").trim());
+  const current = list?.profiles.find((p) => p.key === profileKey);
+  const canWrite = !!list?.writable;
+  const canDelete = canWrite && !!current && !current.is_default && current.pinned_by.length === 0;
 
   return (
     <main>
@@ -262,37 +324,76 @@ export default function MotionLabPage() {
       {notice && <div className="mono mb-3 text-sm" style={{ color: "var(--green)" }}>{notice}</div>}
       {err && <div className="mono mb-3 text-sm" style={{ color: "var(--accent)" }}>{err}</div>}
 
-      {/* Controls — the shared base lives here, inline with the Draw base button */}
-      <div className="card mb-4 flex flex-wrap items-end gap-3 p-4">
-        <div className="basis-5/12 min-w-[160px]">
-          <label className={labelCls} style={{ color: "var(--muted)" }}>animal</label>
-          <input value={animal} onChange={(e) => { setAnimal(e.target.value); clearRenders(); }}
-            className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-        </div>
-        <div className="w-28">
-          <label className={labelCls} style={{ color: "var(--muted)" }}>profile</label>
-          <select value={profileKey} onChange={(e) => setProfileKey(e.target.value)}
-            className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
-            {list?.profiles.map((p) => <option key={p.key} value={p.key}>{p.key}</option>)}
-          </select>
-        </div>
-        <div className="w-20">
-          <label className={labelCls} style={{ color: "var(--muted)" }}>seed</label>
-          <input type="number" value={seed} onChange={(e) => { setSeed(Number(e.target.value) || DEFAULT_SEED); clearRenders(); }}
-            className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
-        </div>
-        <div>
-          <label className={labelCls} style={{ color: "var(--muted)" }}>base still (shared)</label>
-          <div className="flex items-center gap-2">
-            <CellImg asset={base} size={52} placeholder={baseBusy ? (basePhase === "pending" ? "…" : `${baseElapsed}s`) : "—"} />
-            <button onClick={drawBase} disabled={baseBusy}
-              className="mono rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-45"
-              style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}>
-              {runLabel(baseBusy, basePhase, baseElapsed, "Drawing", base ? "Redraw" : "Draw base")}
-            </button>
-            {baseBusy && <CancelBtn onClick={() => cancelJob(baseJob)} />}
+      {/* Setup — line 1 ANIMATION (the shared base still), line 2 MOTION (profile + its CRUD) */}
+      <div className="card mb-3 flex flex-col gap-3 p-4">
+        {/* line 1 — animation base */}
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="min-w-[200px] flex-1">
+            <label className={labelCls} style={{ color: "var(--muted)" }}>animal</label>
+            <input value={animal} onChange={(e) => { setAnimal(e.target.value); clearRenders(); }}
+              className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          </div>
+          <div className="w-20">
+            <label className={labelCls} style={{ color: "var(--muted)" }}>seed</label>
+            <input type="number" value={seed} onChange={(e) => { setSeed(Number(e.target.value) || DEFAULT_SEED); clearRenders(); }}
+              className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
+          </div>
+          <div>
+            <label className={labelCls} style={{ color: "var(--muted)" }}>base still (shared)</label>
+            <div className="flex items-center gap-2">
+              <CellImg asset={base} size={64} placeholder={baseBusy ? (basePhase === "pending" ? "…" : `${baseElapsed}s`) : "—"} />
+              <button onClick={drawBase} disabled={baseBusy}
+                className="mono rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-45"
+                style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}>
+                {runLabel(baseBusy, basePhase, baseElapsed, "Drawing", base ? "Redraw" : "Draw base")}
+              </button>
+              {baseBusy && <CancelBtn onClick={() => cancelJob(baseJob)} />}
+            </div>
           </div>
         </div>
+
+        {/* line 2 — motion profile + CRUD (the same Edit/Duplicate/Delete as the Motions page) */}
+        <div className="flex flex-wrap items-end gap-3 border-t pt-3" style={{ borderColor: "var(--line)" }}>
+          <div className="w-44">
+            <label className={labelCls} style={{ color: "var(--muted)" }}>motion profile</label>
+            <select value={profileKey} onChange={(e) => setProfileKey(e.target.value)}
+              className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
+              {list?.profiles.map((p) => <option key={p.key} value={p.key}>{p.key}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center gap-2 pb-0.5">
+            <button onClick={openEditProfile} disabled={!profileKey}
+              className="mono rounded-lg border px-3 py-2 text-xs disabled:opacity-40"
+              style={{ color: "var(--accent)", borderColor: "var(--line)" }}>Edit</button>
+            <button onClick={duplicateProfile} disabled={!canWrite || !profileKey}
+              className="mono rounded-lg border px-3 py-2 text-xs disabled:opacity-40"
+              style={{ color: "var(--gold)", borderColor: "var(--line)" }}>Duplicate</button>
+            <button onClick={() => setConfirmDel(true)} disabled={!canDelete}
+              className="mono rounded-lg border px-3 py-2 text-xs disabled:opacity-40"
+              style={{ color: "var(--accent)", borderColor: "var(--line)" }}
+              title={current?.is_default ? "the default profile can't be deleted" : (current?.pinned_by.length ? "pinned by a catalog entry" : undefined)}>
+              Delete</button>
+            {!canWrite && <span className="mono text-xs" style={{ color: "var(--orange)" }}>read-only</span>}
+          </div>
+        </div>
+      </div>
+
+      {/* Poses — right below the motion profile: the available poses come from it */}
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="mono text-xs" style={{ color: "var(--muted)" }}>poses:</span>
+        {enabledPoses.map((n) => {
+          const on = selected.includes(n);
+          const hasClause = cells[n]?.clause.trim() || detail?.profile.poses[n]?.control?.kind === "pose_prompt";
+          return (
+            <button key={n} onClick={() => setSelected((s) => on ? s.filter((x) => x !== n) : [...s, n])}
+              className="mono rounded-full border px-3 py-1 text-xs capitalize"
+              style={on
+                ? { background: "rgba(99,102,241,0.18)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.5)" }
+                : { color: "var(--faint)", borderColor: "var(--line)" }}>
+              {n}{hasClause ? " ✎" : ""}
+            </button>
+          );
+        })}
       </div>
 
       {/* GPUs — the Lab dispatches across ComfyUI instances; start_comfyui_gpu1.sh brings up GPU 1 */}
@@ -315,24 +416,6 @@ export default function MotionLabPage() {
           </span>
         </div>
       )}
-
-      {/* Pose selection */}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="mono text-xs" style={{ color: "var(--muted)" }}>poses:</span>
-        {enabledPoses.map((n) => {
-          const on = selected.includes(n);
-          const hasClause = cells[n]?.clause.trim() || detail?.profile.poses[n]?.control?.kind === "pose_prompt";
-          return (
-            <button key={n} onClick={() => setSelected((s) => on ? s.filter((x) => x !== n) : [...s, n])}
-              className="mono rounded-full border px-3 py-1 text-xs capitalize"
-              style={on
-                ? { background: "rgba(99,102,241,0.18)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.5)" }
-                : { color: "var(--faint)", borderColor: "var(--line)" }}>
-              {n}{hasClause ? " ✎" : ""}
-            </button>
-          );
-        })}
-      </div>
 
       {/* Global actions */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -401,6 +484,19 @@ export default function MotionLabPage() {
           </div>
         )}
       </div>
+
+      {/* Inline profile editor — the SAME ProfileEditor the Motions page uses, in a modal */}
+      <ModalOverlay open={!!editDraft} onClose={() => { setEditDraft(null); setEditErrors([]); }}
+        labelledBy="profile-editor-title" maxWidth="max-w-2xl">
+        {editDraft && (
+          <ProfileEditor draft={editDraft} setDraft={setEditDraft} errors={editErrors} busy={editBusy}
+            defaultKey={list?.default ?? ""} onSave={saveEditProfile}
+            onCancel={() => { setEditDraft(null); setEditErrors([]); }} />
+        )}
+      </ModalOverlay>
+      <ConfirmModal open={confirmDel} title={`Delete "${profileKey}"?`}
+        body="This removes the profile file and its registry entry. Animals that resolved to it fall back to a coarser profile."
+        onConfirm={deleteProfile} onCancel={() => setConfirmDel(false)} />
     </main>
   );
 }
