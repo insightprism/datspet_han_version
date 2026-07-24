@@ -337,3 +337,27 @@ single-column view — it does not fork it.
 | P2-2 | Which poses show panels | **Every selected pose** — base-driven ones show the shared base as their source |
 | P2-3 | Backend change? | **None** — the Phase-1 per-pose endpoints + `motion_admin` PUT suffice; the frontend orchestrates |
 | P2-4 | Seed | **One shared seed** for the base + all anchors (mirrors the real build) |
+
+---
+
+## 13. Multi-GPU dispatch (IMPLEMENTED 2026-07-24)
+
+ComfyUI is one-GPU-per-instance and serial, so the Lab dispatches each job across a
+set of **endpoints** — one ComfyUI per GPU. Endpoint 0 is the primary (`factory`'s
+ComfyUI on GPU 0); endpoint 1 is a second ComfyUI on GPU 1 (conventional `:19963` +
+`<ComfyUI>/output_gpu1`, overridable via `PET_LAB_COMFY_URL_2` /
+`PET_LAB_COMFY_OUTPUT_DIR_2`; started with **`start_comfyui_gpu1.sh`**, `--cuda-device 1`).
+
+- **Dispatch:** each job goes to the **least-busy healthy enabled** endpoint (tracked
+  in-flight counts). With both GPUs up, two jobs run at once — **~2× on a batch**
+  (live-verified: two stills dispatched to ep0/ep1, both `running` concurrently).
+- **One asset store:** every output is copied into `<GPU 0 out>/_lab` (served by
+  `/asset`, read by every ComfyUI as an animate input over the shared filesystem), so
+  the frontend and the animate step never care which GPU produced a still.
+- **The toggle lives in the Lab (per request):** `GET/PUT /api/admin/motion-lab/config`
+  reports the endpoints + health + which are enabled, and the page shows a **GPU chip
+  toggle** (green dot = the instance is up). Default: **all endpoints active**. A
+  down/disabled GPU is simply skipped; at least one must stay active.
+- **The production pipeline is untouched** — `make_pet_zip` still uses GPU 0 only. The
+  shared pool is deliberately NOT used (§5): the Lab stays local, and the idle local
+  GPU is the clean win.

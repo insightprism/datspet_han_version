@@ -14,7 +14,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   motionAdmin, motionLab, getDatsmeSession, AdminApiError, CANONICAL_POSES,
-  type MotionAdminList, type MotionProfileDetail, type MotionProfileFile, type LabAsset, type LabJob,
+  type MotionAdminList, type MotionProfileDetail, type MotionProfileFile, type LabAsset, type LabJob, type LabEndpoint,
 } from "@/lib/api";
 
 const DEFAULT_SEED = 42;
@@ -74,13 +74,24 @@ export default function MotionLabPage() {
   const [cells, setCells] = useState<Cells>({});
   const [selected, setSelected] = useState<string[]>([]);
   const [busyAll, setBusyAll] = useState<"" | "draw" | "animate" | "save">("");
+  const [endpoints, setEndpoints] = useState<LabEndpoint[]>([]);
   const [notice, setNotice] = useState("");
   const [err, setErr] = useState("");
+
+  const loadConfig = () => motionLab.config().then((c) => setEndpoints(c.endpoints)).catch(() => {});
+  async function toggleGpu(index: number) {
+    const active = endpoints.filter((e) => e.active).map((e) => e.index);
+    const next = active.includes(index) ? active.filter((i) => i !== index) : [...active, index];
+    if (!next.length) return;   // keep at least one GPU active
+    await motionLab.setConfig(next).catch(() => {});
+    await loadConfig();
+  }
 
   useEffect(() => {
     motionAdmin.list().then((l) => {
       setList(l);
       setGate("ok");
+      loadConfig();
       const first = l.profiles.find((p) => p.key === "avian") ?? l.profiles[0];
       if (first) setProfileKey(first.key);
     }).catch(async (e) => {
@@ -282,6 +293,27 @@ export default function MotionLabPage() {
           </div>
         </div>
       </div>
+
+      {/* GPUs — the Lab dispatches across ComfyUI instances; start_comfyui_gpu1.sh brings up GPU 1 */}
+      {endpoints.length > 1 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <span className="mono text-xs" style={{ color: "var(--muted)" }}>GPUs:</span>
+          {endpoints.map((e) => (
+            <button key={e.index} onClick={() => toggleGpu(e.index)}
+              title={e.healthy ? `${e.label} — ready` : `${e.label} — not running (start_comfyui_gpu1.sh)`}
+              className="mono flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs"
+              style={e.active
+                ? { background: "rgba(99,102,241,0.18)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.5)" }
+                : { color: "var(--faint)", borderColor: "var(--line)" }}>
+              <span style={{ width: 7, height: 7, borderRadius: 9999, display: "inline-block", background: e.healthy ? "var(--green)" : "#f87171" }} />
+              {e.label}{e.inflight ? ` · ${e.inflight}` : ""}
+            </button>
+          ))}
+          <span className="mono text-xs" style={{ color: "var(--faint)" }}>
+            {endpoints.filter((e) => e.active && e.healthy).length > 1 ? "· two at a time (~2×)" : "· one at a time"}
+          </span>
+        </div>
+      )}
 
       {/* Pose selection */}
       <div className="mb-3 flex flex-wrap items-center gap-2">

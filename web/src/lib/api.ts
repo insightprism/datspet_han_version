@@ -380,9 +380,13 @@ export const motionLab = {
     labFetch("/animate", { method: "POST", body: JSON.stringify({ asset_id, animal, profile_key, pose_name, seed }) }),
   job: (job_id: string): Promise<LabJob> => labFetch(`/job/${encodeURIComponent(job_id)}`),
   cancel: (job_id: string): Promise<unknown> => labFetch(`/cancel/${encodeURIComponent(job_id)}`, { method: "POST" }),
+  config: (): Promise<{ endpoints: LabEndpoint[] }> => labFetch("/config"),
+  setConfig: (active: number[]): Promise<unknown> => labFetch("/config", { method: "PUT", body: JSON.stringify({ active }) }),
   // The asset endpoint carries the adm cookie (same-origin <img> sends credentials).
   assetUrl: (url: string): string => `${API_URL}${url}`,
 };
+// A ComfyUI endpoint (one GPU). The Lab dispatches jobs across the active+healthy ones.
+export interface LabEndpoint { index: number; label: string; url: string; healthy: boolean; active: boolean; inflight: number }
 
 // ---------------------------------------------------------------------------
 // Design admin (SPEC_PET_DESIGN_AXES_ADMIN §2) — the motion admin, applied to

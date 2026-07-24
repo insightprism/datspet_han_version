@@ -1,24 +1,28 @@
 """motion_lab — the admin visual workbench for authoring pose_prompt clauses.
 
-SPEC_MOTION_LAB. A GPU-dev-box tool: it runs `factory.py`'s generation STEPS on a
-chosen animal + pose so an admin can tune a pose clause and watch it move, then
-save the clause to the profile via the EXISTING motion_admin write path.
+SPEC_MOTION_LAB. A GPU-dev-box tool that runs `factory.py`'s generation STEPS on a
+chosen animal + pose so an admin can tune a pose clause and watch it move, then save
+the clause to the profile via the EXISTING motion_admin write path.
 
-**Async job model (§ animation-cancel).** A still or a loop takes ~15–45 s, longer
-than the dev proxy will hold a connection open — a synchronous endpoint's result is
-generated but never reaches the browser. So generation is a JOB: `POST /still` /
-`POST /animate` return a `job_id` immediately, a background thread runs the pipeline,
-and the page polls `GET /job/{id}` (which carries an elapsed timer). `POST /cancel/{id}`
-sets a flag the poll loop honors and interrupts ComfyUI, so a slow generation can be
-stopped cleanly. `GET /asset/…` serves the finished PNG/WebP back.
+**Async jobs.** A still/loop takes ~15–50 s, longer than the dev proxy holds a
+connection, so generation is a JOB: POST /still + /animate return a job_id, a thread
+runs the pipeline, the page polls GET /job/{id} (elapsed timer), POST /cancel/{id}
+stops it. GET /asset/… serves the result.
 
-Save is the existing PUT /api/admin/motions/{key}. Local backend ONLY (it drives
-ComfyUI through pet_factory); the router is mounted only when PET_GEN_BACKEND=local.
-pet_factory is imported LAZILY inside the job thread, so importing THIS module stays
-GPU-less-safe.
+**Multi-GPU dispatch.** ComfyUI is one-GPU-per-instance and serial, so the Lab
+dispatches each job to the least-busy healthy ENABLED endpoint. Endpoint 0 is the
+primary ComfyUI (GPU 0); endpoint 1 is a second ComfyUI on GPU 1 (conventional
+:19963 + <ComfyUI>/output_gpu1, overridable via PET_LAB_COMFY_URL_2 /
+PET_LAB_COMFY_OUTPUT_DIR_2 — start it with start_comfyui_gpu1.sh). With both up, two
+jobs run at once (~2× on a batch). GET/PUT /config toggles which endpoints are used
+(default: all). The main make_pet_zip pipeline is untouched — it still uses GPU 0.
+
+Local backend ONLY (it drives ComfyUI through pet_factory); mounted only when
+PET_GEN_BACKEND=local. pet_factory is imported LAZILY inside the job thread.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import threading
 import time
@@ -40,13 +44,19 @@ router = APIRouter(
 )
 
 _DEFAULT_SEED = 42
-_MAX_ANIMAL = 240      # matches the pool handler's transport cap
+_MAX_ANIMAL = 240
 _MAX_CLAUSE = 240
-_JOB_TTL = 15 * 60     # forget finished jobs after 15 min (dev tool, in-memory)
+_JOB_TTL = 15 * 60
+_CLIENT_ID = uuid.uuid4().hex
 
-# job_id -> {state, asset_id, url, ms, error, cancel, t0}. state: running|done|error|canceled.
 _JOBS: dict[str, dict] = {}
 _JOBS_LOCK = threading.Lock()
+
+# Endpoints: index 0 = primary ComfyUI (GPU 0); index 1 = second ComfyUI (GPU 1).
+_ENDPOINTS: Optional[list] = None
+_ACTIVE: Optional[set] = None
+_INFLIGHT: dict[int, int] = {}
+_EP_LOCK = threading.Lock()
 
 
 class _Canceled(Exception):
@@ -54,15 +64,58 @@ class _Canceled(Exception):
 
 
 def _pf():
-    """Lazy factory import (local-only, drags the ML stack)."""
     from pet_factory import factory as pf
     return pf
 
 
+def _build_endpoints() -> list:
+    pf = _pf()
+    out0 = Path(pf.COMFY_OUTPUT_DIR)
+    eps = [{"url": pf.COMFY_URL.rstrip("/"), "out": out0, "label": "GPU 0"}]
+    url2 = os.environ.get("PET_LAB_COMFY_URL_2", "").strip() or "http://127.0.0.1:19963"
+    out2 = os.environ.get("PET_LAB_COMFY_OUTPUT_DIR_2", "").strip()
+    eps.append({"url": url2.rstrip("/"),
+                "out": Path(out2).expanduser() if out2 else out0.parent / "output_gpu1",
+                "label": "GPU 1"})
+    return eps
+
+
+def _endpoints() -> list:
+    global _ENDPOINTS, _ACTIVE
+    with _EP_LOCK:
+        if _ENDPOINTS is None:
+            _ENDPOINTS = _build_endpoints()
+            _ACTIVE = set(range(len(_ENDPOINTS)))
+        return _ENDPOINTS
+
+
+def _active_set() -> set:
+    _endpoints()
+    with _EP_LOCK:
+        return set(_ACTIVE or set())
+
+
+def _healthy(url: str) -> bool:
+    try:
+        return requests.get(f"{url}/queue", timeout=3).status_code == 200
+    except Exception:
+        return False
+
+
+def _pick_endpoint() -> int:
+    """The least-busy healthy ENABLED endpoint (ties → lowest index)."""
+    eps = _endpoints()
+    healthy = [i for i in sorted(_active_set()) if _healthy(eps[i]["url"])]
+    if not healthy:
+        raise RuntimeError("no ComfyUI endpoint is reachable — is it running?")
+    with _JOBS_LOCK:
+        return min(healthy, key=lambda i: (_INFLIGHT.get(i, 0), i))
+
+
 def _lab_dir() -> Path:
-    """Scratch dir for Lab assets, UNDER ComfyUI's output dir so the loop step can
-    read an anchor still back by absolute path (VHS_LoadImagePath)."""
-    d = _pf().COMFY_OUTPUT_DIR / "_lab"
+    """The ONE asset store (under GPU 0's output dir), served by /asset and read by
+    every ComfyUI as an animate input over the shared filesystem."""
+    d = _endpoints()[0]["out"] / "_lab"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -78,14 +131,13 @@ def _clean_seed(seed: Optional[int]) -> int:
 # ---------------------------------------------------------------------------
 # Job store
 # ---------------------------------------------------------------------------
-def _new_job() -> str:
+def _new_job(ep_idx: int) -> str:
     _prune_jobs()
     jid = uuid.uuid4().hex[:16]
     with _JOBS_LOCK:
-        # phase distinguishes waiting in ComfyUI's serial queue ("pending") from
-        # actually generating ("running"), so several queued jobs read honestly.
-        _JOBS[jid] = {"state": "running", "phase": "pending", "asset_id": None,
-                      "url": None, "ms": None, "error": None, "cancel": False, "t0": time.time()}
+        _JOBS[jid] = {"state": "running", "phase": "pending", "asset_id": None, "url": None,
+                      "ms": None, "error": None, "cancel": False, "t0": time.time(), "ep": ep_idx}
+        _INFLIGHT[ep_idx] = _INFLIGHT.get(ep_idx, 0) + 1
     return jid
 
 
@@ -108,11 +160,9 @@ def _prune_jobs() -> None:
             _JOBS.pop(jid, None)
 
 
-def _phase_of(pf, pid: str) -> str:
-    """Is our prompt actively generating ('running') or waiting behind others in
-    ComfyUI's serial queue ('pending')? Falls back to 'running' on any error."""
+def _phase_of(url: str, pid: str) -> str:
     try:
-        q = requests.get(f"{pf.COMFY_URL}/queue", timeout=5).json()
+        q = requests.get(f"{url}/queue", timeout=5).json()
     except Exception:
         return "running"
     if any(len(it) > 1 and it[1] == pid for it in q.get("queue_running", [])):
@@ -122,12 +172,10 @@ def _phase_of(pf, pid: str) -> str:
     return "running"
 
 
-def _submit_and_wait(pf, wf: dict, jid: str, timeout: int = 300) -> str:
-    """Submit a workflow to ComfyUI and poll /history for its output, checking the
-    job's cancel flag each tick (and interrupting ComfyUI on cancel), and reporting
-    pending/running phase. Mirrors factory._run's loop but with the hooks it lacks.
-    Several jobs may be in flight at once — ComfyUI runs them one at a time."""
-    r = requests.post(f"{pf.COMFY_URL}/prompt", json={"prompt": wf, "client_id": pf.CLIENT_ID}, timeout=20)
+def _submit_and_wait(ep: dict, wf: dict, jid: str, timeout: int = 300) -> str:
+    """Submit to ONE endpoint's ComfyUI, poll its /history, honoring cancel + phase."""
+    url = ep["url"]
+    r = requests.post(f"{url}/prompt", json={"prompt": wf, "client_id": _CLIENT_ID}, timeout=20)
     if r.status_code != 200:
         raise RuntimeError(f"ComfyUI rejected workflow: {r.text[:200]}")
     pid = r.json()["prompt_id"]
@@ -135,31 +183,30 @@ def _submit_and_wait(pf, wf: dict, jid: str, timeout: int = 300) -> str:
     while time.time() - t0 < timeout:
         if _get_job(jid).get("cancel"):
             try:
-                requests.post(f"{pf.COMFY_URL}/interrupt", timeout=10)
+                requests.post(f"{url}/interrupt", timeout=10)
             except Exception:
                 pass
             raise _Canceled()
         try:
-            h = requests.get(f"{pf.COMFY_URL}/history/{pid}", timeout=10).json()
+            h = requests.get(f"{url}/history/{pid}", timeout=10).json()
         except Exception:
             h = {}
         for o in h.get(pid, {}).get("outputs", {}).values():
             picks = (o.get("gifs") or []) + (o.get("images") or [])
             if picks:
                 return picks[0]["filename"]
-        _update_job(jid, phase=_phase_of(pf, pid))
+        _update_job(jid, phase=_phase_of(url, pid))
         time.sleep(1.0)
     raise TimeoutError("generation timed out")
 
 
-def _run_job(jid: str, wf: dict, ext: str) -> None:
-    """Thread body: run the workflow, copy the output into the lab dir, update the job."""
+def _run_job(jid: str, wf: dict, ext: str, ep_idx: int) -> None:
+    ep = _endpoints()[ep_idx]
     try:
-        pf = _pf()
         t0 = time.time()
-        fn = _submit_and_wait(pf, wf, jid)
+        fn = _submit_and_wait(ep, wf, jid)
         asset_id = uuid.uuid4().hex[:16]
-        shutil.copy(pf.COMFY_OUTPUT_DIR / fn, _lab_dir() / f"{asset_id}.{ext}")
+        shutil.copy(ep["out"] / fn, _lab_dir() / f"{asset_id}.{ext}")   # → the one shared store
         _update_job(jid, state="done", asset_id=asset_id,
                     url=f"/api/admin/motion-lab/asset/{asset_id}.{ext}",
                     ms=round((time.time() - t0) * 1000))
@@ -167,11 +214,18 @@ def _run_job(jid: str, wf: dict, ext: str) -> None:
         _update_job(jid, state="canceled")
     except Exception as e:
         _update_job(jid, state="error", error=str(e)[:200])
+    finally:
+        with _JOBS_LOCK:
+            _INFLIGHT[ep_idx] = max(0, _INFLIGHT.get(ep_idx, 0) - 1)
 
 
 def _start(wf: dict, ext: str) -> dict:
-    jid = _new_job()
-    threading.Thread(target=_run_job, args=(jid, wf, ext), daemon=True).start()
+    try:
+        ep_idx = _pick_endpoint()
+    except RuntimeError as e:
+        raise HTTPException(503, str(e))
+    jid = _new_job(ep_idx)
+    threading.Thread(target=_run_job, args=(jid, wf, ext, ep_idx), daemon=True).start()
     return {"job_id": jid}
 
 
@@ -180,20 +234,24 @@ def _start(wf: dict, ext: str) -> dict:
 # ---------------------------------------------------------------------------
 class StillBody(BaseModel):
     animal: str
-    clause: str = ""                      # empty → the standing base; set → the pose anchor
+    clause: str = ""
     seed: int = _DEFAULT_SEED
 
 
 class AnimateBody(BaseModel):
-    asset_id: str                         # a still minted by POST /still
+    asset_id: str
     animal: str
-    profile_key: str                      # the pose's profile (for compose_pose_prompt)
+    profile_key: str
     pose_name: str
     seed: int = _DEFAULT_SEED
 
 
+class ConfigBody(BaseModel):
+    active: list[int]
+
+
 # ---------------------------------------------------------------------------
-# Generation endpoints — return a job id immediately; the page polls /job/{id}
+# Endpoints
 # ---------------------------------------------------------------------------
 @router.post("/still")
 def start_still(body: StillBody):
@@ -241,6 +299,31 @@ def cancel_job(job_id: str):
         if job_id in _JOBS:
             _JOBS[job_id]["cancel"] = True
     return {"canceling": True}
+
+
+@router.get("/config")
+def get_config():
+    """The GPU endpoints + their health + which are enabled (the Lab's GPU toggle)."""
+    eps = _endpoints()
+    active = _active_set()
+    with _JOBS_LOCK:
+        inflight = dict(_INFLIGHT)
+    return {"endpoints": [
+        {"index": i, "label": e["label"], "url": e["url"],
+         "healthy": _healthy(e["url"]), "active": i in active, "inflight": inflight.get(i, 0)}
+        for i, e in enumerate(eps)]}
+
+
+@router.put("/config")
+def set_config(body: ConfigBody):
+    eps = _endpoints()
+    valid = {i for i in body.active if 0 <= i < len(eps)}
+    if not valid:
+        raise HTTPException(400, "at least one endpoint must be active")
+    global _ACTIVE
+    with _EP_LOCK:
+        _ACTIVE = valid
+    return {"active": sorted(valid)}
 
 
 @router.get("/asset/{asset_id}.{ext}")
