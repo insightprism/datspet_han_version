@@ -1,9 +1,10 @@
 # SPEC — Per-pose motion anchors (making the animation actually move)
 
-**Status:** proposed / **DRAFT for review**, 2026-07-24. **Rev.2.** A design-in-progress doc,
-NOT implementation-ready — written to be reviewed and updated as the design settles. No code
-is written; the first committed step is a **single-anchor experiment** (§7), not a build. The
-Decisions (§9) and Open questions (§8) are the parts we keep refining.
+**Status:** **IMPLEMENTED** for typed + designer pets, 2026-07-24. **Rev.4.** The `pose_prompt`
+mechanism (§7.1) is built and validated end-to-end; photo uploads and the `depth` control kind remain
+deferred (§8). **→ For the full research narrative — how this design was *derived* from the experiments,
+and the map of all related specs — read `RESEARCH_POSE_MOTION.md` first.** The Decisions (§9) and Open
+questions (§8) track what is settled vs. still open.
 
 **Rev.2 adds the branch that matters:** two ways to build the anchor (§2) — a per-pet *prompt*
 anchor (A) versus a **reusable pose control / silhouette shared across species** (B) — and names
@@ -351,6 +352,26 @@ animal varies) across a body type, plus seed variation and the divergent case:
 Cleared to implement.** The custom/uploaded-pet gap (§7.1 caveat 2) remains the deferred `depth` job.
 
 Artifacts: `…/scratchpad/pose_anchor_breadth/` — `b1–b4` birds, `q1–q2` quads, `_montage.png` each.
+
+### 7.3 Designer-path validation (run 2026-07-24 — partially resolving §7.1 caveat 2)
+
+Does the anchor work for a *designed* pet (a species remixed toward a design), not just a typed one? A
+designed bird ("a turquoise blue songbird with a yellow belly", remixed from a plain songbird at 0.7)
+was compared against a fresh anchor generated from its *description*.
+
+**Result: yes, for prompt-describable pets.** The fresh anchor reproduced the design (blue + yellow
+belly) and flapped — **identity lives in the description**, which the anchor regenerates. One cosmetic
+caveat: the fresh anchor is slightly more *saturated* than the softer remixed base (we mirror the base's
+palette by using `_remix_prompt` for reference-based pets, which narrows the gap). The design holds; the
+palette is a touch off.
+
+**Scope drawn:** the anchor works when the description carries identity — **typed + designer** pets. It
+does **not** for a **photo upload**, whose stored description is a bare noun a fresh still can't match to
+the specific photo. So uploads **opt out** (`pose_anchor=False`, keep the shared base); their pixel
+identity is the deferred `depth` kind's job (§8). Implemented: `make_pet_zip(pose_anchor=…)`, gated in
+the web tier on `source != "upload"`.
+
+Artifacts: `…/scratchpad/designer_validate/` — `A_designed_still`, `C_fly_anchor_from_desc`, `D_fly_loop`.
 
 ---
 
