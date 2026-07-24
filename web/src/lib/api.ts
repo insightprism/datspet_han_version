@@ -358,15 +358,27 @@ export const motionAdmin = {
 // endpoints run the generation STEPS (a still, a loop) and exist ONLY on the local
 // GPU backend (they 404 on the prod tier). Save is the motionAdmin.update above.
 // ---------------------------------------------------------------------------
-export interface LabAsset { asset_id: string; url: string; ms: number; kind?: string }
+export interface LabAsset { asset_id: string; url: string; ms: number }
+// Generation is a JOB (it outlasts the dev proxy's connection timeout): start →
+// poll /job/{id} → the page shows an elapsed timer and can /cancel.
+export interface LabJob {
+  state: "running" | "done" | "error" | "canceled";
+  asset_id: string | null;
+  url: string | null;
+  ms: number | null;
+  error: string | null;
+  elapsed: number;
+}
 const labFetch = (path: string, init?: RequestInit) =>
   adminApiFetch("/api/admin/motion-lab", path, init);
 export const motionLab = {
   // clause "" → the standing base; a clause → the pose anchor (§3.9.1).
-  still: (animal: string, clause: string, seed?: number): Promise<LabAsset> =>
+  startStill: (animal: string, clause: string, seed?: number): Promise<{ job_id: string }> =>
     labFetch("/still", { method: "POST", body: JSON.stringify({ animal, clause, seed }) }),
-  animate: (asset_id: string, animal: string, profile_key: string, pose_name: string, seed?: number): Promise<LabAsset> =>
+  startAnimate: (asset_id: string, animal: string, profile_key: string, pose_name: string, seed?: number): Promise<{ job_id: string }> =>
     labFetch("/animate", { method: "POST", body: JSON.stringify({ asset_id, animal, profile_key, pose_name, seed }) }),
+  job: (job_id: string): Promise<LabJob> => labFetch(`/job/${encodeURIComponent(job_id)}`),
+  cancel: (job_id: string): Promise<unknown> => labFetch(`/cancel/${encodeURIComponent(job_id)}`, { method: "POST" }),
   // The asset endpoint carries the adm cookie (same-origin <img> sends credentials).
   assetUrl: (url: string): string => `${API_URL}${url}`,
 };

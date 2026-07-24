@@ -1,18 +1,17 @@
-"""API tests for the Motion Lab (SPEC_MOTION_LAB).
+"""API tests for the Motion Lab (SPEC_MOTION_LAB), async job model.
 
-Exercises webui/motion_lab.py with a FAKE factory (no GPU/ComfyUI): the generation
-steps write tiny placeholder files, so the still→animate→asset chain and the input
-validation are covered without real generation. The admin gate is overridden.
+No GPU/ComfyUI: `_pf` is faked and `_submit_and_wait` writes a placeholder output,
+so a job completes near-instantly and the start → poll(/job) → /asset chain runs.
+The admin gate is overridden.
 """
+import time
+
 import pytest
 
 
 class _FakePF:
-    """Stands in for pet_factory.factory: _run writes a placeholder file into
-    COMFY_OUTPUT_DIR and returns its name, so the endpoints' copy/serve path runs."""
     def __init__(self, outdir):
         self.COMFY_OUTPUT_DIR = outdir
-        self._n = 0
 
     def _base_prompt(self, animal, pose="standing"):
         return f"cute cartoon {animal}, {pose}"
@@ -23,13 +22,6 @@ class _FakePF:
     def _loop_wf(self, prompt, path, seed):
         return {"kind": "loop", "prompt": prompt, "src": path, "seed": seed}
 
-    def _run(self, wf, timeout=360):
-        self._n += 1
-        ext = "webp" if wf.get("kind") == "loop" else "png"
-        name = f"fake_{self._n}.{ext}"
-        (self.COMFY_OUTPUT_DIR / name).write_bytes(b"\x89PNG\r\n\x1a\n fake")
-        return name
-
 
 @pytest.fixture()
 def lab_client(tmp_path, monkeypatch):
@@ -39,11 +31,14 @@ def lab_client(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     import motion_lab
 
-    # Reload so the router's captured Depends and our override reference the SAME
-    # require_admin_launch — another test may have reloaded datsme_integration
-    # (the ai_admin fixture does the same for this reason).
-    importlib.reload(motion_lab)
-    monkeypatch.setattr(motion_lab, "_pf", lambda: _FakePF(tmp_path))
+    importlib.reload(motion_lab)   # match the router's Depends to our override (datsme_integration may be reloaded)
+    fake = _FakePF(tmp_path)
+    monkeypatch.setattr(motion_lab, "_pf", lambda: fake)
+
+    def fake_submit(pf, wf, jid, timeout=300):
+        (pf.COMFY_OUTPUT_DIR / "raw_output").write_bytes(b"\x89PNG\r\n\x1a\n fake")
+        return "raw_output"
+    monkeypatch.setattr(motion_lab, "_submit_and_wait", fake_submit)
 
     app = FastAPI()
     app.include_router(motion_lab.router)
@@ -51,14 +46,21 @@ def lab_client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-def test_still_base_and_anchor_are_served(lab_client):
-    base = lab_client.post("/api/admin/motion-lab/still", json={"animal": "robin"}).json()
-    assert base["kind"] == "base" and base["url"].endswith(".png")
-    anchor = lab_client.post("/api/admin/motion-lab/still",
-                             json={"animal": "robin", "clause": "wings spread wide open"}).json()
-    assert anchor["kind"] == "anchor"
-    for a in (base, anchor):
-        r = lab_client.get(a["url"])
+def _wait_done(client, job_id, tries=100):
+    for _ in range(tries):
+        j = client.get(f"/api/admin/motion-lab/job/{job_id}").json()
+        if j["state"] != "running":
+            return j
+        time.sleep(0.02)
+    raise AssertionError(f"job {job_id} never finished")
+
+
+def test_still_job_completes_and_is_served(lab_client):
+    for clause in ("", "wings spread wide open"):
+        jid = lab_client.post("/api/admin/motion-lab/still", json={"animal": "robin", "clause": clause}).json()["job_id"]
+        j = _wait_done(lab_client, jid)
+        assert j["state"] == "done" and j["url"].endswith(".png")
+        r = lab_client.get(j["url"])
         assert r.status_code == 200 and r.headers["content-type"] == "image/png"
 
 
@@ -66,29 +68,35 @@ def test_still_requires_an_animal(lab_client):
     assert lab_client.post("/api/admin/motion-lab/still", json={"animal": "  "}).status_code == 400
 
 
-def test_animate_from_a_still(lab_client):
-    anchor = lab_client.post("/api/admin/motion-lab/still",
-                             json={"animal": "robin", "clause": "flying"}).json()
-    loop = lab_client.post("/api/admin/motion-lab/animate", json={
-        "asset_id": anchor["asset_id"], "animal": "robin",
-        "profile_key": "avian", "pose_name": "fly"}).json()
-    assert loop["url"].endswith(".webp")
+def test_animate_job_from_a_still(lab_client):
+    still = _wait_done(lab_client, lab_client.post(
+        "/api/admin/motion-lab/still", json={"animal": "robin", "clause": "flying"}).json()["job_id"])
+    jid = lab_client.post("/api/admin/motion-lab/animate", json={
+        "asset_id": still["asset_id"], "animal": "robin",
+        "profile_key": "avian", "pose_name": "fly"}).json()["job_id"]
+    loop = _wait_done(lab_client, jid)
+    assert loop["state"] == "done" and loop["url"].endswith(".webp")
     assert lab_client.get(loop["url"]).status_code == 200
 
 
 def test_animate_rejects_missing_still_and_disabled_pose(lab_client):
-    # a still that was never generated
     r = lab_client.post("/api/admin/motion-lab/animate", json={
-        "asset_id": "deadbeefdeadbeef", "animal": "robin",
-        "profile_key": "avian", "pose_name": "fly"})
+        "asset_id": "deadbeefdeadbeef", "animal": "robin", "profile_key": "avian", "pose_name": "fly"})
     assert r.status_code == 404
-    # a real still but a disabled pose (avian.swim is disabled)
-    anchor = lab_client.post("/api/admin/motion-lab/still",
-                             json={"animal": "robin", "clause": "swimming"}).json()
+    still = _wait_done(lab_client, lab_client.post(
+        "/api/admin/motion-lab/still", json={"animal": "robin", "clause": "swimming"}).json()["job_id"])
     r = lab_client.post("/api/admin/motion-lab/animate", json={
-        "asset_id": anchor["asset_id"], "animal": "robin",
-        "profile_key": "avian", "pose_name": "swim"})
+        "asset_id": still["asset_id"], "animal": "robin", "profile_key": "avian", "pose_name": "swim"})
     assert r.status_code == 400
+
+
+def test_job_and_cancel_endpoints(lab_client):
+    assert lab_client.get("/api/admin/motion-lab/job/nope").status_code == 404
+    # cancel is idempotent / safe on any id (sets a flag the poll loop honors)
+    assert lab_client.post("/api/admin/motion-lab/cancel/nope").json() == {"canceling": True}
+    jid = lab_client.post("/api/admin/motion-lab/still", json={"animal": "robin"}).json()["job_id"]
+    j = _wait_done(lab_client, jid)
+    assert "elapsed" in j
 
 
 def test_asset_rejects_bad_ext_and_unknown_id(lab_client):
