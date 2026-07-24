@@ -252,25 +252,25 @@ export default function MotionLabPage() {
 
       {/* Controls — the shared base lives here, inline with the Draw base button */}
       <div className="card mb-4 flex flex-wrap items-end gap-3 p-4">
-        <div className="min-w-[150px] flex-1">
+        <div className="basis-5/12 min-w-[160px]">
           <label className={labelCls} style={{ color: "var(--muted)" }}>animal</label>
           <input value={animal} onChange={(e) => { setAnimal(e.target.value); clearRenders(); }}
             className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
         </div>
-        <div className="w-32">
+        <div className="w-28">
           <label className={labelCls} style={{ color: "var(--muted)" }}>profile</label>
           <select value={profileKey} onChange={(e) => setProfileKey(e.target.value)}
             className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
             {list?.profiles.map((p) => <option key={p.key} value={p.key}>{p.key}</option>)}
           </select>
         </div>
-        <div className="w-24">
+        <div className="w-20">
           <label className={labelCls} style={{ color: "var(--muted)" }}>seed</label>
           <input type="number" value={seed} onChange={(e) => { setSeed(Number(e.target.value) || DEFAULT_SEED); clearRenders(); }}
             className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
         </div>
         <div>
-          <label className={labelCls} style={{ color: "var(--muted)" }}>base still (shared — every anchor reuses it + the seed)</label>
+          <label className={labelCls} style={{ color: "var(--muted)" }}>base still (shared)</label>
           <div className="flex items-center gap-2">
             <CellImg asset={base} size={52} placeholder={baseBusy ? (basePhase === "pending" ? "…" : `${baseElapsed}s`) : "—"} />
             <button onClick={drawBase} disabled={baseBusy}
