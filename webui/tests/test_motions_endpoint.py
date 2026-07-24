@@ -156,9 +156,9 @@ def test_start_job_malformed_poses_becomes_none(app_mod, monkeypatch):
     r = client.post("/api/generate", data={"reference_id": ref, "poses": "not json{{"})
     assert r.status_code == 200, r.text
     assert captured["poses"] is None                    # safe default (walk+idle)
-    # None: a typed animal carries no pinned profile, so the engine keyword-resolves
-    # it from the description at build time (§3.4's long-tail branch).
-    assert captured["motion_profile"] is None
+    # The body type is now classified + pinned at FILL time (motion_resolver: AI with a
+    # keyword fallback — §3.5). No API key in tests → keyword: "a red fox" → quadruped.
+    assert captured["motion_profile"] == "quadruped"
 
 
 # --- catalog base source (SPEC_PET_DESIGNER_PLATFORM §4.3) -------------------

@@ -235,3 +235,21 @@ def anchor_clause(pose: Optional[Pose]) -> Optional[str]:
         clause = (control.get("pose") or "").strip()
         return clause or None
     return None
+
+
+def list_profiles() -> list[dict]:
+    """Public summary of every registered profile — key, label, movement_class,
+    level — in registry order. For UIs and the AI motion classifier
+    (webui/motion_resolver.py), which needs the key set + a short description to
+    choose from without reaching into the registry internals."""
+    out = []
+    for entry in _registry()["profiles"]:
+        prof = _load_profile_by_key(entry["key"])
+        if prof is not None:
+            out.append({
+                "key": prof.key,
+                "label": entry.get("label", prof.key),
+                "movement_class": prof.movement_class,
+                "level": prof.level,
+            })
+    return out

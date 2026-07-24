@@ -149,10 +149,10 @@ def test_v2_handler_decodes_b64_and_forwards(monkeypatch, tmp_path):
 
     def fake_make_pet_zip(animal, on_progress=None, breed_id=None,
                           reference_image=None, remix_strength=None, display_name=None,
-                          poses=None, motion_profile=None):
+                          poses=None, motion_profile=None, pose_anchor=True):
         calls.update(animal=animal, reference_image=reference_image,
                      remix_strength=remix_strength, display_name=display_name,
-                     poses=poses, motion_profile=motion_profile)
+                     poses=poses, motion_profile=motion_profile, pose_anchor=pose_anchor)
         if on_progress:
             on_progress("done", 1.0)
         return (breed_id or "a_red_panda", _fake_bundle())

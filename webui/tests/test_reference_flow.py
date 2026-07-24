@@ -136,7 +136,10 @@ def test_long_tail_animal_draws_an_archetype(client, no_gpu):
     body = r.json()
     assert body["source"] == "txt2img"
     assert body["generated"] is True
-    assert body["motion_profile"] is None, "the long tail keyword-resolves at build time"
+    # The body type is classified + pinned at FILL time now (motion_resolver: AI with a
+    # keyword fallback — §3.5). With no API key in tests it falls back to keyword, and
+    # "blue jay" resolves to avian (a keyword this profile now owns).
+    assert body["motion_profile"] == "avian"
     assert len(no_gpu) == 1
     assert no_gpu[0]["description"] == "blue jay"
     assert no_gpu[0]["reference_path"] is None, "an archetype is txt2img, not img2img"

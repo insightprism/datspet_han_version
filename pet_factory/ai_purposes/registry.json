@@ -3,6 +3,7 @@
   "purposes": [
     { "key": "connectivity_check" },
     { "key": "image_triage" },
-    { "key": "pet_likeness" }
+    { "key": "pet_likeness" },
+    { "key": "motion_classify" }
   ]
 }

@@ -1,0 +1,21 @@
+{
+  "_doc": "Maps an animal name to its motion-profile body-type key (SPEC_MOTION_PROFILES §3.5) — the AI-classifier alternative to an exhaustive per-profile keyword list. A fast/Haiku call: the caller passes the animal and the LIVE registry's keys+labels as {profiles}, and the model returns the single best key. The caller (webui/motion_resolver.py) validates the returned key against the live registry and falls back to keyword resolution when the AI is unavailable or returns an unknown key — so motion_profiles stays pure data, resolution never raises, and standalone/no-key mode still works. No `enum` in the schema on purpose: the valid keys are CONTENT that changes, so they are passed in and checked caller-side, keeping this purpose registry-agnostic (adding a profile never edits this file). A CONSUMER contribution like image_triage/pet_likeness — the engine names no purpose key (§0.1/§11).",
+  "purpose_key": "motion_classify",
+  "display_name": "Motion body-type classifier",
+  "description": "Classifies an animal into its body-type motion profile (avian, quadruped, aquatic, serpentine, winged_flyer), so the registry needs no exhaustive keyword list per profile.",
+  "tier": "fast",
+  "max_tokens": 32,
+  "input": "text",
+  "template_vars": ["animal", "profiles"],
+  "system_prompt": "You classify an animal into ONE body-type motion category for a pet animation engine. Judge by how the animal MOVES — its body plan and gait — not its size, colour, or habitat. Choose the single best-matching category key from the list the user gives. If nothing fits well, choose the closest body plan. Answer only in the required JSON shape.",
+  "user_prompt_template": "Animal: {animal}\n\nCategories (key — description):\n{profiles}\n\nReturn the single best-matching category key in profile_key.",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "profile_key": { "type": "string" }
+    },
+    "required": ["profile_key"],
+    "additionalProperties": false
+  },
+  "is_active": true
+}

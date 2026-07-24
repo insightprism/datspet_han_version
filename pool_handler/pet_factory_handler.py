@@ -72,6 +72,9 @@ METADATA = {
             #          worker (profile-set skew, §5.2) — never an error.
             "poses": {"type": "object", "additionalProperties": {"type": "boolean"}},
             "motion_profile": {"type": "string", "maxLength": 60},
+            # v4 (§3.9.1) — the pose_prompt motion anchor. Optional; absent → True (fire the
+            # anchor). The web tier sends it ONLY as False, for photo uploads that opt out.
+            "pose_anchor": {"type": "boolean"},
         },
         "required": ["animal"],
         "additionalProperties": False,
@@ -113,6 +116,7 @@ def run(params, ctx):
         display_name=params.get("display_name"),
         poses=params.get("poses"),                    # v3 (§5.2) — None → walk+idle only
         motion_profile=params.get("motion_profile"),  # v3 — None → keyword resolution
+        pose_anchor=params.get("pose_anchor", True),  # v4 (§3.9.1) — absent → True
     )
 
     out = Path(ctx.result_dir) / f"{breed_id}.zip"

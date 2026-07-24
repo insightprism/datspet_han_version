@@ -52,8 +52,8 @@ def ai_client(dpp_env, tmp_path, monkeypatch):
 def test_status_reports_configured_and_counts(ai_client):
     body = ai_client.get("/api/admin/ai/status").json()
     assert body["available"] is True and body["writable"] is True
-    # connectivity_check (engine) + image_triage + pet_likeness (consumer, §2.5).
-    assert body["purpose_count"] == 3 and body["model_count"] == 3
+    # connectivity_check (engine) + image_triage + pet_likeness (§2.5) + motion_classify (§3.5).
+    assert body["purpose_count"] == 4 and body["model_count"] == 3
 
 
 # ── purposes: read ───────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ def test_list_purposes_and_tiers(ai_client):
     body = ai_client.get("/api/admin/ai/purposes").json()
     assert set(body["tiers"]) == {"fast", "balanced", "capable"}
     keys = [p["purpose_key"] for p in body["purposes"]]
-    assert keys == ["connectivity_check", "image_triage", "pet_likeness"]
+    assert keys == ["connectivity_check", "image_triage", "pet_likeness", "motion_classify"]
     by_key = {p["purpose_key"]: p for p in body["purposes"]}
     assert by_key["connectivity_check"]["tier"] == "fast"
     # the consumer captioner purposes are image-input (SPEC_UPLOAD_LIKENESS §2.5)

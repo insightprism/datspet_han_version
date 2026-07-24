@@ -377,14 +377,16 @@ def _base_prompt(animal: str, pose: str = "standing") -> str:
             "storybook style")
 
 
-def _remix_prompt(animal: str) -> str:
+def _remix_prompt(animal: str, pose: str = "standing") -> str:
     # The remix prompt deliberately DROPS the "soft pastel colors, muted
     # palette" clause of _base_prompt: a remix description is usually about
     # changing the color ("purple monkey"), and the pastel clause fights the
     # requested color harder than the img2img source image does. Emphasizing
     # the description twice helps it win over the source's original colors.
+    # `pose` defaults to "standing"; a per-pose anchor (§3.9.1) swaps its clause
+    # in, so a reference-based pet's fly anchor matches its designed still's palette.
     return (f"a cute cartoon {animal}, exactly {animal}, side profile view, "
-            "facing right, standing, rich saturated colors, simple flat shading, "
+            f"facing right, {pose}, rich saturated colors, simple flat shading, "
             "white background, storybook style")
 
 
@@ -575,7 +577,8 @@ def _effective_poses(profile, poses):
 
 
 def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=None,
-                 remix_strength=None, display_name=None, poses=None, motion_profile=None):
+                 remix_strength=None, display_name=None, poses=None, motion_profile=None,
+                 pose_anchor=True):
     """Generate a complete DatsMe pet from an animal name.
 
     Args:
@@ -631,11 +634,16 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
     # Loop the selected poses — each a Wan I2V generation from the same base sprite.
     # Progress is distributed across the N poses over the [0.10, 0.85] band (the
     # 0.85→1.0 tail is the cutout + pack step, unchanged).
-    # §3.9.1 pose_prompt anchors are validated for the TYPED-animal path (§7.1/§7.2):
-    # a fresh anchor drawn from the animal string. Reference-based pets (designer /
-    # uploads) keep the shared base until the `depth` kind ships — their identity
-    # lives in pixels a txt2img anchor can't reproduce.
-    typed = reference_image is None
+    # §3.9.1 pose_prompt anchor: a fresh still in the pose (a wings-spread bird flaps
+    # where a standing one only twitches). The anchor is drawn from the DESCRIPTION,
+    # so it works when the description carries the pet's identity — typed animals and
+    # designer pets (validated §7.1/§7.2/§7.3). The caller passes `pose_anchor=False`
+    # for photo UPLOADS, whose stored description is a bare noun a fresh still can't
+    # match to the specific photo (they keep the shared base until the `depth` kind
+    # ships). The anchor's style prompt mirrors how the base was drawn — the remix
+    # prompt for reference-based pets (matches the designed still's palette), the base
+    # prompt for typed ones — so the fly pose and the walk pose stay the same animal.
+    anchor_prompt = _remix_prompt if reference_image is not None else _base_prompt
     pose_files = {}
     n = len(pose_names)
     for i, name in enumerate(pose_names):
@@ -643,12 +651,9 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
         frac = 0.10 + (0.75 * i / max(1, n))
         prog(f"Animating the {name}…", round(frac, 3))
         start = base
-        clause = mp.anchor_clause(pose) if typed else None
+        clause = mp.anchor_clause(pose) if pose_anchor else None
         if clause:
-            # A fresh anchor still in the pose (same _base_prompt as the standing base,
-            # the pose clause swapped in) so the loop animates from a pose that can
-            # move — a wings-spread bird flaps where a standing one only twitches.
-            start = COMFY_OUTPUT_DIR / _run(_static_image_wf(_base_prompt(animal, clause), seed))
+            start = COMFY_OUTPUT_DIR / _run(_static_image_wf(anchor_prompt(animal, clause), seed))
             _wait_stable(start)
         pose_files[name] = _run(_loop_wf(mp.compose_pose_prompt(animal, pose), str(start), seed))
 

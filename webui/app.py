@@ -50,6 +50,10 @@ import pool_client
 # one call), so importing it here costs nothing and stays GPU-less-safe. It powers
 # the upload captioner (SPEC_UPLOAD_LIKENESS §2.5); inert until DATSPET_AI_API_KEY.
 import ai_engine
+# motion_resolver bridges the two: AI body-type classification (fast/Haiku) with a
+# keyword fallback, so the registry needs no exhaustive keyword list (§3.5). Inert-safe
+# — with no API key it degrades to keyword resolution, like everything AI here.
+import motion_resolver
 # motion_profiles is pure data (no ML deps) — safe to import on the GPU-less web
 # tier; it powers /api/motions and the pose menu (SPEC_MOTION_PROFILES §5.1).
 from pet_factory import motion_profiles as motion_profiles_mod
@@ -342,7 +346,8 @@ def _generate_via_pool(job: Job, *, description: str, reference_image: Optional[
                        remix_strength: Optional[float],
                        display_name: Optional[str],
                        poses: Optional[dict] = None,
-                       motion_profile: Optional[str] = None) -> tuple[str, bytes]:
+                       motion_profile: Optional[str] = None,
+                       pose_anchor: bool = True) -> tuple[str, bytes]:
     """Pool backend (§A.2): submit the SAME params the local call used — carrying
     the reference image as base64 so it travels to the worker — and drive the job
     to its .zip result. Concurrency is the pool's job (no GPU_LOCK here)."""
@@ -362,6 +367,11 @@ def _generate_via_pool(job: Job, *, description: str, reference_image: Optional[
         params["poses"] = poses
     if motion_profile:                             # v3 — the catalog's pinned profile key
         params["motion_profile"] = motion_profile
+    # v4 (§3.9.1) — uploads opt OUT of the pose_prompt anchor. Sent ONLY when False, so
+    # the common case (True) adds no param and an older fleet handler is untouched; only
+    # uploads need the pose_anchor-aware handler (deploy the handler before this web tier).
+    if not pose_anchor:
+        params["pose_anchor"] = False
 
     # Persist the linkage BEFORE driving (Opt-1, §A.6): if this process dies
     # mid-generation, startup reattaches to the still-running pool job instead
@@ -398,7 +408,8 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
                 remix_strength: Optional[float] = None,
                 display_name: Optional[str] = None,
                 poses: Optional[dict] = None,
-                motion_profile: Optional[str] = None) -> None:
+                motion_profile: Optional[str] = None,
+                pose_anchor: bool = True) -> None:
     """Runs in a daemon thread. Mutates `job` as it goes; never raises.
     On success the finished pet is persisted as one DB row (sheet/manifest/
     package/zip as blobs), born a DRAFT — it joins the house only when the
@@ -410,7 +421,7 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
             breed_id, zip_bytes = _generate_via_pool(
                 job, description=description, reference_image=reference_image,
                 remix_strength=remix_strength, display_name=display_name,
-                poses=poses, motion_profile=motion_profile)
+                poses=poses, motion_profile=motion_profile, pose_anchor=pose_anchor)
         else:
             make_pet_zip, _ = _local_pet_factory()
             with GPU_LOCK:
@@ -430,7 +441,7 @@ def run_pet_job(job: Job, *, description: str, reference_image: Optional[Path],
                     description, on_progress=on_progress,
                     reference_image=str(reference_image) if reference_image else None,
                     remix_strength=remix_strength, display_name=display_name,
-                    poses=poses, motion_profile=motion_profile)
+                    poses=poses, motion_profile=motion_profile, pose_anchor=pose_anchor)
 
         _finalize_pet_from_zip(job, description=description, breed_id=breed_id,
                                zip_bytes=zip_bytes)
@@ -881,12 +892,15 @@ def create_reference(
 
     if door == "txt2img":
         # The long tail — a cache MISS (§3.3). ~10 s and unvetted, and that is
-        # honest: there was never a curated blue jay to lose. motion_profile stays
-        # None so the engine keyword-resolves it from the name at build time.
+        # honest: there was never a curated blue jay to lose. The motion profile is
+        # AI-classified from the name here at fill time (motion_resolver: Haiku, with
+        # a keyword fallback — SPEC_MOTION_PROFILES §3.5) and pinned on the record, so
+        # "blue jay" lands on `avian` without an exhaustive keyword list.
         png = _render_still(animal, request, owner)
         return _reference_record(_save_reference(
             png, owner=owner, description=animal.lower(),
-            display_name=animal.title(), motion_profile=None,
+            display_name=animal.title(),
+            motion_profile=motion_resolver.resolve_motion_key(animal),
             source="txt2img", generated=True,
             surface=_resolve_typed_surface(animal)))
 
@@ -945,7 +959,12 @@ def create_reference(
     surface_noun = animal or suggested or ""
     return _reference_record(_save_reference(
         png, owner=owner, description=subject.lower(),
-        display_name=subject.title(), motion_profile=None,
+        display_name=subject.title(),
+        # Classify from the subject noun (typed or captioned) so an uploaded pet still
+        # gets the right pose menu + body type (motion_resolver: AI, keyword fallback).
+        # No noun at all → leave it to keyword-resolve from the description at build.
+        motion_profile=(motion_resolver.resolve_motion_key(surface_noun)
+                        if surface_noun else None),
         source="upload", generated=True, suggested_subject=suggested,
         surface=_resolve_typed_surface(surface_noun) if surface_noun else None))
 
@@ -1401,9 +1420,14 @@ async def start_job(
         #
         # The engine keeps its remix and text branches for the CLI (§7.1): make_pet.sh
         # and examples/cli.py still need them. The web tier simply never uses them.
+        # pose_anchor (§3.9.1): fire the fresh-anchor motion path for prompt-derived
+        # pets (typed / designer / catalog — their description carries identity), but
+        # NOT for photo uploads, whose stored description is a bare noun a fresh still
+        # can't match to the specific photo (those await the `depth` kind).
         kwargs={"description": description, "reference_image": reference_image,
                 "remix_strength": None, "display_name": display_name,
-                "poses": poses_pkg, "motion_profile": motion_profile},
+                "poses": poses_pkg, "motion_profile": motion_profile,
+                "pose_anchor": ref.get("source") != "upload"},
         daemon=True,
     ).start()
     return {"job_id": job_id}
