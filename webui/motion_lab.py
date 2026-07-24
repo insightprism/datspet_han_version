@@ -82,8 +82,10 @@ def _new_job() -> str:
     _prune_jobs()
     jid = uuid.uuid4().hex[:16]
     with _JOBS_LOCK:
-        _JOBS[jid] = {"state": "running", "asset_id": None, "url": None, "ms": None,
-                      "error": None, "cancel": False, "t0": time.time()}
+        # phase distinguishes waiting in ComfyUI's serial queue ("pending") from
+        # actually generating ("running"), so several queued jobs read honestly.
+        _JOBS[jid] = {"state": "running", "phase": "pending", "asset_id": None,
+                      "url": None, "ms": None, "error": None, "cancel": False, "t0": time.time()}
     return jid
 
 
@@ -106,10 +108,25 @@ def _prune_jobs() -> None:
             _JOBS.pop(jid, None)
 
 
+def _phase_of(pf, pid: str) -> str:
+    """Is our prompt actively generating ('running') or waiting behind others in
+    ComfyUI's serial queue ('pending')? Falls back to 'running' on any error."""
+    try:
+        q = requests.get(f"{pf.COMFY_URL}/queue", timeout=5).json()
+    except Exception:
+        return "running"
+    if any(len(it) > 1 and it[1] == pid for it in q.get("queue_running", [])):
+        return "running"
+    if any(len(it) > 1 and it[1] == pid for it in q.get("queue_pending", [])):
+        return "pending"
+    return "running"
+
+
 def _submit_and_wait(pf, wf: dict, jid: str, timeout: int = 300) -> str:
     """Submit a workflow to ComfyUI and poll /history for its output, checking the
-    job's cancel flag each tick (and interrupting ComfyUI on cancel). Mirrors
-    factory._run's loop but with the cancel hook it lacks."""
+    job's cancel flag each tick (and interrupting ComfyUI on cancel), and reporting
+    pending/running phase. Mirrors factory._run's loop but with the hooks it lacks.
+    Several jobs may be in flight at once — ComfyUI runs them one at a time."""
     r = requests.post(f"{pf.COMFY_URL}/prompt", json={"prompt": wf, "client_id": pf.CLIENT_ID}, timeout=20)
     if r.status_code != 200:
         raise RuntimeError(f"ComfyUI rejected workflow: {r.text[:200]}")
@@ -130,6 +147,7 @@ def _submit_and_wait(pf, wf: dict, jid: str, timeout: int = 300) -> str:
             picks = (o.get("gifs") or []) + (o.get("images") or [])
             if picks:
                 return picks[0]["filename"]
+        _update_job(jid, phase=_phase_of(pf, pid))
         time.sleep(1.0)
     raise TimeoutError("generation timed out")
 
@@ -212,8 +230,9 @@ def job_status(job_id: str):
     j = _get_job(job_id)
     if not j:
         raise HTTPException(404, "unknown job")
-    return {"state": j["state"], "asset_id": j["asset_id"], "url": j["url"],
-            "ms": j["ms"], "error": j["error"], "elapsed": round(time.time() - j["t0"])}
+    return {"state": j["state"], "phase": j.get("phase", "running"),
+            "asset_id": j["asset_id"], "url": j["url"], "ms": j["ms"],
+            "error": j["error"], "elapsed": round(time.time() - j["t0"])}
 
 
 @router.post("/cancel/{job_id}")

@@ -5,36 +5,37 @@
  * pose_prompt clauses (§3.9.1) for MULTIPLE poses at once, all drawn from ONE shared
  * base + seed, so cross-pose colour/style drift is visible before you save.
  *
- * One column per selected pose: clause · anchor still · animation · save. A pose with
- * a clause draws a fresh anchor; a pose without one animates from the shared base.
- *
- * Generation is ASYNC: a still/loop takes ~15–45 s (longer than the dev proxy holds a
- * connection), so each op starts a job and the page polls it — showing a live elapsed
- * timer and a Cancel button. LOCAL backend only. Save is the existing motion_admin write.
+ * One column per selected pose: clause · anchor still · animation · save. Generation
+ * is ASYNC (start → poll /job), with a live elapsed timer and a Cancel button. Several
+ * generations may be fired at once — they QUEUE on the serial GPU and read "pending…"
+ * until they start. LOCAL backend only. Save is the existing motion_admin write.
  */
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   motionAdmin, motionLab, getDatsmeSession, AdminApiError, CANONICAL_POSES,
-  type MotionAdminList, type MotionProfileDetail, type MotionProfileFile, type LabAsset,
+  type MotionAdminList, type MotionProfileDetail, type MotionProfileFile, type LabAsset, type LabJob,
 } from "@/lib/api";
 
 const DEFAULT_SEED = 42;
 const inputStyle = { background: "#1c1c1c", border: "1px solid var(--line)", color: "var(--heading)" };
 const labelCls = "mono mb-1 block text-xs tracking-wide";
+type Phase = LabJob["phase"];
 
-type Cell = { clause: string; still: LabAsset | null; loop: LabAsset | null; busy: "" | "draw" | "animate" | "save"; jobId: string | null; elapsed: number };
+type Cell = {
+  clause: string; still: LabAsset | null; loop: LabAsset | null;
+  busy: "" | "draw" | "animate" | "save"; jobId: string | null; elapsed: number; phase: Phase;
+};
 type Cells = Record<string, Cell>;
 
 const genErr = (e: unknown) => e instanceof AdminApiError ? e.message : "Generation failed — is ComfyUI up?";
 const saveErr = (e: unknown) => e instanceof AdminApiError ? (e.errors[0] ?? e.message) : "Save failed.";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Poll a job to completion; report elapsed each tick. Returns the asset, or null if canceled.
-async function pollJob(jobId: string, onTick: (elapsed: number) => void): Promise<LabAsset | null> {
+async function pollJob(jobId: string, onTick: (elapsed: number, phase: Phase) => void): Promise<LabAsset | null> {
   for (;;) {
     const j = await motionLab.job(jobId);
-    onTick(j.elapsed);
+    onTick(j.elapsed, j.phase);
     if (j.state === "done") return { asset_id: j.asset_id ?? "", url: j.url ?? "", ms: j.ms ?? 0 };
     if (j.state === "canceled") return null;
     if (j.state === "error") throw new AdminApiError(j.error ?? "generation failed", 500);
@@ -54,6 +55,10 @@ function profileWithClauses(base: MotionProfileFile, clauses: Record<string, str
   return p;
 }
 
+// "pending…" while queued, else "Verbing… 12s"; the idle label otherwise.
+const runLabel = (busy: boolean, phase: Phase, elapsed: number, verb: string, idle: string) =>
+  !busy ? idle : phase === "pending" ? "pending…" : `${verb}… ${elapsed}s`;
+
 export default function MotionLabPage() {
   const [gate, setGate] = useState<"checking" | "ok" | "denied">("checking");
   const [list, setList] = useState<MotionAdminList | null>(null);
@@ -65,6 +70,7 @@ export default function MotionLabPage() {
   const [baseBusy, setBaseBusy] = useState(false);
   const [baseJob, setBaseJob] = useState<string | null>(null);
   const [baseElapsed, setBaseElapsed] = useState(0);
+  const [basePhase, setBasePhase] = useState<Phase>("running");
   const [cells, setCells] = useState<Cells>({});
   const [selected, setSelected] = useState<string[]>([]);
   const [busyAll, setBusyAll] = useState<"" | "draw" | "animate" | "save">("");
@@ -93,7 +99,7 @@ export default function MotionLabPage() {
       setDetail(d);
       const enabled = CANONICAL_POSES.filter((n) => d.profile.poses[n]?.enabled);
       const next: Cells = {};
-      for (const n of enabled) next[n] = { clause: d.profile.poses[n].control?.pose ?? "", still: null, loop: null, busy: "", jobId: null, elapsed: 0 };
+      for (const n of enabled) next[n] = { clause: d.profile.poses[n].control?.pose ?? "", still: null, loop: null, busy: "", jobId: null, elapsed: 0, phase: "running" };
       setCells(next);
       const withClause = enabled.filter((n) => d.profile.poses[n].control?.kind === "pose_prompt");
       const def = enabled.filter((n) => ["walk", "idle"].includes(n) || withClause.includes(n));
@@ -108,39 +114,39 @@ export default function MotionLabPage() {
   }
   const patch = (name: string, p: Partial<Cell>) => setCells((c) => ({ ...c, [name]: { ...c[name], ...p } }));
 
-  // --- core ops: start a job, poll it (updating the timer), return the asset or null (canceled) ---
+  // --- core ops: start a job, poll it (timer + phase), return the asset or null (canceled) ---
   async function doDrawBase(): Promise<LabAsset | null> {
-    setBaseElapsed(0);
+    setBaseElapsed(0); setBasePhase("pending");
     const { job_id } = await motionLab.startStill(animal, "", seed);
     setBaseJob(job_id);
     try {
-      const a = await pollJob(job_id, setBaseElapsed);
+      const a = await pollJob(job_id, (e, ph) => { setBaseElapsed(e); setBasePhase(ph); });
       if (a) setBase(a);
       return a;
     } finally { setBaseJob(null); }
   }
   async function doDrawAnchor(name: string, clause: string): Promise<LabAsset | null> {
-    patch(name, { elapsed: 0 });
+    patch(name, { elapsed: 0, phase: "pending" });
     const { job_id } = await motionLab.startStill(animal, clause, seed);
     patch(name, { jobId: job_id });
     try {
-      const a = await pollJob(job_id, (e) => patch(name, { elapsed: e }));
+      const a = await pollJob(job_id, (e, ph) => patch(name, { elapsed: e, phase: ph }));
       if (a) patch(name, { still: a, loop: null });
       return a;
     } finally { patch(name, { jobId: null }); }
   }
   async function doAnimate(name: string, source: LabAsset): Promise<LabAsset | null> {
-    patch(name, { elapsed: 0 });
+    patch(name, { elapsed: 0, phase: "pending" });
     const { job_id } = await motionLab.startAnimate(source.asset_id, animal, profileKey, name, seed);
     patch(name, { jobId: job_id });
     try {
-      const a = await pollJob(job_id, (e) => patch(name, { elapsed: e }));
+      const a = await pollJob(job_id, (e, ph) => patch(name, { elapsed: e, phase: ph }));
       if (a) patch(name, { loop: a });
       return a;
     } finally { patch(name, { jobId: null }); }
   }
 
-  // --- per-cell buttons ---
+  // --- per-cell buttons (concurrent: firing one does NOT block the others; they queue) ---
   async function drawBase() {
     setBaseBusy(true); setErr("");
     try { await doDrawBase(); } catch (e) { setErr(genErr(e)); } finally { setBaseBusy(false); }
@@ -168,15 +174,14 @@ export default function MotionLabPage() {
     } catch (e) { setErr(saveErr(e)); } finally { patch(name, { busy: "" }); }
   }
 
-  // --- "all" (serial; a cancel of the running job stops the run) ---
+  // --- "all" (serial; canceling the running job stops the run) ---
   async function drawAllAnchors() {
     setBusyAll("draw"); setErr("");
     try {
       for (const name of columns) {
-        const clause = cells[name].clause.trim();
-        if (!clause) continue;
+        if (!cells[name].clause.trim()) continue;
         patch(name, { busy: "draw" });
-        const a = await doDrawAnchor(name, clause);
+        const a = await doDrawAnchor(name, cells[name].clause.trim());
         patch(name, { busy: "" });
         if (!a) break;
       }
@@ -245,38 +250,37 @@ export default function MotionLabPage() {
       {notice && <div className="mono mb-3 text-sm" style={{ color: "var(--green)" }}>{notice}</div>}
       {err && <div className="mono mb-3 text-sm" style={{ color: "var(--accent)" }}>{err}</div>}
 
-      {/* Controls */}
-      <div className="card mb-4 grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
-        <div className="col-span-2 md:col-span-1">
+      {/* Controls — the shared base lives here, inline with the Draw base button */}
+      <div className="card mb-4 flex flex-wrap items-end gap-3 p-4">
+        <div className="min-w-[150px] flex-1">
           <label className={labelCls} style={{ color: "var(--muted)" }}>animal</label>
           <input value={animal} onChange={(e) => { setAnimal(e.target.value); clearRenders(); }}
             className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
         </div>
-        <div>
+        <div className="w-32">
           <label className={labelCls} style={{ color: "var(--muted)" }}>profile</label>
           <select value={profileKey} onChange={(e) => setProfileKey(e.target.value)}
             className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
             {list?.profiles.map((p) => <option key={p.key} value={p.key}>{p.key}</option>)}
           </select>
         </div>
-        <div>
-          <label className={labelCls} style={{ color: "var(--muted)" }}>seed (shared)</label>
+        <div className="w-24">
+          <label className={labelCls} style={{ color: "var(--muted)" }}>seed</label>
           <input type="number" value={seed} onChange={(e) => { setSeed(Number(e.target.value) || DEFAULT_SEED); clearRenders(); }}
             className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle} />
         </div>
-        <div className="flex items-end gap-2">
-          <RunBtn label="Draw base" busy={baseBusy} elapsed={baseElapsed} onClick={drawBase} disabled={anyBusy} />
-          {baseBusy && <CancelBtn onClick={() => cancelJob(baseJob)} />}
-        </div>
-      </div>
-
-      {/* Shared base */}
-      <div className="card mb-4 flex items-center gap-4 p-4">
         <div>
-          <div className="font-semibold" style={{ color: "var(--heading)" }}>Base still (shared)</div>
-          <div className="mono text-xs" style={{ color: "var(--faint)" }}>the standing reference + the seed every anchor reuses</div>
+          <label className={labelCls} style={{ color: "var(--muted)" }}>base still (shared — every anchor reuses it + the seed)</label>
+          <div className="flex items-center gap-2">
+            <CellImg asset={base} size={52} placeholder={baseBusy ? (basePhase === "pending" ? "…" : `${baseElapsed}s`) : "—"} />
+            <button onClick={drawBase} disabled={baseBusy}
+              className="mono rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-45"
+              style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}>
+              {runLabel(baseBusy, basePhase, baseElapsed, "Drawing", base ? "Redraw" : "Draw base")}
+            </button>
+            {baseBusy && <CancelBtn onClick={() => cancelJob(baseJob)} />}
+          </div>
         </div>
-        <CellImg asset={base} size={120} placeholder={baseBusy ? `Drawing… ${baseElapsed}s` : "Draw base"} />
       </div>
 
       {/* Pose selection */}
@@ -299,9 +303,9 @@ export default function MotionLabPage() {
 
       {/* Global actions */}
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <RunBtn label="Draw all anchors" busy={busyAll === "draw"} onClick={drawAllAnchors} disabled={anyBusy || !columns.length} />
-        <RunBtn label="Animate all" busy={busyAll === "animate"} onClick={animateAll} disabled={anyBusy || !columns.length} />
-        <button onClick={saveAll} disabled={anyBusy || !detail || !list?.writable || !anyDirty}
+        <BatchBtn label="Draw all anchors" busy={busyAll === "draw"} onClick={drawAllAnchors} disabled={anyBusy || !columns.length} />
+        <BatchBtn label="Animate all" busy={busyAll === "animate"} onClick={animateAll} disabled={anyBusy || !columns.length} />
+        <button onClick={saveAll} disabled={busyAll === "save" || !detail || !list?.writable || !anyDirty}
           className="mono rounded-lg py-2 px-4 text-sm font-bold disabled:opacity-45"
           style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "var(--heading)" }}>
           {busyAll === "save" ? "Saving…" : "Save all"}
@@ -329,19 +333,19 @@ export default function MotionLabPage() {
 
               <div className="mono mb-1 text-xs" style={{ color: "var(--faint)" }}>{isAnchored ? "anchor still" : "uses base"}</div>
               <CellImg asset={source} size={176}
-                placeholder={cell.busy === "draw" ? `Drawing… ${cell.elapsed}s` : isAnchored ? "Draw anchor" : "Draw base"} />
-              <ActionRow busyLabel={cell.busy === "draw" ? `Drawing… ${cell.elapsed}s` : null}
-                label="Draw anchor" disabled={anyBusy || !isAnchored} onClick={() => drawAnchor(name)}
+                placeholder={cell.busy === "draw" ? runLabel(true, cell.phase, cell.elapsed, "Drawing", "") : isAnchored ? "Draw anchor" : "Draw base"} />
+              <ActionRow label={runLabel(cell.busy === "draw", cell.phase, cell.elapsed, "Drawing", "Draw anchor")}
+                disabled={cell.busy !== "" || !isAnchored} onClick={() => drawAnchor(name)}
                 onCancel={cell.busy === "draw" ? () => cancelJob(cell.jobId) : undefined} />
 
               <div className="mono mb-1 mt-3 text-xs" style={{ color: "var(--faint)" }}>animation</div>
               <CellImg asset={cell.loop} size={176}
-                placeholder={cell.busy === "animate" ? `Animating… ${cell.elapsed}s` : "Animate"} />
-              <ActionRow busyLabel={cell.busy === "animate" ? `Animating… ${cell.elapsed}s` : null}
-                label="Animate" disabled={anyBusy || !source} onClick={() => animateOne(name)}
+                placeholder={cell.busy === "animate" ? runLabel(true, cell.phase, cell.elapsed, "Animating", "") : "Animate"} />
+              <ActionRow label={runLabel(cell.busy === "animate", cell.phase, cell.elapsed, "Animating", "Animate")}
+                disabled={cell.busy !== "" || !source} onClick={() => animateOne(name)}
                 onCancel={cell.busy === "animate" ? () => cancelJob(cell.jobId) : undefined} />
 
-              <button onClick={() => saveOne(name)} disabled={anyBusy || !list?.writable || !dirty}
+              <button onClick={() => saveOne(name)} disabled={cell.busy === "save" || !list?.writable || !dirty}
                 className="mono mt-3 w-full rounded-lg py-1.5 text-xs font-bold disabled:opacity-40"
                 style={{ background: dirty ? "rgba(99,102,241,0.18)" : "transparent", color: "var(--accent)", border: "1px solid rgba(99,102,241,0.4)" }}>
                 {cell.busy === "save" ? "Saving…" : dirty ? "Save clause" : "Saved"}
@@ -360,14 +364,12 @@ export default function MotionLabPage() {
   );
 }
 
-function RunBtn({ label, busy, elapsed, onClick, disabled }: {
-  label: string; busy: boolean; elapsed?: number; onClick: () => void; disabled?: boolean;
-}) {
+function BatchBtn({ label, busy, onClick, disabled }: { label: string; busy: boolean; onClick: () => void; disabled?: boolean }) {
   return (
     <button onClick={onClick} disabled={busy || disabled}
       className="mono shrink-0 rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-45"
       style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}>
-      {busy ? `Running… ${elapsed ?? 0}s` : label}
+      {busy ? "Running…" : label}
     </button>
   );
 }
@@ -376,23 +378,18 @@ function CancelBtn({ onClick }: { onClick: () => void }) {
   return (
     <button onClick={onClick} title="Cancel"
       className="mono shrink-0 rounded-lg border px-3 py-2 text-sm font-semibold"
-      style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", borderColor: "rgba(239,68,68,0.4)" }}>
-      Cancel
-    </button>
+      style={{ background: "rgba(239,68,68,0.12)", color: "#f87171", borderColor: "rgba(239,68,68,0.4)" }}>Cancel</button>
   );
 }
 
-// A cell's Draw/Animate button + an inline Cancel while it runs.
-function ActionRow({ label, busyLabel, disabled, onClick, onCancel }: {
-  label: string; busyLabel: string | null; disabled: boolean; onClick: () => void; onCancel?: () => void;
+function ActionRow({ label, disabled, onClick, onCancel }: {
+  label: string; disabled: boolean; onClick: () => void; onCancel?: () => void;
 }) {
   return (
     <div className="mt-2 flex items-center gap-1">
       <button onClick={onClick} disabled={disabled}
         className="mono flex-1 rounded border px-2 py-1 text-xs disabled:opacity-40"
-        style={{ color: "var(--accent)", borderColor: "var(--line)" }}>
-        {busyLabel ?? label}
-      </button>
+        style={{ color: "var(--accent)", borderColor: "var(--line)" }}>{label}</button>
       {onCancel && (
         <button onClick={onCancel} title="Cancel"
           className="mono rounded border px-2 py-1 text-xs"

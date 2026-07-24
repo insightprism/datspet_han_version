@@ -363,6 +363,7 @@ export interface LabAsset { asset_id: string; url: string; ms: number }
 // poll /job/{id} → the page shows an elapsed timer and can /cancel.
 export interface LabJob {
   state: "running" | "done" | "error" | "canceled";
+  phase: "pending" | "running";   // waiting in ComfyUI's serial queue, vs actively generating
   asset_id: string | null;
   url: string | null;
   ms: number | null;
