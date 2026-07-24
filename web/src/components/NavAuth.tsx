@@ -40,6 +40,9 @@ export default function NavAuth() {
             <Link href="/admin/motions" className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
               Motions
             </Link>
+            <Link href="/admin/motions/lab" className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
+              Lab
+            </Link>
             <Link href="/admin/design" className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
               Design
             </Link>
