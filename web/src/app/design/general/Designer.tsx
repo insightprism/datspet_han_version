@@ -301,6 +301,13 @@ export default function Designer() {
    */
   const buildBase = state.preview ?? state.reference;
 
+  // Build-time estimate, shown on the "Bring it to life" button: 3 min baseline for the
+  // always-included walk+idle, plus 30 s for each additional pose the user picked. So 2
+  // poses = ~3 min, 5 poses = ~4.5 min, 8 poses = ~6 min. (state.selectedPoses is the
+  // OPTIONAL set — walk+idle are added on top in createPet, so its length IS the extras.)
+  const buildEstMin = (180 + state.selectedPoses.length * 30) / 60;
+  const buildEstLabel = Number.isInteger(buildEstMin) ? `${buildEstMin}` : buildEstMin.toFixed(1);
+
   function createPet() {
     if (!buildBase) return;
     const fd = new FormData();
@@ -690,7 +697,7 @@ export default function Designer() {
               dismissed it — from the archetype (§5.2). `buildBase` is whichever it is. */}
           <button type="button" className="btn-step self-start" disabled={busy || !buildBase}
                   onClick={createPet}>
-            {busy ? "Building…" : "Bring it to life · ~3 min"}
+            {busy ? "Building…" : `Bring it to life · ~${buildEstLabel} min`}
           </button>
           {/* Never let this ship silently: a dismissed-failure build animates the
               UNDESIGNED animal. The user asked for purple and is about to get a plain
