@@ -1,6 +1,18 @@
-# SPEC — Species-aware motion profiles (per-body-type pose registry)
+# SPEC — Species-aware motion profiles (per-body-type pose registry) — CLOSED / IMPLEMENTED
 
-**Status:** Design — **Rev.3** (2026-07-13). Grounded against the working tree and the live
+> **Status: CLOSED / IMPLEMENTED — 2026-07-24, Rev.5.** The motion-profile registry — one JSON per
+> body type + `registry.json`, keyword + pinned resolution with specificity levels (§3.7), the shared
+> validator + guard tests, `/api/motions`, and the pool handler (v3) — is shipped and guard-tested
+> (28 tests pass). The `control` tier's **`pose_prompt` kind (§3.9.1) shipped** (fresh-anchor motion;
+> see `SPEC_POSE_ANCHORS`). **DECISION — the `pose_skeleton` / `depth` control tier (§3.9) is NOT
+> being pursued.** Turning it on would mean porting a whole Wan 2.2 I2V control path (VACE /
+> Wan-Animate) — net-new engine work the §3.9 body itself flags as "a later, separate spec" — and the
+> shipped `pose_prompt` already covers the validated need (typed + designer pets); custom/uploaded
+> pets keep the shared base. The reserved `pose_skeleton`/`depth` enum members remain as inert,
+> harmless extension points, but **no control workflow will be built.** The body below is the design
+> record. **Archived; the code is the source of truth from here.**
+
+**Original design-phase header (Rev.3, 2026-07-13, retained for history):** Grounded against the working tree and the live
 DatsMe pet runtime; every runtime claim below was read from code, not assumed.
 **Implementation-ready:** all §9 decisions are resolved except §9.6 (which optional pose
 descriptions to author at launch — a product call that does not gate code); every §10 gate is

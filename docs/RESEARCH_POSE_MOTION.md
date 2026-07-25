@@ -187,12 +187,21 @@ negatives, `anchor_clause`, and the updated purpose/resolution assertions.
 
 ## 7. Open threads (what a future session should pick up)
 
-- **The Motion Lab** (`SPEC_MOTION_LAB`) — the admin visual workbench to tune a pose clause and watch
-  the anchor + loop, so the per-species grind is fast. Next planned build.
-- **The `depth` control kind** — the deferred robust answer for **photo uploads** (custom pixel
-  identity), conditioning on the base image; imitate the sibling **datsPet**'s depth-silhouette
-  ControlNet path (`/home/markly2/claude_code/datsPet`; birds use depth silhouettes, not skeletons —
-  AP-10K is quadruped-only). Until then, uploads keep the shared base (no anchor).
+Most of the design is now shipped or decided; what remains is content/ops, not new design.
+
+- **Skeleton/depth control tier — DECIDED, NOT pursued (2026-07-24).** The robust answer for
+  **photo-uploaded / custom pets** — conditioning on the base image via a Wan 2.2 VACE / Wan-Animate
+  control path, imitating datsPet's depth-silhouette approach — was judged too high-impact to justify
+  (net-new engine work). Uploaded/custom pets keep the shared base (they opt out via
+  `pose_anchor=False`). The `SPEC_MOTION_PROFILES` §3.9 seam stays reserved-but-inert; both that spec
+  and `SPEC_POSE_ANCHORS` are now **CLOSED and archived** (`docs/archive/`). Revisit only if
+  custom-pet motion becomes a priority.
+- **The Motion Lab — BUILT** (`SPEC_MOTION_LAB`, closed + archived): multi-pose, async jobs, 2-GPU
+  dispatch, AI suggest-clause. It is the tool for the authoring headroom below.
+- **Pose-clause authoring headroom (content, not code).** Only `avian.fly` and `quadruped.run` carry
+  a clause today; `winged_flyer.fly` (dragons/insects), `jump`, and other silhouette-changing poses
+  are enabled but animate from the base until someone authors their clause — a one-JSON edit in the
+  Motion Lab, no code.
 - **Palette match for designer pets** — the fresh anchor is slightly more saturated than the remixed
   base (§3.4); tune if it reads as inconsistent.
 - **Flightless avians** (penguin, ostrich) resolve to `avian` and get a graceful grounded flap; give
@@ -206,13 +215,16 @@ negatives, `anchor_clause`, and the updated purpose/resolution assertions.
 
 The design is spread across specs by concern; this doc is the narrative that ties them together.
 
+All of the motion specs are now **closed and in `docs/archive/`** (the code is the source of truth);
+this narrative doc stays here in `docs/` as the living reference.
+
 | Spec | Role | State |
 |---|---|---|
-| **`SPEC_POSE_ANCHORS`** | The parent design-space doc + the **experiment record** (§7.1 the three-arm result, §7.2 breadth, §7.3 designer). The "why pose_prompt" evidence lives here. | Active |
-| **`SPEC_MOTION_PROFILES`** §3.9 / §3.9.1 | Owns the `Pose` schema and the **`control` block** — the field the anchor writes (`pose_prompt` kind, precedence, backward-compat). The authoritative schema. | Active (pre-existing spec, extended) |
-| **`SPEC_MOTION_LAB`** | The admin **authoring tool** to tune pose clauses visually and save them to a profile. | Draft (not yet built) |
-| **`SPEC_POSE_ANCHOR_HYBRID`** | The **superseded** sprite-redraw draft — kept for design history (why the sprite approach was tried and rejected). | Superseded |
-| **`SPEC_DATSPET_AI_ENGINE`** | The AI engine (purpose registry, tiers, usage ledger) that powers the **`motion_classify`** classifier and the upload captioner. | Active (implemented) |
+| **`SPEC_POSE_ANCHORS`** | The parent design-space doc + the **experiment record** (§7.1 the three-arm result, §7.2 breadth, §7.3 designer). The "why pose_prompt" evidence lives here. | CLOSED — `docs/archive/` (depth tier dropped) |
+| **`SPEC_MOTION_PROFILES`** §3.9 / §3.9.1 | Owns the `Pose` schema and the **`control` block** — the field the anchor writes (`pose_prompt` kind, precedence, backward-compat). The authoritative schema. | CLOSED — `docs/archive/` (skeleton/depth tier dropped) |
+| **`SPEC_MOTION_LAB`** | The admin **authoring tool** to tune pose clauses visually and save them to a profile. | IMPLEMENTED — `docs/archive/` |
+| **`SPEC_POSE_ANCHOR_HYBRID`** | The **superseded** sprite-redraw draft — kept for design history (why the sprite approach was tried and rejected). | Superseded — `docs/archive/` |
+| **`SPEC_DATSPET_AI_ENGINE`** | The AI engine (purpose registry, tiers, usage ledger) that powers the **`motion_classify`** classifier and the upload captioner. | Implemented — `docs/archive/` |
 
 Related but not motion-specific: `SPEC_UPLOAD_LIKENESS` (the upload/captioner flow, and the §0.1
 "one still decides likeness" invariant this design trades against), `SPEC_PET_DESIGNER_FLOW` (the

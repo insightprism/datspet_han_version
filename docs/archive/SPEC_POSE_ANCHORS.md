@@ -1,10 +1,14 @@
-# SPEC — Per-pose motion anchors (making the animation actually move)
+# SPEC — Per-pose motion anchors (making the animation actually move) — CLOSED / IMPLEMENTED
 
-**Status:** **IMPLEMENTED** for typed + designer pets, 2026-07-24. **Rev.4.** The `pose_prompt`
-mechanism (§7.1) is built and validated end-to-end; photo uploads and the `depth` control kind remain
-deferred (§8). **→ For the full research narrative — how this design was *derived* from the experiments,
-and the map of all related specs — read `RESEARCH_POSE_MOTION.md` first.** The Decisions (§9) and Open
-questions (§8) track what is settled vs. still open.
+> **Status: CLOSED / IMPLEMENTED — 2026-07-24, Rev.5.** The `pose_prompt` mechanism (§7.1) is built
+> and validated end-to-end for **typed + designer** pets (schema → clauses → factory txt2img anchor →
+> local + pool + web gate → tests). **DECISION — the deferred `depth` / skeleton control tier (§8,
+> for custom/uploaded pets) is NOT being pursued:** its impact — a net-new Wan 2.2 I2V control path
+> (VACE / Wan-Animate, `SPEC_MOTION_PROFILES` §3.9) — is too high to justify for the remaining case.
+> Photo-uploaded / custom pets keep the shared base (they opt out via `pose_anchor=False`). No
+> further work is planned. The body below (approaches A/B, the experiments §7.1–7.3, the decisions) is
+> the design record. **→ Full narrative:** `RESEARCH_POSE_MOTION.md`. **Archived; the code is the
+> source of truth from here.**
 
 **Rev.2 adds the branch that matters:** two ways to build the anchor (§2) — a per-pet *prompt*
 anchor (A) versus a **reusable pose control / silhouette shared across species** (B) — and names
