@@ -2,17 +2,82 @@
   "key": "winged_flyer",
   "level": 3,
   "movement_class": "winged_flyer",
-  "keywords": ["dragon", "wyvern", "griffin", "gryphon", "phoenix", "pegasus", "fairy", "pixie", "bat", "butterfly", "moth", "bee", "dragonfly", "ladybug", "wasp", "beetle", "insect"],
+  "keywords": [
+    "dragon",
+    "wyvern",
+    "griffin",
+    "gryphon",
+    "phoenix",
+    "pegasus",
+    "fairy",
+    "pixie",
+    "bat",
+    "butterfly",
+    "moth",
+    "bee",
+    "dragonfly",
+    "ladybug",
+    "wasp",
+    "beetle",
+    "insect"
+  ],
   "poses": {
-    "walk":  { "enabled": true,  "runtime_role": "active", "action": "hovering forward with steady wing beats", "suffix": ", wings beating rhythmically, body drifting in place, no camera movement, no panning" },
-    "idle":  { "enabled": true,  "runtime_role": "rest",   "action": "hovering calmly, wings fluttering softly", "suffix": ", gentle wing flutter, small floating bob, no camera movement, no panning" },
-    "run":   { "enabled": true,  "runtime_role": "active", "action": "darting quickly with fast wing beats", "suffix": ", rapid wing beats, body leaning forward, in place, no camera movement, no panning" },
-    "sleep": { "enabled": true,  "runtime_role": "timed",  "action": "settled with wings folded, resting", "suffix": ", wings closed, still with slow breathing, resting loop, no camera movement, no panning" },
-    "sit":   { "enabled": true,  "runtime_role": "timed",  "action": "perched with wings folded", "suffix": ", settled and still with small head movements, no camera movement, no panning" },
-    "eat":   { "enabled": true,  "runtime_role": "timed",  "action": "sipping or nibbling while hovering", "suffix": ", small feeding movements, wings fluttering to hold position, no camera movement, no panning" },
-    "jump":  { "enabled": true,  "runtime_role": "triggered", "action": "surging upward in an excited burst", "suffix": ", a quick upward wing-burst then settling, one reaction lift, no horizontal movement, no camera movement, no panning" },
-    "play":  { "enabled": true,  "runtime_role": "triggered", "action": "looping and flitting playfully", "suffix": ", lively darting wing flicks, cheerful reaction loop, no camera movement, no panning" },
-    "swim":  { "enabled": false },
-    "fly":   { "enabled": true,  "runtime_role": "active", "action": "flying with powerful wing beats", "suffix": ", wings sweeping up and down in a strong flight cycle, hovering in place, no horizontal movement of the body, no camera movement, no panning" }
+    "walk": {
+      "enabled": true,
+      "runtime_role": "active",
+      "action": "hovering forward with steady wing beats",
+      "suffix": ", wings beating rhythmically, body drifting in place, no camera movement, no panning"
+    },
+    "idle": {
+      "enabled": true,
+      "runtime_role": "rest",
+      "action": "hovering calmly, wings fluttering softly",
+      "suffix": ", gentle wing flutter, small floating bob, no camera movement, no panning"
+    },
+    "run": {
+      "enabled": true,
+      "runtime_role": "active",
+      "action": "darting quickly with fast wing beats",
+      "suffix": ", rapid wing beats, body leaning forward, in place, no camera movement, no panning"
+    },
+    "sleep": {
+      "enabled": true,
+      "runtime_role": "timed",
+      "action": "settled with wings folded, resting",
+      "suffix": ", wings closed, still with slow breathing, resting loop, no camera movement, no panning"
+    },
+    "sit": {
+      "enabled": true,
+      "runtime_role": "timed",
+      "action": "perched with wings folded",
+      "suffix": ", settled and still with small head movements, no camera movement, no panning"
+    },
+    "eat": {
+      "enabled": true,
+      "runtime_role": "timed",
+      "action": "sipping or nibbling while hovering",
+      "suffix": ", small feeding movements, wings fluttering to hold position, no camera movement, no panning"
+    },
+    "jump": {
+      "enabled": true,
+      "runtime_role": "triggered",
+      "action": "surging upward in an excited burst",
+      "suffix": ", a quick upward wing-burst then settling, one reaction lift, no horizontal movement, no camera movement, no panning"
+    },
+    "play": {
+      "enabled": true,
+      "runtime_role": "triggered",
+      "action": "looping and flitting playfully",
+      "suffix": ", lively darting wing flicks, cheerful reaction loop, no camera movement, no panning"
+    },
+    "swim": {
+      "enabled": false
+    },
+    "fly": {
+      "enabled": true,
+      "runtime_role": "active",
+      "action": "flying with powerful wing beats",
+      "suffix": ", wings sweeping up and down in a strong flight cycle, hovering in place, no horizontal movement of the body, no camera movement, no panning"
+    }
   }
 }
