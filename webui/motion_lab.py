@@ -44,7 +44,9 @@ router = APIRouter(
     dependencies=[Depends(datsme_integration.require_admin_launch)],
 )
 
-_DEFAULT_SEED = 42
+_DEFAULT_SEED = 42   # MUST equal pet_factory.factory._ANCHOR_SEED — the build draws pose
+                     # anchors at that seed, so the Lab is a faithful preview only when it
+                     # authors at the same one (pinned by test_motion_lab). Change both or neither.
 _MAX_ANIMAL = 240
 _MAX_CLAUSE = 240
 _JOB_TTL = 15 * 60

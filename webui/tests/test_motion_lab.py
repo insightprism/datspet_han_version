@@ -109,6 +109,14 @@ def test_asset_rejects_bad_ext_and_unknown_id(lab_client):
     assert lab_client.get("/api/admin/motion-lab/asset/nonexistent99.png").status_code == 404
 
 
+def test_lab_and_build_author_at_the_same_seed():
+    """The Lab is a faithful preview only if the build draws pose anchors at the SAME seed
+    the clause was authored at — factory._ANCHOR_SEED must equal motion_lab._DEFAULT_SEED."""
+    import motion_lab
+    from pet_factory import factory
+    assert factory._ANCHOR_SEED == motion_lab._DEFAULT_SEED
+
+
 def test_prune_lab_assets_sweeps_stale_scratch(lab_client):
     """§9: scratch stills/loops older than the TTL are swept; fresh ones are kept."""
     import os

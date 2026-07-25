@@ -68,14 +68,14 @@ def test_validator_rejects_each_contract_violation():
 
 # --- pose_prompt control (§3.9.1) ------------------------------------------
 def test_anchor_clause_reads_pose_prompt_and_ignores_the_rest():
-    # avian.fly ships a pose_prompt control → anchor_clause returns its clause.
-    avian = mp.load_motion_profile("avian")
-    assert mp.anchor_clause(avian.pose("fly")) == "wings spread wide open, mid-flight, flying"
-    # quadruped.run ships one too.
-    quad = mp.load_motion_profile("quadruped")
-    assert mp.anchor_clause(quad.pose("run"))
-    # a pose with no control → None (loops from the shared base, byte-identical to today).
-    assert mp.anchor_clause(avian.pose("idle")) is None
+    # Pins the MECHANISM with constructed poses, not live profile content: any pose may now
+    # carry an authored clause (the Motion Lab's whole job), so a test that assumed a specific
+    # profile pose is empty/clause'd would break the moment someone tuned it in the Lab.
+    P = mp.Pose
+    assert mp.anchor_clause(P(enabled=True, control={"kind": "pose_prompt", "pose": "wings spread wide"})) == "wings spread wide"
+    assert mp.anchor_clause(P(enabled=True, control={"kind": "pose_prompt", "pose": "   "})) is None  # blank → None
+    assert mp.anchor_clause(P(enabled=True, control={"kind": "depth", "ref": "x"})) is None           # other kind → None
+    assert mp.anchor_clause(P(enabled=True)) is None                                                   # no control → None
     assert mp.anchor_clause(None) is None
 
 

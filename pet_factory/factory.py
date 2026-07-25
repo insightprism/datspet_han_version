@@ -69,6 +69,14 @@ NEG = ("oversaturated, neon, vibrant, hyper-colored, anime, blurry, photo, "
        "realistic, low quality, watermark, signature, multiple subjects, "
        "deformed, human, person, hands, text")
 
+# The seed the pose_prompt ANCHOR (and its loop) is drawn at — FIXED, not the build's
+# random per-run seed. The Motion Lab authors pose clauses at this same seed
+# (motion_lab._DEFAULT_SEED), so "looks good in the Lab" reproduces in the build: a subtle
+# clause (a bird's mid-stride walk) that only reads at one seed would otherwise land as a
+# standing bird under the build's random seed. The BASE sprite keeps the random seed — its
+# variety is wanted, and for designer pets the base is the locked reference anyway.
+_ANCHOR_SEED = 42
+
 # Motion wording is now content, not code: each pose's action+suffix lives in the
 # motion_profiles/*.json files and is composed by motion_profiles.compose_pose_prompt.
 # The former WALK_SUFFIX/IDLE_SUFFIX constants were removed — quadruped.json carries
@@ -653,9 +661,12 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
         start = base
         clause = mp.anchor_clause(pose) if pose_anchor else None
         if clause:
-            start = COMFY_OUTPUT_DIR / _run(_static_image_wf(anchor_prompt(animal, clause), seed))
+            # Fixed _ANCHOR_SEED (not the random build seed) so the anchor reproduces what
+            # the Motion Lab drew while the clause was authored (§3.9.1 — the Lab is a
+            # faithful preview only if the build draws the anchor at the SAME seed).
+            start = COMFY_OUTPUT_DIR / _run(_static_image_wf(anchor_prompt(animal, clause), _ANCHOR_SEED))
             _wait_stable(start)
-        pose_files[name] = _run(_loop_wf(mp.compose_pose_prompt(animal, pose), str(start), seed))
+        pose_files[name] = _run(_loop_wf(mp.compose_pose_prompt(animal, pose), str(start), _ANCHOR_SEED))
 
     prog("Cutting out backgrounds & packing…", 0.85)
     # Unload ComfyUI's Wan models so the GPU has room for birefnet (the next job
