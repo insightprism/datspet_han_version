@@ -2,6 +2,7 @@
   "key": "serpentine",
   "level": 3,
   "movement_class": "limbless_serpentine",
+  "base_pose": "coiled at rest with head and upper body raised, tongue flicking, no legs",
   "view": {
     "view_kind": "side",
     "native_facing": "right",
@@ -26,39 +27,63 @@
     "walk": {
       "enabled": true,
       "runtime_role": "active",
-      "action": "slithering forward in a smooth S-curve",
-      "suffix": ", body undulating side to side, no legs, in place, no camera movement, no panning"
+      "action": "slithering forward",
+      "suffix": ", body undulating side to side, no legs, in place, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "stretched out low along the ground, mid-slither, gentle S-curve body, not coiled, no legs"
+      }
     },
     "idle": {
       "enabled": true,
       "runtime_role": "rest",
-      "action": "coiled at rest, slow tongue flicks",
-      "suffix": ", gentle breathing, small head movements, no camera movement, no panning"
+      "action": "coiled at rest, tongue flicking",
+      "suffix": ", gentle breathing, small head sway, no legs, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "coiled at rest, head raised, tongue flicking, no legs"
+      }
     },
     "run": {
       "enabled": true,
       "runtime_role": "active",
-      "action": "slithering rapidly, body in fast S-waves",
-      "suffix": ", quick undulation, no legs, in place, no camera movement, no panning"
+      "action": "slithering fast",
+      "suffix": ", quick rippling undulation, no legs, in place, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "stretched out low along the ground, fast slither, quick S-waves down the body, not coiled, no legs"
+      }
     },
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "coiled tightly, head resting, still",
-      "suffix": ", motionless, slow breathing, resting loop, no camera movement, no panning",
-      "timed_buffer_ms": 6000
+      "action": "sleeping, still",
+      "suffix": ", motionless, slow breathing, resting loop, no legs, no camera movement, no panning",
+      "timed_buffer_ms": 6000,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "coiled up tightly, head resting down, eyes closed, sleeping, no legs"
+      }
     },
     "sit": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "reared up with head raised, watchful",
-      "suffix": ", upper body lifted and swaying slightly, tongue flicking, no camera movement, no panning"
+      "action": "reared up, watchful",
+      "suffix": ", upper body swaying gently, tongue flicking, no legs, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "reared up, head and neck raised high, upright like a cobra, no legs"
+      }
     },
     "eat": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "slowly swallowing a small meal",
-      "suffix": ", deliberate jaw movement and gentle gulps, no camera movement, no panning"
+      "action": "eating, jaws working",
+      "suffix": ", deliberate jaw movement and gentle gulps, no legs, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "head lowered to the ground, mouth open wide around a small round morsel, no legs"
+      }
     },
     "jump": {
       "enabled": false
@@ -69,8 +94,12 @@
     "swim": {
       "enabled": true,
       "runtime_role": "active",
-      "action": "undulating smoothly through water",
-      "suffix": ", body waving side to side, smooth swimming motion, in place, no camera movement, no panning"
+      "action": "swimming through water",
+      "suffix": ", body waving side to side, smooth swimming, no legs, in place, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "stretched out swimming through water, body wavy side to side, no legs"
+      }
     },
     "fly": {
       "enabled": false
