@@ -24,6 +24,7 @@ import pytest
 from PIL import Image
 
 from pet_factory import factory
+from pet_factory import motion_profiles as mp
 
 FIXED_SEED = 424242
 
@@ -109,9 +110,14 @@ def test_design_still_and_build_base_stage_are_byte_identical(capture_workflow, 
     # phrase §7.3 requires the reference record to carry. A 240-char composed
     # design string would silently break this contract — that is the point.
     animal = "purple corgi"
+    # Parity now includes the base pose: make_pet_zip resolves profile.base_pose, so the
+    # design-still caller must pass the SAME value — exactly what app.py's _render_still does
+    # (via _base_pose_for). Resolving from the animal here mirrors make_pet_zip's own resolve.
+    base_pose = mp.resolve_motion_profile(animal).base_pose
 
     still_wf = capture_workflow(
-        lambda: factory.render_design_still(animal, reference_png, strength, seed=FIXED_SEED)
+        lambda: factory.render_design_still(animal, reference_png, strength,
+                                            seed=FIXED_SEED, base_pose=base_pose)
     )
     build_wf = capture_workflow(
         lambda: factory.make_pet_zip(animal, reference_image=reference_png,
@@ -144,8 +150,9 @@ def test_build_base_stage_clamps_strength_too(capture_workflow, reference_png,
 
 def test_parity_holds_for_the_text_branch_too(capture_workflow):
     """The long-tail archetype (§3.3): no reference on either side."""
+    base_pose = mp.resolve_motion_profile("blue jay").base_pose
     still_wf = capture_workflow(
-        lambda: factory.render_design_still("blue jay", seed=FIXED_SEED)
+        lambda: factory.render_design_still("blue jay", seed=FIXED_SEED, base_pose=base_pose)
     )
     build_wf = capture_workflow(lambda: factory.make_pet_zip("blue jay"))
     assert still_wf == build_wf

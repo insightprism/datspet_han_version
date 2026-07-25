@@ -2,6 +2,7 @@
   "key": "winged_flyer",
   "level": 3,
   "movement_class": "winged_flyer",
+  "base_pose": "standing with wings folded against its back",
   "view": {
     "view_kind": "side",
     "native_facing": "right",
@@ -31,52 +32,84 @@
       "enabled": true,
       "runtime_role": "active",
       "action": "hovering forward with steady wing beats",
-      "suffix": ", wings beating rhythmically, body drifting in place, no camera movement, no panning"
+      "suffix": ", wings beating rhythmically, body drifting in place, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "wings slightly folded against sides, front legs mid-stride with one forward and one back, torso leaning slightly forward in walking motion"
+      }
     },
     "idle": {
       "enabled": true,
       "runtime_role": "rest",
       "action": "hovering calmly, wings fluttering softly",
-      "suffix": ", gentle wing flutter, small floating bob, no camera movement, no panning"
+      "suffix": ", gentle wing flutter, small floating bob, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "wings folded against back, body upright, head tilted slightly, one foot forward in resting position"
+      }
     },
     "run": {
       "enabled": true,
       "runtime_role": "active",
       "action": "darting quickly with fast wing beats",
-      "suffix": ", rapid wing beats, body leaning forward, in place, no camera movement, no panning"
+      "suffix": ", rapid wing beats, body leaning forward, in place, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "wings folded back, body leaned forward, front limbs extended mid-stride, hind legs pushing off ground, tail streaming behind for balance"
+      }
     },
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
       "action": "settled with wings folded, resting",
       "suffix": ", wings closed, still with slow breathing, resting loop, no camera movement, no panning",
-      "timed_buffer_ms": 6000
+      "timed_buffer_ms": 6000,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "head drooped forward, wings folded tight against body, body relaxed and low, eyes closed"
+      }
     },
     "sit": {
       "enabled": true,
       "runtime_role": "timed",
       "action": "perched with wings folded",
-      "suffix": ", settled and still with small head movements, no camera movement, no panning"
+      "suffix": ", settled and still with small head movements, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "perched with wings folded, sitting, tail curled"
+      }
     },
     "eat": {
       "enabled": true,
       "runtime_role": "timed",
       "action": "sipping or nibbling while hovering",
-      "suffix": ", small feeding movements, wings fluttering to hold position, no camera movement, no panning"
+      "suffix": ", small feeding movements, wings fluttering to hold position, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "head tilted down toward food source, wings partially folded at sides, body leaning forward with front limbs extended downward, mouth open mid-bite"
+      }
     },
     "jump": {
       "enabled": true,
       "runtime_role": "triggered",
       "action": "surging upward in an excited burst",
       "suffix": ", a quick upward wing-burst then settling, one reaction lift, no horizontal movement, no camera movement, no panning",
-      "loop": false
+      "loop": false,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "wings folded back, hind legs coiled beneath body, front limbs extended forward, airborne mid-leap, body angled upward"
+      }
     },
     "play": {
       "enabled": true,
       "runtime_role": "triggered",
       "action": "looping and flitting playfully",
       "suffix": ", lively darting wing flicks, cheerful reaction loop, no camera movement, no panning",
-      "loop": false
+      "loop": false,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "wings fluttering mid-beat, body twisting through the air, limbs relaxed and bouncing, tail curved playfully, head tilted toward a companion"
+      }
     },
     "swim": {
       "enabled": false
@@ -85,7 +118,11 @@
       "enabled": true,
       "runtime_role": "active",
       "action": "flying with powerful wing beats",
-      "suffix": ", wings sweeping up and down in a strong flight cycle, hovering in place, no horizontal movement of the body, no camera movement, no panning"
+      "suffix": ", wings sweeping up and down in a strong flight cycle, hovering in place, no horizontal movement of the body, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "wings fully extended mid-beat, body tilted forward in flight trajectory, tail trailing behind for balance, limbs tucked or positioned for aerial momentum"
+      }
     }
   }
 }

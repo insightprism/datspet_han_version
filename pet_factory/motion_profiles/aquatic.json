@@ -57,14 +57,22 @@
       "enabled": true,
       "runtime_role": "active",
       "action": "darting forward in a fast burst",
-      "suffix": ", body streamlined and horizontal, rapid tail beats driving forward, fins swept back, surging in place, no legs, no camera movement, no panning"
+      "suffix": ", body streamlined and horizontal, rapid tail beats driving forward, fins swept back, surging in place, no legs, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "swimming fast, body streamlined and horizontal, tail beating quickly, no legs"
+      }
     },
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
       "action": "resting still, drifting slowly",
       "suffix": ", body level and horizontal, slow gentle fin drift, calm resting loop, no legs, no camera movement, no panning",
-      "timed_buffer_ms": 6000
+      "timed_buffer_ms": 6000,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "resting still, body horizontal, drifting slowly, eyes closed, no legs"
+      }
     },
     "sit": {
       "enabled": false
@@ -73,7 +81,11 @@
       "enabled": true,
       "runtime_role": "timed",
       "action": "nibbling at food drifting in front of it",
-      "suffix": ", body level and horizontal, small mouth movements and quick nibbles, gentle fin adjustments, no legs, no camera movement, no panning"
+      "suffix": ", body level and horizontal, small mouth movements and quick nibbles, gentle fin adjustments, no legs, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "swimming, body level and horizontal, head tilted down toward a small morsel, mouth open, no legs"
+      }
     },
     "jump": {
       "enabled": false
@@ -83,7 +95,11 @@
       "runtime_role": "triggered",
       "action": "wiggling and doing a playful little barrel roll",
       "suffix": ", body horizontal, a lively swishing spin, cheerful reaction loop, no legs, no camera movement, no panning",
-      "loop": false
+      "loop": false,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "doing a playful barrel roll, body horizontal, no legs"
+      }
     },
     "swim": {
       "enabled": true,

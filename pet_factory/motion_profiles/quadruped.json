@@ -2,6 +2,7 @@
   "key": "quadruped",
   "level": 3,
   "movement_class": "mammalian_quadruped",
+  "base_pose": "standing on all fours, alert",
   "view": {
     "view_kind": "side",
     "native_facing": "right",
@@ -50,13 +51,21 @@
       "enabled": true,
       "runtime_role": "active",
       "action": "walking",
-      "suffix": ", mouth closed, no facial animation, no chewing, no talking, eyes still, performing a full walk cycle in place: legs and feet cycling through one complete stride, body bobbing naturally up and down with each step, classic looping sprite walk animation, no horizontal movement of the body, no camera movement, no panning"
+      "suffix": ", mouth closed, no facial animation, no chewing, no talking, eyes still, performing a full walk cycle in place: legs and feet cycling through one complete stride, body bobbing naturally up and down with each step, classic looping sprite walk animation, no horizontal movement of the body, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "walking, mid-stride, one front paw lifted, on all fours"
+      }
     },
     "idle": {
       "enabled": true,
       "runtime_role": "rest",
       "action": "sitting calmly",
-      "suffix": ", mouth closed, no facial animation, no chewing, no talking, eyes still, gentle idle motion: soft breathing, slight sway, a small bob in place, no walking, no camera movement, no panning"
+      "suffix": ", mouth closed, no facial animation, no chewing, no talking, eyes still, gentle idle motion: soft breathing, slight sway, a small bob in place, no walking, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "sitting calmly on haunches, relaxed, ears up"
+      }
     },
     "run": {
       "enabled": true,
@@ -73,33 +82,53 @@
       "runtime_role": "timed",
       "action": "curled up asleep",
       "suffix": ", lying still with slow steady breathing, eyes closed, motionless resting loop, no camera movement, no panning",
-      "timed_buffer_ms": 6000
+      "timed_buffer_ms": 6000,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "lying down curled up, eyes closed, sleeping"
+      }
     },
     "sit": {
       "enabled": true,
       "runtime_role": "timed",
       "action": "sitting upright, alert",
-      "suffix": ", seated still with small head movements and gentle breathing, no walking, no camera movement, no panning"
+      "suffix": ", seated still with small head movements and gentle breathing, no walking, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "sitting upright on haunches, alert, head up, ears perked"
+      }
     },
     "eat": {
       "enabled": true,
       "runtime_role": "timed",
       "action": "eating, head lowered nibbling",
-      "suffix": ", head dipping down to nibble then up, small repeating chewing motion, no walking, no camera movement, no panning"
+      "suffix": ", head dipping down to nibble then up, small repeating chewing motion, no walking, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "head lowered, eating from the ground"
+      }
     },
     "jump": {
       "enabled": true,
       "runtime_role": "triggered",
       "action": "jumping upward excitedly",
       "suffix": ", springing up off all four legs then landing, one bouncy reaction hop, no horizontal movement, no camera movement, no panning",
-      "loop": false
+      "loop": false,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "leaping up into the air, front legs lifted, mid-jump"
+      }
     },
     "play": {
       "enabled": true,
       "runtime_role": "triggered",
       "action": "playfully bouncing and wagging",
       "suffix": ", a lively playful bounce with tail wagging, energetic reaction loop, no horizontal movement, no camera movement, no panning",
-      "loop": false
+      "loop": false,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "play bow, chest and front legs lowered flat to the ground, hindquarters raised high, tail up"
+      }
     },
     "swim": {
       "enabled": false

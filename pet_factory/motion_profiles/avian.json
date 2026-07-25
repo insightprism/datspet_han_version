@@ -2,6 +2,7 @@
   "key": "avian",
   "level": 3,
   "movement_class": "avian_biped",
+  "base_pose": "standing upright on two legs, wings folded",
   "view": {
     "view_kind": "side",
     "native_facing": "right",
@@ -105,40 +106,64 @@
       "enabled": true,
       "runtime_role": "active",
       "action": "scurrying quickly on two legs",
-      "suffix": ", rapid little bird steps, body leaning forward, wings half-raised, in place, no camera movement, no panning"
+      "suffix": ", rapid little bird steps, body leaning forward, wings half-raised, in place, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "running fast on two legs, leaning forward, wings tucked"
+      }
     },
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
       "action": "roosting with head tucked into feathers",
       "suffix": ", still and puffed up, slow breathing, eyes closed, resting loop, no camera movement, no panning",
-      "timed_buffer_ms": 6000
+      "timed_buffer_ms": 6000,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "eyes closed, head lowered and resting on its chest, feathers puffed up, sleeping"
+      }
     },
     "sit": {
       "enabled": true,
       "runtime_role": "timed",
       "action": "settled low on its perch",
-      "suffix": ", nestled down with small head movements and gentle breathing, no camera movement, no panning"
+      "suffix": ", nestled down with small head movements and gentle breathing, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "settled low on its perch, feathers fluffed, resting"
+      }
     },
     "eat": {
       "enabled": true,
       "runtime_role": "timed",
       "action": "pecking downward at seed",
-      "suffix": ", quick repeating head dips to peck then up, small pecking motion, no walking, no camera movement, no panning"
+      "suffix": ", quick repeating head dips to peck then up, small pecking motion, no walking, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "head down, pecking at seed on the ground, beak open"
+      }
     },
     "jump": {
       "enabled": true,
       "runtime_role": "triggered",
       "action": "flapping up in a startled hop",
       "suffix": ", wings flaring out in a quick upward flutter then settling, one reaction flutter, no camera movement, no panning",
-      "loop": false
+      "loop": false,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "hopping up, wings half-open, mid-hop"
+      }
     },
     "play": {
       "enabled": true,
       "runtime_role": "triggered",
       "action": "bobbing and fluttering playfully",
       "suffix": ", lively wing flicks and head bobs, cheerful reaction loop, no camera movement, no panning",
-      "loop": false
+      "loop": false,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "wings fluttering, hopping playfully, head bobbing"
+      }
     },
     "swim": {
       "enabled": false
