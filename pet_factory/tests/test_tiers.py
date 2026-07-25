@@ -32,20 +32,20 @@ def test_base_and_plus_defaults():
     assert base["max_poses"] == 2 and base["extra_pose_slots"] == 0
     assert base["price_per_extra_pose"] == 0
     plus = tiers.entitlement("plus")
-    assert plus["max_poses"] == 5 and plus["extra_pose_slots"] == 3
+    assert plus["max_poses"] == 8 and plus["extra_pose_slots"] == 6
     assert plus["price_per_extra_pose"] == 50
 
 
 def test_launch_posture_default_is_plus():
     # LAUNCH POSTURE (SPEC_PET_DESIGNER_PLATFORM §5.2, tiers.json _doc): the default
     # tier is 'plus' so EVERY user (standalone + launched-without-a-premium-cap) gets
-    # up to 5 poses, and extra poses monetize at 50 credits via the live host knob.
+    # up to 8 poses, and extra poses monetize at 50 credits via the live host knob.
     # This pins that decision — flipping default_tier back to 'base' (once DatsMe
     # grants a real premium capability) is then a deliberate change that updates
     # THIS test, not an accidental regression.
     assert tiers.default_tier_key() == "plus"
     ent = tiers.resolve_entitlement([])           # standalone caller
-    assert ent["tier"] == "plus" and ent["max_poses"] == 5
+    assert ent["tier"] == "plus" and ent["max_poses"] == 8
     assert ent["price_per_extra_pose"] == 50
 
 
