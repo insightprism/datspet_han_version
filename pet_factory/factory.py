@@ -398,19 +398,33 @@ def _remix_prompt(animal: str, pose: str = "standing") -> str:
             "white background, storybook style")
 
 
+# The historical sheet-level view — the constants the packer emitted before view
+# became profile data (SPEC_BUNDLE_MOTION_CONTRACT §3.3). The fallback when a
+# profile (or a direct caller) supplies no view, so output stays byte-identical
+# for the default case.
+_DEFAULT_VIEW = {"view_kind": "side", "native_facing": "right", "mirroring_policy": "flip"}
+
+
 def pack_datsme_bundle(pose_frames, breed_id, display_name,
                        frame_size=256, columns=8, fps=12,
-                       pose_roles=None, movement_class="mammalian_quadruped",
-                       on_frame=None) -> bytes:
+                       pose_meta=None, movement_class="mammalian_quadruped",
+                       view=None, on_frame=None) -> bytes:
     """Pack an ordered {pose_name: frame_list} dict into a DatsMe breed bundle
     (.zip bytes): a transparent sprite sheet + manifest.json + package.json.
 
     Each frame is background-removed (birefnet) and fit into a square cell. Each
     pose occupies its own row-band on the sheet (the next pose always starts on a
-    fresh grid row), so frame indices never straddle two animations. The manifest's
-    `animations` map carries each pose's declared `runtime_role` (pose_roles).
-    Returns the .zip as bytes — post it to DatsMe's /api/pets/me/upload."""
-    pose_roles = pose_roles or {}
+    fresh grid row), so frame indices never straddle two animations.
+
+    `pose_meta` is {pose_name: {runtime_role, loop, timed_buffer_ms, view}} — the
+    per-animation metadata the host reads (SPEC_BUNDLE_MOTION_CONTRACT §3). Every
+    key is optional: `loop` defaults True, `timed_buffer_ms` is emitted only when
+    present, and `view` falls back to the sheet-level `view` block. `view` is the
+    profile-level view ({view_kind, native_facing, mirroring_policy}); absent, the
+    historical side/right/flip constants apply, so output is unchanged for callers
+    that pass neither. Returns the .zip bytes — post it to /api/pets/me/upload."""
+    pose_meta = pose_meta or {}
+    sheet_view = view or _DEFAULT_VIEW
     _rembg()   # eager init so a GPU-required-but-CPU-only node fails fast HERE (§4.B item A),
                # before the loop — where prep()'s per-frame try/except cannot swallow the error.
     total_frames = sum(len(f) for f in pose_frames.values()) or 1
@@ -445,10 +459,16 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
         start = ((cursor + columns - 1) // columns) * columns      # next pose starts on a new row
         idx = list(range(start, start + len(cells)))
         placed.append((name, cells, idx))
-        role = pose_roles.get(name)
-        animations[name] = {"frames": idx, "fps": fps, "loop": True}
+        meta = pose_meta.get(name) or {}
+        entry = {"frames": idx, "fps": fps, "loop": bool(meta.get("loop", True))}
+        role = meta.get("runtime_role")
         if role:
-            animations[name]["runtime_role"] = role
+            entry["runtime_role"] = role
+        buf = meta.get("timed_buffer_ms")
+        if buf is not None:                       # §3.2 — emitted only when authored
+            entry["timed_buffer_ms"] = buf
+        entry["view"] = meta.get("view") or sheet_view   # §3.3 — per-animation view block
+        animations[name] = entry
         cursor = start + len(cells)
 
     rows = (cursor + columns - 1) // columns
@@ -461,8 +481,8 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
         "schema_version": "pet_manifest.v1",
         "columns": columns, "rows": rows, "frame_width": frame_size, "frame_height": frame_size,
         "animations": animations,
-        "view_kind": "side", "native_facing": "right",
-        "mirroring_policy": "flip", "movement_class": movement_class,
+        **sheet_view,                            # view_kind / native_facing / mirroring_policy
+        "movement_class": movement_class,
     }
     package = {"breed_id": breed_id, "display_name": display_name, "movement_class": movement_class}
 
@@ -476,7 +496,7 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
 
 
 def _base_sprite(animal, reference_image=None, remix_strength=None,
-                 seed=None, on_stage=None, isolate=False) -> Path:
+                 seed=None, on_stage=None, isolate=False, base_pose="standing") -> Path:
     """THE base-sprite selector — the one place the pipeline's starting image is
     decided (SPEC_PET_DESIGNER_FLOW §7.1).
 
@@ -498,6 +518,10 @@ def _base_sprite(animal, reference_image=None, remix_strength=None,
     isolate:  cut the subject out of a photographic reference before the redraw
               (SPEC_UPLOAD_LIKENESS §2.2). Only meaningful on the two reference
               branches; the text branch has no reference to isolate.
+    base_pose: the posture the base still is drawn in (the resolved motion profile's
+              base_pose — "standing" for land animals, "swimming, body horizontal" for
+              aquatic). Swaps in for the prompt's pose word on the two DRAWN branches
+              (remix + text); the as-is branch has no prompt so it is inert there.
     """
     def stage(msg):
         if on_stage:
@@ -510,7 +534,7 @@ def _base_sprite(animal, reference_image=None, remix_strength=None,
         stage("Redrawing your design…")
         prepped = _prep_reference_image(reference_image, isolate=isolate)
         denoise = min(0.9, max(0.3, float(remix_strength)))
-        base = COMFY_OUTPUT_DIR / _run(_img2img_wf(_remix_prompt(animal), str(prepped), seed, denoise))
+        base = COMFY_OUTPUT_DIR / _run(_img2img_wf(_remix_prompt(animal, base_pose), str(prepped), seed, denoise))
         _wait_stable(base)
         return base
 
@@ -519,13 +543,13 @@ def _base_sprite(animal, reference_image=None, remix_strength=None,
         return _prep_reference_image(reference_image, isolate=isolate)
 
     stage("Drawing the base sprite…")
-    base = COMFY_OUTPUT_DIR / _run(_static_image_wf(_base_prompt(animal), seed))
+    base = COMFY_OUTPUT_DIR / _run(_static_image_wf(_base_prompt(animal, base_pose), seed))
     _wait_stable(base)
     return base
 
 
 def render_design_still(description: str, reference_image=None, strength=None,
-                        seed=None, isolate=False) -> bytes:
+                        seed=None, isolate=False, base_pose="standing") -> bytes:
     """Render one still and return it as PNG bytes — the design page's ~10 s step
     (SPEC_PET_DESIGNER_FLOW §2). Two shapes, both delegating to `_base_sprite`:
 
@@ -554,7 +578,8 @@ def render_design_still(description: str, reference_image=None, strength=None,
             "rendering a reference as-is would just return the caller's own bytes."
         )
     out = _base_sprite(description, reference_image=reference_image,
-                       remix_strength=strength, seed=seed, isolate=isolate)
+                       remix_strength=strength, seed=seed, isolate=isolate,
+                       base_pose=base_pose)
     return out.read_bytes()
 
 
@@ -637,7 +662,8 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
     # still and this build's base sprite provably identical (§5.1).
     base = _base_sprite(animal, reference_image=reference_image,
                         remix_strength=remix_strength, seed=seed,
-                        on_stage=lambda msg: prog(msg, 0.10))
+                        on_stage=lambda msg: prog(msg, 0.10),
+                        base_pose=profile.base_pose)
 
     # Loop the selected poses — each a Wan I2V generation from the same base sprite.
     # Progress is distributed across the N poses over the [0.10, 0.85] band (the
@@ -678,19 +704,22 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
         pass
 
     pose_frames = {}
-    pose_roles = {}
+    pose_meta = {}
     for name in pose_names:
         frames = _frames_rgba(COMFY_OUTPUT_DIR / pose_files[name])
         if len(frames) > 1:                  # drop the duplicated final loop frame
             frames = frames[:-1]
         pose_frames[name] = frames
-        pose_roles[name] = profile.pose(name).runtime_role
+        p = profile.pose(name)
+        pose_meta[name] = {"runtime_role": p.runtime_role, "loop": p.loop,
+                           "timed_buffer_ms": p.timed_buffer_ms, "view": p.view}
 
     breed_id = breed_id or _slug(animal)
     zip_bytes = pack_datsme_bundle(pose_frames, breed_id,
                                    display_name or animal.title(),
-                                   pose_roles=pose_roles,
+                                   pose_meta=pose_meta,
                                    movement_class=profile.movement_class,
+                                   view=profile.view,
                                    on_frame=lambda done, total: prog(
                                        "Cutting out backgrounds & packing…",
                                        round(0.85 + 0.14 * done / total, 3)))

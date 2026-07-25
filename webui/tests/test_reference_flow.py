@@ -62,9 +62,9 @@ def no_gpu(app_mod, monkeypatch):
     calls = []
 
     def fake_render(description, request, owner, reference_path=None, strength=None,
-                    isolate=False):
+                    isolate=False, base_pose="standing"):
         calls.append({"description": description, "reference_path": reference_path,
-                      "strength": strength, "isolate": isolate})
+                      "strength": strength, "isolate": isolate, "base_pose": base_pose})
         buf = io.BytesIO()
         Image.new("RGB", (64, 64), (10, 20, 30)).save(buf, "PNG")
         return buf.getvalue()

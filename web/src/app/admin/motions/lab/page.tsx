@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  motionAdmin, motionLab, getDatsmeSession, AdminApiError, CANONICAL_POSES,
+  motionAdmin, motionLab, getDatsmeSession, AdminApiError, CANONICAL_POSES, fetchMotions,
   type MotionAdminList, type MotionProfileDetail, type MotionProfileFile, type LabAsset, type LabJob, type LabEndpoint,
 } from "@/lib/api";
 import { ProfileEditor, type Draft } from "../ProfileEditor";
@@ -68,14 +68,18 @@ export default function MotionLabPage() {
   const [profileKey, setProfileKey] = useState("");
   const [detail, setDetail] = useState<MotionProfileDetail | null>(null);
   const [animal, setAnimal] = useState("robin");
+  const [matchedProfileFor, setMatchedProfileFor] = useState("");   // the animal the profile was auto-matched from
   const [seed, setSeed] = useState(DEFAULT_SEED);
   const [base, setBase] = useState<LabAsset | null>(null);
+  const [basePose, setBasePose] = useState("standing");   // the posture the base still is drawn in (profile.base_pose)
+  const [baseKind, setBaseKind] = useState<"" | "suggest" | "save">("");   // base-pose card's suggest/save op
   const [baseBusy, setBaseBusy] = useState(false);
   const [baseJob, setBaseJob] = useState<string | null>(null);
   const [baseElapsed, setBaseElapsed] = useState(0);
   const [basePhase, setBasePhase] = useState<Phase>("running");
   const [cells, setCells] = useState<Cells>({});
   const [selected, setSelected] = useState<string[]>([]);
+  const [baseSelected, setBaseSelected] = useState(false);   // the "Base" pill — its card is closed by default
   const [busyAll, setBusyAll] = useState<"" | "draw" | "animate" | "save">("");
   const [endpoints, setEndpoints] = useState<LabEndpoint[]>([]);
   const [notice, setNotice] = useState("");
@@ -86,7 +90,7 @@ export default function MotionLabPage() {
   const [editBusy, setEditBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState(false);
   // Save writes straight to the motion profile (overwriting the stored clause), so it is confirmed.
-  const [confirmSave, setConfirmSave] = useState<{ kind: "one" | "all"; name?: string } | null>(null);
+  const [confirmSave, setConfirmSave] = useState<{ kind: "one" | "all" | "base"; name?: string } | null>(null);
 
   const loadConfig = () => motionLab.config().then((c) => setEndpoints(c.endpoints)).catch(() => {});
   async function toggleGpu(index: number) {
@@ -123,16 +127,35 @@ export default function MotionLabPage() {
       const next: Cells = {};
       for (const n of enabled) next[n] = { clause: d.profile.poses[n].control?.pose ?? "", still: null, loop: null, busy: "", jobId: null, elapsed: 0, phase: "running" };
       setCells(next);
-      const withClause = enabled.filter((n) => d.profile.poses[n].control?.kind === "pose_prompt");
-      const def = enabled.filter((n) => ["walk", "idle"].includes(n) || withClause.includes(n));
-      setSelected(def.length ? def : enabled.slice(0, 3));
-      if (resetBase) setBase(null);
+      // Default-open: walk + idle only (the required active/rest pair). Base and the rest stay closed.
+      const def = enabled.filter((n) => ["walk", "idle"].includes(n));
+      setSelected(def.length ? def : enabled.slice(0, 2));
+      setBasePose(d.profile.base_pose ?? "standing");
+      if (resetBase) { setBase(null); setBaseSelected(false); }
     }).catch(() => setDetail(null));
   }, []);
 
   useEffect(() => {
     if (profileKey) loadProfileDetail(profileKey);
   }, [profileKey, loadProfileDetail]);
+
+  // Auto-match the motion profile to the typed animal (keyword resolution — same map the
+  // design page uses, so "shark" → aquatic). Debounced; only re-runs when the animal text
+  // changes, so a manual profile pick afterward sticks until the animal is edited again.
+  useEffect(() => {
+    const a = animal.trim();
+    if (!a || !list) return;
+    const t = setTimeout(async () => {
+      try {
+        const { profile } = await fetchMotions(a);
+        if (profile && list.profiles.some((p) => p.key === profile)) {
+          setProfileKey(profile);
+          setMatchedProfileFor(a);
+        }
+      } catch { /* best-effort — the admin can still pick a profile manually */ }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [animal, list]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   function clearRenders() {
     setBase(null);
@@ -143,7 +166,8 @@ export default function MotionLabPage() {
   // --- core ops: start a job, poll it (timer + phase), return the asset or null (canceled) ---
   async function doDrawBase(): Promise<LabAsset | null> {
     setBaseElapsed(0); setBasePhase("pending");
-    const { job_id } = await motionLab.startStill(animal, "", seed);
+    // The base still's pose word IS base_pose (empty → the backend's "standing" default).
+    const { job_id } = await motionLab.startStill(animal, basePose.trim(), seed);
     setBaseJob(job_id);
     try {
       const a = await pollJob(job_id, (e, ph) => { setBaseElapsed(e); setBasePhase(ph); });
@@ -215,6 +239,31 @@ export default function MotionLabPage() {
     patch(name, { clause: detail?.profile.poses[name]?.control?.pose ?? "", still: null, loop: null });
   }
 
+  // --- Base Pose card: authored like a pose (clause + suggest + draw + save), minus the
+  // animation — the base is a still, not a loop. It IS profile.base_pose (§SPEC_BUNDLE_MOTION). ---
+  async function suggestBasePose() {
+    setBaseKind("suggest"); setErr(""); setNotice("");
+    try {
+      const { clause } = await motionLab.suggestClause(animal, "base resting pose", detail?.profile.movement_class ?? "");
+      setBasePose(clause.trim()); setBase(null);
+    } catch (e) { setErr(e instanceof AdminApiError ? e.message : "Suggest failed."); }
+    finally { setBaseKind(""); }
+  }
+  function revertBasePose() {
+    setBasePose(detail?.profile.base_pose ?? "standing"); setBase(null);
+  }
+  async function saveBasePose() {
+    if (!detail) return;
+    setBaseKind("save"); setErr(""); setNotice("");
+    try {
+      const next = structuredClone(detail.profile);
+      next.base_pose = basePose.trim() || "standing";
+      await motionAdmin.update(profileKey, next, detail.label);
+      setNotice(`Saved base pose to ${profileKey} — live now.`);
+      setDetail(await motionAdmin.get(profileKey));
+    } catch (e) { setErr(saveErr(e)); } finally { setBaseKind(""); }
+  }
+
   // --- "all" (CONCURRENT: fire every column at once so the backend spreads them
   // across GPUs; extras queue in ComfyUI. One column failing/canceling doesn't stop
   // the others) ---
@@ -251,8 +300,10 @@ export default function MotionLabPage() {
     setBusyAll("save"); setErr(""); setNotice("");
     try {
       const clauses = Object.fromEntries(columns.map((n) => [n, cells[n].clause]));
-      await motionAdmin.update(profileKey, profileWithClauses(detail.profile, clauses), detail.label);
-      setNotice(`Saved ${columns.length} pose(s) to ${profileKey} — live now.`);
+      const next = profileWithClauses(detail.profile, clauses);
+      next.base_pose = basePose.trim() || "standing";   // the base still's posture is profile content too
+      await motionAdmin.update(profileKey, next, detail.label);
+      setNotice(`Saved ${columns.length} pose(s) + base pose to ${profileKey} — live now.`);
       setDetail(await motionAdmin.get(profileKey));
     } catch (e) { setErr(saveErr(e)); } finally { setBusyAll(""); }
   }
@@ -323,7 +374,8 @@ export default function MotionLabPage() {
   const enabledPoses = detail ? CANONICAL_POSES.filter((n) => detail.profile.poses[n]?.enabled) : [];
   const columns = CANONICAL_POSES.filter((n) => selected.includes(n) && cells[n]);
   const anyBusy = baseBusy || busyAll !== "" || Object.values(cells).some((c) => c.busy);
-  const anyDirty = columns.some((n) => cells[n].clause.trim() !== (detail?.profile.poses[n]?.control?.pose ?? "").trim());
+  const baseDirty = basePose.trim() !== (detail?.profile.base_pose ?? "standing").trim();
+  const anyDirty = baseDirty || columns.some((n) => cells[n].clause.trim() !== (detail?.profile.poses[n]?.control?.pose ?? "").trim());
   const current = list?.profiles.find((p) => p.key === profileKey);
   const canWrite = !!list?.writable;
   const canDelete = canWrite && !!current && !current.is_default && current.pinned_by.length === 0;
@@ -373,11 +425,14 @@ export default function MotionLabPage() {
         <div className="flex flex-wrap items-end gap-3 border-t pt-3" style={{ borderColor: "var(--line)" }}>
           <div className="w-44">
             <label className={labelCls} style={{ color: "var(--muted)" }}>motion profile</label>
-            <select value={profileKey} onChange={(e) => setProfileKey(e.target.value)}
+            <select value={profileKey} onChange={(e) => { setProfileKey(e.target.value); setMatchedProfileFor(""); }}
               className="w-full rounded-lg px-3 py-2 text-sm outline-none" style={inputStyle}>
               {list?.profiles.map((p) => <option key={p.key} value={p.key}>{p.key}</option>)}
             </select>
           </div>
+          {matchedProfileFor && matchedProfileFor === animal.trim() && (
+            <span className="mono pb-2 text-xs" style={{ color: "var(--green)" }}>↳ auto-matched from “{matchedProfileFor}”</span>
+          )}
           <div className="flex items-center gap-2 pb-0.5">
             <button onClick={openEditProfile} disabled={!profileKey}
               className="mono rounded-lg border px-3 py-2 text-xs disabled:opacity-40"
@@ -398,6 +453,16 @@ export default function MotionLabPage() {
       {/* Poses — right below the motion profile: the available poses come from it */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <span className="mono text-xs" style={{ color: "var(--muted)" }}>poses:</span>
+        {/* Base pill — first, before Walk. Its card is closed by default; select it to edit the base pose. */}
+        {detail && (
+          <button onClick={() => setBaseSelected((v) => !v)}
+            className="mono rounded-full border px-3 py-1 text-xs"
+            style={baseSelected
+              ? { background: "rgba(99,102,241,0.18)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.5)" }
+              : { color: "var(--faint)", borderColor: "var(--line)" }}>
+            Base{(detail.profile.base_pose ?? "standing") !== "standing" ? " ✎" : ""}
+          </button>
+        )}
         {enabledPoses.map((n) => {
           const on = selected.includes(n);
           const hasClause = cells[n]?.clause.trim() || detail?.profile.poses[n]?.control?.kind === "pose_prompt";
@@ -449,6 +514,53 @@ export default function MotionLabPage() {
 
       {/* Columns */}
       <div className="flex gap-3 overflow-x-auto pb-3">
+        {/* Base Pose — the first card, shown only when the Base pill is selected. Authored like a
+            pose (clause + AI suggest + draw + save), but with NO animation: the base is the shared
+            still every clause-less pose draws from. */}
+        {detail && baseSelected && (
+          <div className="card w-56 shrink-0 overflow-hidden p-0" style={{ borderColor: "rgba(99,102,241,0.45)" }}>
+            <div className="flex items-center justify-between px-3 pt-3">
+              <span className="font-semibold" style={{ color: "var(--heading)" }}>Base Pose</span>
+              <span className="mono text-xs" style={{ color: "var(--accent)" }}>shared</span>
+            </div>
+            <div className="m-3 rounded-lg p-2" style={{ background: "#151515", border: "1px solid var(--line)" }}>
+              <div className="mono mb-1 flex items-center justify-between gap-2 text-xs" style={{ color: "var(--faint)" }}>
+                <span>base pose → base still</span>
+                <div className="flex shrink-0 items-center gap-1">
+                  {baseDirty && (
+                    <button onClick={revertBasePose} disabled={baseBusy || baseKind !== ""}
+                      className="mono rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-40"
+                      style={{ color: "var(--muted)", borderColor: "var(--line)" }}
+                      title="Revert to the saved base pose">↺ revert</button>
+                  )}
+                  <button onClick={suggestBasePose} disabled={baseBusy || baseKind !== ""}
+                    className="mono rounded border px-1.5 py-0.5 text-[10px] disabled:opacity-40"
+                    style={{ color: "var(--gold)", borderColor: "var(--line)" }}
+                    title="Draft a base pose with AI, then edit it">
+                    {baseKind === "suggest" ? "…" : "✨ suggest"}
+                  </button>
+                </div>
+              </div>
+              <textarea value={basePose} onChange={(e) => { setBasePose(e.target.value); setBase(null); }}
+                placeholder="base pose — e.g. standing · or: swimming, body horizontal and level"
+                className="mono mb-2 min-h-[44px] w-full resize-y rounded px-2 py-1 text-xs outline-none" style={inputStyle} />
+              <CellImg asset={base} size={168}
+                placeholder={baseBusy ? runLabel(true, basePhase, baseElapsed, "Drawing", "") : "Draw base"} />
+              <ActionRow label={runLabel(baseBusy, basePhase, baseElapsed, "Drawing", "Draw base")}
+                disabled={baseBusy || baseKind !== ""} onClick={drawBase} tone="draw"
+                onCancel={baseBusy ? () => cancelJob(baseJob) : undefined} />
+            </div>
+            <div className="px-3 pb-3">
+              <button onClick={() => setConfirmSave({ kind: "base" })} disabled={baseKind === "save" || !list?.writable || !baseDirty}
+                className="mono w-full rounded-lg py-1.5 text-xs font-bold disabled:opacity-40"
+                style={baseDirty
+                  ? { background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "var(--heading)", border: "1px solid rgba(99,102,241,0.5)" }
+                  : { background: "#1c1c1c", color: "var(--faint)", border: "1px solid var(--line)" }}>
+                {baseKind === "save" ? "Saving…" : baseDirty ? "Save base pose" : "Saved"}
+              </button>
+            </div>
+          </div>
+        )}
         {columns.map((name) => {
           const cell = cells[name];
           const isAnchored = !!cell.clause.trim();
@@ -514,7 +626,7 @@ export default function MotionLabPage() {
             </div>
           );
         })}
-        {!columns.length && (
+        {!columns.length && !baseSelected && (
           <div className="mono flex h-40 w-full items-center justify-center rounded-lg text-xs"
             style={{ color: "var(--faint)", background: "#151515", border: "1px dashed var(--line)" }}>
             Select one or more poses above.
@@ -537,13 +649,17 @@ export default function MotionLabPage() {
       {/* Save writes to the motion profile (overwriting the stored clause) — confirm it. */}
       <ConfirmModal open={!!confirmSave} tone="primary"
         title={confirmSave?.kind === "all"
-          ? `Save all clauses to "${profileKey}"?`
+          ? `Save base pose + all clauses to "${profileKey}"?`
+          : confirmSave?.kind === "base"
+          ? `Save base pose to "${profileKey}"?`
           : `Save clause to "${profileKey}.${confirmSave?.name}"?`}
         body={confirmSave?.kind === "all"
-          ? `This writes the edited pose clauses into the "${profileKey}" motion profile, OVERWRITING their current clauses. It goes live immediately for every animal that uses this profile.`
+          ? `This writes the base pose and the edited pose clauses into the "${profileKey}" motion profile, OVERWRITING their current values. It goes live immediately for every animal that uses this profile.`
+          : confirmSave?.kind === "base"
+          ? `This writes the base pose — the posture the shared base still is drawn in — into the "${profileKey}" motion profile, OVERWRITING its current value. It goes live immediately for every animal that uses this profile.`
           : `This writes the clause into ${profileKey}.${confirmSave?.name} in the "${profileKey}" motion profile, OVERWRITING its current clause. It goes live immediately for every animal that uses this profile.`}
-        confirmLabel={confirmSave?.kind === "all" ? "Save all to profile" : "Save to profile"}
-        onConfirm={() => { const c = confirmSave; setConfirmSave(null); if (c?.kind === "all") saveAll(); else if (c?.name) saveOne(c.name); }}
+        confirmLabel={confirmSave?.kind === "all" ? "Save all to profile" : confirmSave?.kind === "base" ? "Save base pose" : "Save to profile"}
+        onConfirm={() => { const c = confirmSave; setConfirmSave(null); if (c?.kind === "all") saveAll(); else if (c?.kind === "base") saveBasePose(); else if (c?.name) saveOne(c.name); }}
         onCancel={() => setConfirmSave(null)} />
     </main>
   );

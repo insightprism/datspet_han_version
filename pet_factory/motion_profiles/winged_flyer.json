@@ -2,6 +2,11 @@
   "key": "winged_flyer",
   "level": 3,
   "movement_class": "winged_flyer",
+  "view": {
+    "view_kind": "side",
+    "native_facing": "right",
+    "mirroring_policy": "flip"
+  },
   "keywords": [
     "dragon",
     "wyvern",
@@ -44,7 +49,8 @@
       "enabled": true,
       "runtime_role": "timed",
       "action": "settled with wings folded, resting",
-      "suffix": ", wings closed, still with slow breathing, resting loop, no camera movement, no panning"
+      "suffix": ", wings closed, still with slow breathing, resting loop, no camera movement, no panning",
+      "timed_buffer_ms": 6000
     },
     "sit": {
       "enabled": true,
@@ -62,13 +68,15 @@
       "enabled": true,
       "runtime_role": "triggered",
       "action": "surging upward in an excited burst",
-      "suffix": ", a quick upward wing-burst then settling, one reaction lift, no horizontal movement, no camera movement, no panning"
+      "suffix": ", a quick upward wing-burst then settling, one reaction lift, no horizontal movement, no camera movement, no panning",
+      "loop": false
     },
     "play": {
       "enabled": true,
       "runtime_role": "triggered",
       "action": "looping and flitting playfully",
-      "suffix": ", lively darting wing flicks, cheerful reaction loop, no camera movement, no panning"
+      "suffix": ", lively darting wing flicks, cheerful reaction loop, no camera movement, no panning",
+      "loop": false
     },
     "swim": {
       "enabled": false

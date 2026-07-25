@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "classes": [
+    "aquatic_swimmer",
+    "avian_biped",
+    "mammalian_quadruped",
+    "limbless_serpentine",
+    "winged_flyer"
+  ],
+  "profiles": [
+    {
+      "key": "aquatic",
+      "level": 3,
+      "movement_class": "aquatic_swimmer"
+    },
+    {
+      "key": "avian",
+      "level": 3,
+      "movement_class": "avian_biped"
+    },
+    {
+      "key": "quadruped",
+      "level": 3,
+      "movement_class": "mammalian_quadruped"
+    },
+    {
+      "key": "serpentine",
+      "level": 3,
+      "movement_class": "limbless_serpentine"
+    },
+    {
+      "key": "winged_flyer",
+      "level": 3,
+      "movement_class": "winged_flyer"
+    }
+  ]
+}

@@ -2,6 +2,11 @@
   "key": "avian",
   "level": 3,
   "movement_class": "avian_biped",
+  "view": {
+    "view_kind": "side",
+    "native_facing": "right",
+    "mirroring_policy": "flip"
+  },
   "keywords": [
     "bird",
     "sparrow",
@@ -106,7 +111,8 @@
       "enabled": true,
       "runtime_role": "timed",
       "action": "roosting with head tucked into feathers",
-      "suffix": ", still and puffed up, slow breathing, eyes closed, resting loop, no camera movement, no panning"
+      "suffix": ", still and puffed up, slow breathing, eyes closed, resting loop, no camera movement, no panning",
+      "timed_buffer_ms": 6000
     },
     "sit": {
       "enabled": true,
@@ -124,13 +130,15 @@
       "enabled": true,
       "runtime_role": "triggered",
       "action": "flapping up in a startled hop",
-      "suffix": ", wings flaring out in a quick upward flutter then settling, one reaction flutter, no camera movement, no panning"
+      "suffix": ", wings flaring out in a quick upward flutter then settling, one reaction flutter, no camera movement, no panning",
+      "loop": false
     },
     "play": {
       "enabled": true,
       "runtime_role": "triggered",
       "action": "bobbing and fluttering playfully",
-      "suffix": ", lively wing flicks and head bobs, cheerful reaction loop, no camera movement, no panning"
+      "suffix": ", lively wing flicks and head bobs, cheerful reaction loop, no camera movement, no panning",
+      "loop": false
     },
     "swim": {
       "enabled": false

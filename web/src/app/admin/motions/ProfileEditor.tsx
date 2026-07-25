@@ -26,7 +26,13 @@ export function blankProfile(): MotionProfileFile {
       ? { enabled: true, runtime_role: p === "idle" ? "rest" : "active", action: "", suffix: "" }
       : { enabled: false };
   }
-  return { key: "", level: 3, movement_class: "", keywords: [], poses };
+  // view is required at write time (SPEC_BUNDLE_MOTION_CONTRACT §3.3); seed today's
+  // prompt discipline. loop/timed_buffer_ms are per-pose and default-inert, so a fresh
+  // profile needs neither until a pose becomes `triggered` (the role select sets loop).
+  return {
+    key: "", level: 3, movement_class: "", keywords: [], poses,
+    view: { view_kind: "side", native_facing: "right", mirroring_policy: "flip" },
+  };
 }
 
 export function ProfileEditor({ draft, setDraft, errors, busy, defaultKey, onSave, onCancel }: {
@@ -113,7 +119,11 @@ export function ProfileEditor({ draft, setDraft, errors, busy, defaultKey, onSav
                   {name}{required && " *"}
                 </label>
                 {pose.enabled && (
-                  <select value={pose.runtime_role ?? "active"} onChange={(e) => setPose(name, { runtime_role: e.target.value })}
+                  // A `triggered` reaction is one-shot; everything else loops. Setting
+                  // loop alongside the role keeps the profile write-valid (§3.1) without a
+                  // separate control the operator could forget.
+                  <select value={pose.runtime_role ?? "active"}
+                    onChange={(e) => setPose(name, { runtime_role: e.target.value, loop: e.target.value !== "triggered" })}
                     className="rounded px-2 py-1 text-xs outline-none" style={inputStyle}>
                     {POSE_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
                   </select>

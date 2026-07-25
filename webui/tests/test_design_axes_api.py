@@ -51,7 +51,7 @@ def no_gpu(app_mod, monkeypatch):
     calls = []
 
     def fake_render(description, request, owner, reference_path=None, strength=None,
-                    isolate=False):
+                    isolate=False, base_pose="standing"):
         calls.append({"description": description, "reference_path": reference_path,
                       "strength": strength, "isolate": isolate})
         buf = io.BytesIO()

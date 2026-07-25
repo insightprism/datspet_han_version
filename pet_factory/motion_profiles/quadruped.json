@@ -2,6 +2,11 @@
   "key": "quadruped",
   "level": 3,
   "movement_class": "mammalian_quadruped",
+  "view": {
+    "view_kind": "side",
+    "native_facing": "right",
+    "mirroring_policy": "flip"
+  },
   "keywords": [
     "dog",
     "cat",
@@ -67,7 +72,8 @@
       "enabled": true,
       "runtime_role": "timed",
       "action": "curled up asleep",
-      "suffix": ", lying still with slow steady breathing, eyes closed, motionless resting loop, no camera movement, no panning"
+      "suffix": ", lying still with slow steady breathing, eyes closed, motionless resting loop, no camera movement, no panning",
+      "timed_buffer_ms": 6000
     },
     "sit": {
       "enabled": true,
@@ -85,13 +91,15 @@
       "enabled": true,
       "runtime_role": "triggered",
       "action": "jumping upward excitedly",
-      "suffix": ", springing up off all four legs then landing, one bouncy reaction hop, no horizontal movement, no camera movement, no panning"
+      "suffix": ", springing up off all four legs then landing, one bouncy reaction hop, no horizontal movement, no camera movement, no panning",
+      "loop": false
     },
     "play": {
       "enabled": true,
       "runtime_role": "triggered",
       "action": "playfully bouncing and wagging",
-      "suffix": ", a lively playful bounce with tail wagging, energetic reaction loop, no horizontal movement, no camera movement, no panning"
+      "suffix": ", a lively playful bounce with tail wagging, energetic reaction loop, no horizontal movement, no camera movement, no panning",
+      "loop": false
     },
     "swim": {
       "enabled": false

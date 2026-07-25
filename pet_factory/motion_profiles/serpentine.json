@@ -2,6 +2,11 @@
   "key": "serpentine",
   "level": 3,
   "movement_class": "limbless_serpentine",
+  "view": {
+    "view_kind": "side",
+    "native_facing": "right",
+    "mirroring_policy": "flip"
+  },
   "keywords": [
     "snake",
     "serpent",
@@ -40,7 +45,8 @@
       "enabled": true,
       "runtime_role": "timed",
       "action": "coiled tightly, head resting, still",
-      "suffix": ", motionless, slow breathing, resting loop, no camera movement, no panning"
+      "suffix": ", motionless, slow breathing, resting loop, no camera movement, no panning",
+      "timed_buffer_ms": 6000
     },
     "sit": {
       "enabled": true,

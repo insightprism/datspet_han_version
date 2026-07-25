@@ -2,6 +2,12 @@
   "key": "aquatic",
   "level": 3,
   "movement_class": "aquatic_swimmer",
+  "base_pose": "swimming, body horizontal and level in the water, tail trailing behind, fins out to the sides, no legs",
+  "view": {
+    "view_kind": "side",
+    "native_facing": "right",
+    "mirroring_policy": "flip"
+  },
   "keywords": [
     "fish",
     "goldfish",
@@ -30,26 +36,35 @@
     "walk": {
       "enabled": true,
       "runtime_role": "active",
-      "action": "swimming forward with gentle tail strokes",
-      "suffix": ", fins waving, tail swishing side to side, drifting in place, no camera movement, no panning"
+      "action": "swimming forward at a steady cruise",
+      "suffix": ", body level and horizontal, tail sweeping side to side, fins gently sculling, gliding in place, no legs, no walking, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "swimming, body level and horizontal in a gentle S-curve, tail bent mid-stroke, fins extended out to the sides, head facing forward mid-glide, no legs"
+      }
     },
     "idle": {
       "enabled": true,
       "runtime_role": "rest",
-      "action": "hovering in place, fins fluttering",
-      "suffix": ", small fin movements, gentle floating bob, no camera movement, no panning"
+      "action": "hovering in place, holding steady in the water",
+      "suffix": ", body level and horizontal, fins slowly sculling, a gentle floating bob, no legs, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "swimming, body level and horizontal, fins relaxed and slightly extended, gently undulating in place, no legs"
+      }
     },
     "run": {
       "enabled": true,
       "runtime_role": "active",
-      "action": "darting quickly with fast tail beats",
-      "suffix": ", rapid tail strokes, body streamlined and driving forward, in place, no camera movement, no panning"
+      "action": "darting forward in a fast burst",
+      "suffix": ", body streamlined and horizontal, rapid tail beats driving forward, fins swept back, surging in place, no legs, no camera movement, no panning"
     },
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "resting near the bottom, barely moving",
-      "suffix": ", still with slow gentle fin drift, resting loop, no camera movement, no panning"
+      "action": "resting still, drifting slowly",
+      "suffix": ", body level and horizontal, slow gentle fin drift, calm resting loop, no legs, no camera movement, no panning",
+      "timed_buffer_ms": 6000
     },
     "sit": {
       "enabled": false
@@ -57,8 +72,8 @@
     "eat": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "nibbling at floating food",
-      "suffix": ", small mouth movements and quick nibbles, gentle fin adjustments, no camera movement, no panning"
+      "action": "nibbling at food drifting in front of it",
+      "suffix": ", body level and horizontal, small mouth movements and quick nibbles, gentle fin adjustments, no legs, no camera movement, no panning"
     },
     "jump": {
       "enabled": false
@@ -66,14 +81,19 @@
     "play": {
       "enabled": true,
       "runtime_role": "triggered",
-      "action": "wiggling and spinning playfully",
-      "suffix": ", a lively swishing spin, cheerful reaction loop, no camera movement, no panning"
+      "action": "wiggling and doing a playful little barrel roll",
+      "suffix": ", body horizontal, a lively swishing spin, cheerful reaction loop, no legs, no camera movement, no panning",
+      "loop": false
     },
     "swim": {
       "enabled": true,
       "runtime_role": "active",
-      "action": "swimming smoothly with flowing fins",
-      "suffix": ", graceful fin and tail motion, gliding in place, no camera movement, no panning"
+      "action": "gliding smoothly with flowing fins",
+      "suffix": ", body level and horizontal, graceful fin and tail undulation, gliding in place, no legs, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "swimming, body level and horizontal, long flowing S-curve through the body, fins spread wide and rippling, tail sweeping in a smooth arc, no legs"
+      }
     },
     "fly": {
       "enabled": false

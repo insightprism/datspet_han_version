@@ -674,10 +674,23 @@ def _load_reference(reference_id: str, owner: Optional[str]) -> dict:
     return meta
 
 
+def _base_pose_for(motion_profile_key: Optional[str], animal: str = "") -> str:
+    """The base still's posture for a resolved motion profile (SPEC_BUNDLE_MOTION_CONTRACT
+    §3.1) — e.g. aquatic → "swimming, body horizontal". Pure data (motion_profiles), safe
+    on the GPU-less tier. Prefers the pinned key (skew-safe), else keyword-resolves `animal`,
+    else "standing". Threaded into _render_still so the design-page still matches the build."""
+    if motion_profile_key:
+        return motion_profiles_mod.load_motion_profile(motion_profile_key, fallback_animal=animal).base_pose
+    if animal:
+        return motion_profiles_mod.resolve_motion_profile(animal).base_pose
+    return "standing"
+
+
 def _render_still(description: str, request: Request, owner: Optional[str],
                   reference_path: Optional[Path] = None,
                   strength: Optional[float] = None,
-                  isolate: bool = False) -> bytes:
+                  isolate: bool = False,
+                  base_pose: str = "standing") -> bytes:
     """Render one still — the ~10 s GPU step, and the ONE place that knows how to
     reach a renderer.
 
@@ -709,6 +722,12 @@ def _render_still(description: str, request: Request, owner: Optional[str],
         if status["busy"]:
             raise HTTPException(423, "The workshop is busy generating a pet — try again in a bit.")
         params = {"description": description}
+        # NOTE (base_pose parity): the pool preview handler (pet_preview) does not yet
+        # accept a base_pose param, so a POOL preview still draws the profile's default
+        # posture. The local path below honours base_pose. Reaching prod parity needs a
+        # pet_preview handler that takes base_pose + a fleet roll (like the pose_anchor v4
+        # change) — real BUILDS already honour it via make_pet_zip. Do NOT send an unknown
+        # param here: the pool validates strictly and would 422 on a handler without it.
         if reference_path is not None:
             # The v1 shape. Omitting these two IS the v2 shape — it hard-fails 422
             # on a v1 node, which is why both nodes must be v2 first (§10.1).
@@ -737,9 +756,9 @@ def _render_still(description: str, request: Request, owner: Optional[str],
         raise HTTPException(423, "The GPU is busy generating a pet — try again in a bit.")
     try:
         if reference_path is None:
-            return render_design_still(description)
+            return render_design_still(description, base_pose=base_pose)
         return render_design_still(description, str(reference_path), strength,
-                                   isolate=isolate)
+                                   isolate=isolate, base_pose=base_pose)
     except Exception as e:
         # The local renderer drives ComfyUI over HTTP. When it isn't up — or is on a
         # port other than PET_FACTORY_COMFY_URL claims — this raises a bare
@@ -904,11 +923,12 @@ def create_reference(
         # AI-classified from the name here at fill time (motion_resolver: Haiku, with
         # a keyword fallback — SPEC_MOTION_PROFILES §3.5) and pinned on the record, so
         # "blue jay" lands on `avian` without an exhaustive keyword list.
-        png = _render_still(animal, request, owner)
+        profile_key = motion_resolver.resolve_motion_key(animal)
+        png = _render_still(animal, request, owner, base_pose=_base_pose_for(profile_key, animal))
         return _reference_record(_save_reference(
             png, owner=owner, description=animal.lower(),
             display_name=animal.title(),
-            motion_profile=motion_resolver.resolve_motion_key(animal),
+            motion_profile=profile_key,
             source="txt2img", generated=True,
             surface=_resolve_typed_surface(animal)))
 
@@ -935,6 +955,10 @@ def create_reference(
         suggested = caption["subject"].strip()[:60]
 
     subject = animal or suggested or "pet"
+    # Resolve the motion profile ONCE from the subject noun — used both for the base pose
+    # the redraw is drawn in (SPEC_BUNDLE_MOTION_CONTRACT §3.1) and pinned on the record below.
+    surface_noun = animal or suggested or ""
+    upload_profile_key = motion_resolver.resolve_motion_key(surface_noun) if surface_noun else None
     # Extend the redraw prompt with the AI's short visual cue, but ONLY when the AI
     # supplied the noun (the field was empty) — _remix_prompt repeats the description
     # to win over the source's colours, so a features hint reinforces the redraw.
@@ -958,21 +982,20 @@ def create_reference(
         # reaches here — its reference is already a clean sprite.
         isolate = settings_admin.bool_setting("upload_isolate")
         png = _render_still(render_description, request, owner, reference_path=tmp,
-                            strength=redraw_strength, isolate=isolate)
+                            strength=redraw_strength, isolate=isolate,
+                            base_pose=_base_pose_for(upload_profile_key, surface_noun))
     finally:
         tmp.unlink(missing_ok=True)
     # §3.4: a photo carries no reliable surface signal → universal axes only; but a
     # NAME (typed OR captioned) may promote via the keyword map — which is how an
     # upload recovers the coat/plumage axis it used to lose (app.py comment above).
-    surface_noun = animal or suggested or ""
     return _reference_record(_save_reference(
         png, owner=owner, description=subject.lower(),
         display_name=subject.title(),
         # Classify from the subject noun (typed or captioned) so an uploaded pet still
-        # gets the right pose menu + body type (motion_resolver: AI, keyword fallback).
-        # No noun at all → leave it to keyword-resolve from the description at build.
-        motion_profile=(motion_resolver.resolve_motion_key(surface_noun)
-                        if surface_noun else None),
+        # gets the right pose menu + body type (resolved once above; motion_resolver: AI,
+        # keyword fallback). No noun at all → leave it to keyword-resolve at build.
+        motion_profile=upload_profile_key,
         source="upload", generated=True, suggested_subject=suggested,
         surface=_resolve_typed_surface(surface_noun) if surface_noun else None))
 
@@ -1108,7 +1131,8 @@ def preview_design(
 
     png_path, _ = _reference_paths(ref["id"])
     png = _render_still(description, request, owner,
-                        reference_path=png_path, strength=strength)
+                        reference_path=png_path, strength=strength,
+                        base_pose=_base_pose_for(ref.get("motion_profile"), species))
 
     # The new record carries the SHORT species phrase ("purple corgi"), NOT the
     # ~240-char composed design string (§7.3). Generate is always as-is now, so

@@ -271,12 +271,22 @@ export interface MotionPoseControl {
   ref?: string;
   strength?: number;
 }
+// SPEC_BUNDLE_MOTION_CONTRACT §3.3 — the view block ({view_kind, native_facing,
+// mirroring_policy}); profile-level default + optional per-pose override.
+export interface MotionViewSpec {
+  view_kind: string;
+  native_facing: string;
+  mirroring_policy: string;
+}
 export interface MotionPoseSpec {
   enabled: boolean;
   runtime_role?: string | null;
   action?: string | null;
   suffix?: string;
   control?: MotionPoseControl | null;
+  loop?: boolean;                    // §3.1 — a `triggered` pose is one-shot (false)
+  timed_buffer_ms?: number | null;   // §3.2 — host `timed` dwell; only when authored
+  view?: MotionViewSpec | null;      // §3.3 — per-pose view override
 }
 export interface MotionProfileFile {
   key: string;
@@ -284,6 +294,9 @@ export interface MotionProfileFile {
   movement_class: string;
   keywords: string[];
   poses: Record<string, MotionPoseSpec>;
+  view?: MotionViewSpec;   // §3.3 — required at write time; optional here for round-trip
+  base_pose?: string;      // the posture the shared base still is drawn in (default "standing");
+                           // aquatic bodies set "swimming, body horizontal" so fish aren't upright
 }
 export interface MotionProfileSummary {
   key: string;

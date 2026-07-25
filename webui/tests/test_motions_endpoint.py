@@ -122,7 +122,8 @@ def _reference(client, app_mod, monkeypatch, animal="a red fox"):
     import io
     from PIL import Image
 
-    def fake_render(description, request, owner, reference_path=None, strength=None):
+    def fake_render(description, request, owner, reference_path=None, strength=None,
+                    isolate=False, base_pose="standing"):
         buf = io.BytesIO()
         Image.new("RGB", (32, 32), (7, 7, 7)).save(buf, "PNG")
         return buf.getvalue()

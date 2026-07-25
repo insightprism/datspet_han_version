@@ -118,7 +118,8 @@ def test_generate_purges_only_the_callers_draft(app_client, dpp_env, monkeypatch
     import io
     from PIL import Image
 
-    def fake_render(description, request, owner, reference_path=None, strength=None):
+    def fake_render(description, request, owner, reference_path=None, strength=None,
+                    isolate=False, base_pose="standing"):
         buf = io.BytesIO()
         Image.new("RGB", (32, 32), (9, 9, 9)).save(buf, "PNG")
         return buf.getvalue()

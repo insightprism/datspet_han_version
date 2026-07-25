@@ -64,6 +64,20 @@ def test_validator_rejects_each_contract_violation():
     assert broken(lambda p: p["poses"]["run"].update(control={"kind": "pose_prompt"})) # pose_prompt, no clause
     assert broken(lambda p: p["poses"]["run"].update(control={"kind": "pose_prompt", "pose": "  "}))  # blank clause
     assert broken(lambda p: p["poses"]["run"].update(control="notanobject"))           # non-object
+    # view (§3.3) / loop (§3.1) / timed_buffer_ms (§3.2)
+    assert broken(lambda p: p.pop("view"))                             # view is required
+    assert broken(lambda p: p.update(view={"view_kind": "side"}))      # incomplete view block
+    assert broken(lambda p: p.update(view="notanobject"))              # non-object view
+    assert broken(lambda p: p["poses"]["jump"].update(loop=True))      # triggered must be loop:false
+    assert broken(lambda p: p["poses"]["walk"].update(loop="yes"))     # loop non-bool
+    assert broken(lambda p: p["poses"]["sleep"].update(timed_buffer_ms=-5))    # non-positive buffer
+    assert broken(lambda p: p["poses"]["sleep"].update(timed_buffer_ms=1.5))   # non-integer buffer
+    assert broken(lambda p: p["poses"]["walk"].update(view={"view_kind": 5}))  # bad per-pose view
+    # base_pose (optional): absent is fine, present must be a non-empty string
+    assert not broken(lambda p: p.pop("base_pose", None))       # optional — omitting is valid
+    assert not broken(lambda p: p.update(base_pose="swimming, body horizontal"))  # valid string
+    assert broken(lambda p: p.update(base_pose=""))             # present but blank
+    assert broken(lambda p: p.update(base_pose=42))             # present but non-string
 
 
 # --- pose_prompt control (§3.9.1) ------------------------------------------
@@ -129,6 +143,31 @@ def test_enabled_poses_have_action_and_valid_role():
             assert p.runtime_role in mp.ALLOWED_ROLES, (
                 f"{entry['key']}.{name}: runtime_role {p.runtime_role!r} not allowed"
             )
+
+
+def test_every_profile_declares_side_right_view():
+    # §3.3 — view is explicit content now (not the packer's old hardcoded constants).
+    # Today's prompt discipline is "side profile view, facing right"; the guard asserts
+    # every shipped profile declares a view that agrees, so the manifest can't silently
+    # diverge from what the generation prompts actually draw.
+    for entry in _all_entries():
+        prof = mp.load_motion_profile(entry["key"])
+        assert prof.view is not None, f"{entry['key']}: must declare a view block"
+        assert prof.view.get("view_kind") == "side", f"{entry['key']}: view_kind must be 'side'"
+        assert prof.view.get("native_facing") == "right", f"{entry['key']}: native_facing must be 'right'"
+        assert prof.view.get("mirroring_policy"), f"{entry['key']}: mirroring_policy required"
+
+
+def test_triggered_poses_are_one_shot_others_loop():
+    # §3.1 — a reaction plays once and returns to rest (loop:false); active/rest gaits loop.
+    for entry in _all_entries():
+        prof = mp.load_motion_profile(entry["key"])
+        for name in prof.enabled_poses():
+            p = prof.pose(name)
+            if p.runtime_role == "triggered":
+                assert p.loop is False, f"{entry['key']}.{name}: triggered pose must set loop:false"
+            elif p.runtime_role in ("active", "rest"):
+                assert p.loop is True, f"{entry['key']}.{name}: {p.runtime_role} pose must loop"
 
 
 def test_keywords_unique_across_all_profiles():
@@ -245,3 +284,25 @@ def test_classify_cached_matches_reading_from_disk():
     for a in ["golden retriever", "cobra", "betta fish", "baby dragon", "sparrow",
               "cat", "penguin", "sea snake", "dragonfly", "horse", "goldfish", "zzz"]:
         assert mp.resolve_motion_profile(a).key == classify_from_disk(a), f"drift on {a!r}"
+
+
+# --- published vocabulary artifact (SPEC_BUNDLE_MOTION_CONTRACT §7) ----------
+def test_motion_vocabulary_artifact_in_sync():
+    # The checked-in motion_vocabulary.json must equal a fresh export, so the DatsMe
+    # host can regenerate its own copy from ours instead of hand-maintaining the class
+    # list. Drift (a new/renamed movement_class) fails the build here.
+    import importlib.util
+
+    repo_root = _DIR.parents[1]
+    script = repo_root / "scripts" / "export_motion_vocabulary.py"
+    spec = importlib.util.spec_from_file_location("export_motion_vocabulary", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    on_disk = json.loads((repo_root / "motion_vocabulary.json").read_text())
+    assert on_disk == mod.build_vocabulary(), (
+        "motion_vocabulary.json is stale — run: python scripts/export_motion_vocabulary.py"
+    )
+    # Every published class is backed by a shipped profile's movement_class.
+    shipped = {mp.load_motion_profile(e["key"]).movement_class for e in _all_entries()}
+    assert set(on_disk["classes"]) == shipped

@@ -34,6 +34,24 @@ _KEY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 _MIN_LEVEL, _MAX_LEVEL = 1, 4
 
+# The three fields of a view block (SPEC_BUNDLE_MOTION_CONTRACT §3.3). Shape only —
+# whether the values are `side`/`right` (today's prompt discipline) is a build-guard
+# assertion on shipped content, not a write-time rule that would reject a future
+# top-down profile.
+_VIEW_KEYS = ("view_kind", "native_facing", "mirroring_policy")
+
+
+def _view_errors(view: object, where: str) -> list[str]:
+    """Shape-check a view block: an object with three non-empty string fields."""
+    if not isinstance(view, dict):
+        return [f"{where} must be an object with {list(_VIEW_KEYS)}"]
+    errs: list[str] = []
+    for k in _VIEW_KEYS:
+        v = view.get(k)
+        if not isinstance(v, str) or not v.strip():
+            errs.append(f"{where}.{k} must be a non-empty string")
+    return errs
+
 
 def _registry_path() -> Path:
     return _DIR / "registry.json"
@@ -87,6 +105,24 @@ def validate_profile(
     if not isinstance(mc, str) or not mc.strip():
         errors.append("movement_class is required and must be a non-empty string")
 
+    # --- view: required sheet-level block (§3.3) ---
+    # Making it explicit (rather than the packer's old hardcoded constants) is the
+    # whole point of §3.3: the prompts say "side profile, facing right" *because*
+    # the profile declares it, and the guard test can assert the two agree.
+    view = raw.get("view")
+    if view is None:
+        errors.append(f"view is required (object with {list(_VIEW_KEYS)})")
+    else:
+        errors.extend(_view_errors(view, "view"))
+
+    # --- base_pose: optional posture word for the base still (default "standing") ---
+    # The posture the shared base sprite is drawn in; the factory feeds it to
+    # _base_prompt in place of "standing" so aquatic bodies draw horizontal. Optional
+    # (omitting it keeps "standing"); when present it must be a real non-empty phrase.
+    base_pose = raw.get("base_pose")
+    if base_pose is not None and (not isinstance(base_pose, str) or not base_pose.strip()):
+        errors.append("base_pose must be a non-empty string when present")
+
     # --- poses: exactly the canonical set, no more/less ---
     poses = raw.get("poses")
     if not isinstance(poses, dict):
@@ -139,6 +175,23 @@ def validate_profile(
                     errors.append(
                         f"pose {name!r} control kind 'pose_prompt' requires a non-empty 'pose' clause"
                     )
+
+        # --- loop / timed_buffer_ms / view (§3.1/§3.2/§3.3) ---
+        loop = spec.get("loop", True)
+        if not isinstance(loop, bool):
+            errors.append(f"pose {name!r} loop must be a boolean")
+        elif enabled and spec.get("runtime_role") == "triggered" and loop:
+            # A reaction plays once and returns to rest; a looping trigger holds its
+            # last frame forever on the host. The authoring rule §3.1 mandates.
+            errors.append(f"pose {name!r} is 'triggered' and must declare loop: false")
+
+        buf = spec.get("timed_buffer_ms")
+        if buf is not None and (not isinstance(buf, int) or isinstance(buf, bool) or buf <= 0):
+            errors.append(f"pose {name!r} timed_buffer_ms must be a positive integer when present")
+
+        pose_view = spec.get("view")
+        if pose_view is not None:
+            errors.extend(_view_errors(pose_view, f"pose {name!r} view"))
 
     # --- walk + idle must be enabled ---
     for req in REQUIRED_POSES:

@@ -61,6 +61,10 @@ class Pose:
     action: Optional[str] = None
     suffix: str = ""
     control: Optional[dict] = None   # §3.9.1 per-pose control block; None = loop-only (today)
+    # SPEC_BUNDLE_MOTION_CONTRACT §3.1/§3.2/§3.3 — bundle-emitted, default-inert:
+    loop: bool = True                # sprite-loop flag; a `triggered` pose authors false
+    timed_buffer_ms: Optional[int] = None  # host `timed` dwell; emitted only when authored
+    view: Optional[dict] = None      # per-pose view override; None ⇒ the profile-level view
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,13 @@ class MotionProfile:
     movement_class: str
     poses: dict                       # pose name -> Pose (the file's own full canonical set)
     keywords: tuple = ()              # the file's classification keywords (cached; §3.5)
+    view: Optional[dict] = None       # SPEC_BUNDLE_MOTION_CONTRACT §3.3 — the sheet-level view
+                                      # block ({view_kind, native_facing, mirroring_policy})
+    base_pose: str = "standing"       # the posture word the base still is drawn in — fed to
+                                      # _base_prompt/_remix_prompt in place of the hardcoded
+                                      # "standing". Body-type content: quadrupeds stand, aquatic
+                                      # bodies "swim, body horizontal". Default reproduces the
+                                      # old hardcoded base for every profile that omits it.
 
     def pose(self, name: str) -> Optional[Pose]:
         return self.poses.get(name)
@@ -135,6 +146,9 @@ def _load_profile_by_key(key: str) -> Optional[MotionProfile]:
                 action=spec.get("action"),
                 suffix=spec.get("suffix", ""),
                 control=spec.get("control"),
+                loop=bool(spec.get("loop", True)),
+                timed_buffer_ms=spec.get("timed_buffer_ms"),
+                view=spec.get("view"),
             )
             for name, spec in raw["poses"].items()
         }
@@ -142,6 +156,8 @@ def _load_profile_by_key(key: str) -> Optional[MotionProfile]:
             key=raw["key"], level=int(raw["level"]),
             movement_class=raw["movement_class"], poses=poses,
             keywords=tuple(raw.get("keywords", [])),
+            view=raw.get("view"),
+            base_pose=(raw.get("base_pose") or "standing"),
         )
         _PROFILE_CACHE[key] = profile
         return profile
@@ -226,8 +242,8 @@ def anchor_clause(pose: Optional[Pose]) -> Optional[str]:
     no pose_prompt control. Centralizes the kind check so the factory and the tests
     agree on what a pose_prompt control is: a `{kind:"pose_prompt", pose:"<clause>"}`
     block whose clause is a non-empty string. The factory swaps this clause in for
-    "standing" in the base prompt to draw a fresh anchor still that can actually move
-    (a wings-spread bird flaps; a standing one only twitches). Any other kind — or
+    the profile's base_pose in the base prompt to draw a fresh anchor still that can
+    actually move (a wings-spread bird flaps; a standing one only twitches). Any other kind — or
     None — yields None, and the caller loops from the shared base (byte-identical to
     today, §6)."""
     control = pose.control if pose else None
