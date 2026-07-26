@@ -1,6 +1,7 @@
 # SPEC — Body profile: composing movement prompts from what an animal *is*
 
-**Status:** Design — **Rev.1** (2026-07-26), for review. Replaces per-body-type hand-written
+**Status:** Design — **Rev.2** (2026-07-26), for review. Rev.2 makes `habitat` a SET (a
+duck walks, flies and swims — §1.5) and adds the confusion-driven axis-growth loop (§5.2.1). Replaces per-body-type hand-written
 motion prompts with prompts **composed** from a small structured description of the animal:
 its clade, limbs, surface, size, habitat and primary motion. The goal is that the engine can
 write an accurate `walk` prompt for a turtle, a dog, a human and a dragon *without anyone
@@ -107,10 +108,38 @@ first three.
 oppositely at opposite ends of this axis: a mouse skitters at high frequency with no
 apparent weight; an elephant places each foot slowly with visible mass and momentum.
 
-### 1.5 `habitat` — which travel poses exist (3)
+### 1.5 `habitat` — a SET of the media it moves through (1–3 of 3)
 
-`ground · air · water`. Already modeled; carried here so the composer knows whether `fly` or
-`swim` is even eligible.
+`ground · air · water` — and an animal may hold **any combination**, because plenty do:
+
+| animal | habitats | consequence |
+|---|---|---|
+| dog | `[ground]` | one travel gait family |
+| sparrow | `[ground, air]` | hops **and** flies — two |
+| duck | `[ground, air, water]` | walks, flies **and** swims — three |
+| frog, crocodile, penguin | `[ground, water]` | two, and the gaits look nothing alike |
+| fish | `[water]` | one |
+
+**This is a set, not a single value, and that is a movement fact rather than a taxonomy
+nicety.** A duck's legs do three different things — a waddling stride, tucked under in
+flight, webbed paddling underwater — and a model that forces it to pick one medium cannot
+describe two of them. The pose vocabulary already separates `walk`/`fly`/`swim`, so the
+clause registries need no new machinery: `legs.json` simply has an entry per pose, and a
+three-habitat animal reaches three of them.
+
+Two derived rules:
+
+- **Eligible travel poses = the union over the set.** `ground` admits `walk`/`run`, `air`
+  admits `fly`, `water` admits `swim`. A duck is eligible for all four; a fish for one.
+- **`primary_motion` (§1.6) is still exactly one** — the medium the animal is *most* itself
+  in. A duck is a swimmer that also walks and flies. That single value is what the tier cap
+  must never clip (`SPEC_BUNDLE_MOTION_CONTRACT` §3.4), which is why it stays singular even
+  though the habitat is not.
+
+This resolves what Rev.1 deferred as an `amphibious` habitat. A fourth enum value would have
+been wrong: it collapses three genuinely different combinations (`ground+water`,
+`ground+air`, all three) into one label, and the whole point of the axis is that the
+combination determines which gaits exist.
 
 ### 1.6 `primary_motion` — the signature gait (7)
 
@@ -135,10 +164,15 @@ The one motion the animal is *for*. It has two jobs beyond prompting:
   "limbs": { "legs": 4, "arms": 0, "wings": 2, "tail": "plain", "fins": 0 },
   "surface": "scales",
   "size": "huge",
-  "habitat": "air",
+  "habitat": ["ground", "air"],
   "primary_motion": "fly"
 }
 ```
+
+A dragon walks *and* flies, so its habitat set holds both — which is exactly why the tier
+cap dropping `fly` (`SPEC_BUNDLE_MOTION_CONTRACT` §3.4) produced a bundle that could still
+walk and was still wrong: `primary_motion` said what the animal was *for*, and the clip that
+depicted it was the one discarded.
 
 ### 2.2 It identifies the animal — the design test
 
@@ -292,7 +326,7 @@ purpose file never lists values and adding one never edits it.
 
 ```json
 { "clade": "reptile", "limbs": {"legs": 4, "tail": "plain"},
-  "surface": "scales", "size": "small", "habitat": "ground",
+  "surface": "scales", "size": "small", "habitat": ["ground"],
   "primary_motion": "walk" }
 ```
 
@@ -306,6 +340,34 @@ verified cheaply: classify `"gorilla"` → vector → ask the model *"what anima
 non-ape answer means the classification is wrong. One fast call against a ~3-minute GPU
 build is worth it; run it when the resolved vector is unnamed, i.e. exactly when confidence
 is lowest.
+
+### 5.2.1 Growing the axes from confusions, not from opinion
+
+A failed round-trip is more than a failed check. If `"pangolin"` classifies to a vector that
+names back as `"armadillo"`, **two animals share a vector** — the axis set has no feature
+separating them. That is the same signal the 1970s `ANIMAL` program acted on when it guessed
+wrong and asked *"what question would have told them apart?"*, and it is the only evidence
+worth growing this registry on.
+
+Log every collision as `{animal, vector, named_back}`. A human reviews the queue and asks
+**one** question, which is the whole gate:
+
+> Does the distinguishing feature change **how the animal moves**?
+
+- **Yes** → it is a candidate axis value, on evidence. *Pangolin vs. armadillo: overlapping
+  keratin scales that flex versus a rigid bony shell. That is a different secondary motion —
+  a new `surface` value earns its place.*
+- **No** → the shared vector is **correct**, and both animals should genuinely animate alike.
+  Record the pair as resolved so it stops resurfacing. *Wolf vs. coyote: same gait, same
+  everything that moves. One vector is the right answer, not a gap.*
+
+**The gate exists because the obvious growth path is the wrong one.** Plenty of features
+discriminate animals beautifully and say nothing about movement — diet, colour, whether it is
+a pet, whether it is bigger than a breadbox. An axis set optimised for *identification* would
+fill up with those and end up naming animals brilliantly while prompting none of them.
+Identification is this spec's validation; movement is its objective. Every axis value must
+answer to §1's test — it names a stance, a limb behaviour, a secondary motion, or a cadence —
+or it does not go in, however well it splits the space.
 
 ### 5.3 Lab surface
 
@@ -366,9 +428,12 @@ time, each reviewable before it ships.
 
 ## 9. Open items
 
-- **`amphibious` habitat.** A frog, a crocodile and a duck are all ground+water. Today they
-  must pick one. Deliberately deferred: three instances exist, but none is a shipped pet yet,
-  and the host's habitat enum would need the same value.
 - **Multi-limb animals beyond the table** — tentacles (octopus) and claws (crab) are named in
   §2.2 but have no clause file in the v1 registry set. One file each when a real pet needs
   one; the composer needs no change.
+- **The host's habitat model is singular.** §1.5 makes habitat a set on the factory side,
+  which is correct for prompting: a duck needs `walk`, `fly` and `swim` clauses. The DatsMe
+  host still binds **one** habitat per pet and only two gait slots, so a duck that ships all
+  three clips will animate in one medium. That is a host-side limit, tracked there, and it
+  does not block this spec — the clips are correct either way, and a bundle that depicts
+  more than the host can currently drive is the right failure direction.
