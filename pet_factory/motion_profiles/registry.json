@@ -4,31 +4,31 @@
     {
       "key": "aquatic",
       "file": "aquatic.json",
-      "label": "Fish / aquatic",
+      "label": "Aquatic swimmer — no legs; fins and a tail, body held horizontal, moves by undulating its body and steering with fins. Lives and travels in water (fish, shark, dolphin, seahorse, ray)",
       "level": 3
     },
     {
       "key": "avian",
       "file": "avian.json",
-      "label": "Bird",
+      "label": "Bird — TWO legs only: its wings ARE its forelimbs, feathered, plus a beak. Walks, hops or struts upright on two legs; flies (or, for flightless birds, still stands and walks on two) (sparrow, eagle, owl, chicken, penguin, ostrich)",
       "level": 3
     },
     {
       "key": "quadruped",
       "file": "quadruped.json",
-      "label": "Four-legged mammal",
+      "label": "Four-legged land animal — four walking legs and NO wings. Walks, trots and runs on all fours with a diagonal gait; may have a tail (dog, cat, horse, bear, elephant, lizard, monkey)",
       "level": 3
     },
     {
       "key": "serpentine",
       "file": "serpentine.json",
-      "label": "Legless / snake",
+      "label": "Limbless slitherer — no legs, no fins, no wings at all. Moves by undulating its whole long body against the ground (snake, python, eel, worm, legless lizard)",
       "level": 3
     },
     {
       "key": "winged_flyer",
       "file": "winged_flyer.json",
-      "label": "Winged flyer (dragon, insect)",
+      "label": "Winged flyer — wings IN ADDITION to its legs, not instead of them: either four legs plus a separate pair of wings, or an insect's legs plus wings. Can walk on its legs and fly by beating wings that are not its forelimbs (dragon, wyvern, griffin, bat, butterfly, bee, pegasus)",
       "level": 3
     }
   ]

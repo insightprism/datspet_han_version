@@ -31,8 +31,8 @@
     "walk": {
       "enabled": true,
       "runtime_role": "active",
-      "action": "hovering forward with steady wing beats",
-      "suffix": ", wings beating rhythmically, body drifting in place, no camera movement, no panning",
+      "action": "walking on its legs",
+      "suffix": ", performing a full walk cycle in place: legs and feet cycling through one complete stride, wings kept folded at its sides, body bobbing naturally up and down with each step, classic looping sprite walk animation, no wing flapping, no hovering, no horizontal movement of the body, no camera movement, no panning",
       "control": {
         "kind": "pose_prompt",
         "pose": "wings slightly folded against sides, front legs mid-stride with one forward and one back, torso leaning slightly forward in walking motion"
@@ -51,8 +51,8 @@
     "run": {
       "enabled": true,
       "runtime_role": "active",
-      "action": "darting quickly with fast wing beats",
-      "suffix": ", rapid wing beats, body leaning forward, in place, no camera movement, no panning",
+      "action": "running at a brisk gallop in place",
+      "suffix": ", legs cycling quickly through a full running stride, wings folded back against the body, body low and leaning forward and driving, tail streaming behind for balance, energetic looping run animation, no wing flapping, no hovering, no horizontal movement of the body, no camera movement, no panning",
       "control": {
         "kind": "pose_prompt",
         "pose": "wings folded back, body leaned forward, front limbs extended mid-stride, hind legs pushing off ground, tail streaming behind for balance"
@@ -61,8 +61,8 @@
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "settled with wings folded, resting",
-      "suffix": ", wings closed, still with slow breathing, resting loop, no camera movement, no panning",
+      "action": "sleeping curled up, breathing slowly",
+      "suffix": ", chest and belly rising and falling with each slow breath, folded wings settling gently with the rhythm, tail tip twitching occasionally, eyes staying closed throughout, calm looping sleep animation, no camera movement, no panning",
       "timed_buffer_ms": 6000,
       "control": {
         "kind": "pose_prompt",

@@ -57,8 +57,8 @@
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "sleeping, still",
-      "suffix": ", motionless, slow breathing, resting loop, no legs, no camera movement, no panning",
+      "action": "sleeping coiled up, breathing slowly",
+      "suffix": ", coils expanding and contracting faintly with each slow breath, tail tip stirring occasionally, eyes staying closed throughout, no legs, calm looping sleep animation, no camera movement, no panning",
       "timed_buffer_ms": 6000,
       "control": {
         "kind": "pose_prompt",

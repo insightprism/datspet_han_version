@@ -80,8 +80,8 @@
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "curled up asleep",
-      "suffix": ", lying still with slow steady breathing, eyes closed, motionless resting loop, no camera movement, no panning",
+      "action": "curled up asleep, breathing slowly",
+      "suffix": ", ribcage rising and falling with each slow breath, one ear flicking now and then, tail tip stirring gently, eyes staying closed throughout, calm looping sleep animation, no camera movement, no panning",
       "timed_buffer_ms": 6000,
       "control": {
         "kind": "pose_prompt",

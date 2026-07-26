@@ -66,8 +66,8 @@
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "resting still, drifting slowly",
-      "suffix": ", body level and horizontal, slow gentle fin drift, calm resting loop, no legs, no camera movement, no panning",
+      "action": "asleep, drifting slowly in the water and breathing",
+      "suffix": ", gills and flanks flexing faintly with each slow breath, fins drifting gently to hold position, tail swaying slowly, eyes closed, body level and horizontal, no legs, calm looping rest animation, no camera movement, no panning",
       "timed_buffer_ms": 6000,
       "control": {
         "kind": "pose_prompt",

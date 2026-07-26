@@ -115,8 +115,8 @@
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "roosting with head tucked into feathers",
-      "suffix": ", still and puffed up, slow breathing, eyes closed, resting loop, no camera movement, no panning",
+      "action": "roosting asleep with its head tucked into its feathers, breathing slowly",
+      "suffix": ", chest feathers rising and falling with each slow breath, plumage ruffling faintly with the rhythm, eyes staying closed throughout, calm looping roost animation, no camera movement, no panning",
       "timed_buffer_ms": 6000,
       "control": {
         "kind": "pose_prompt",
