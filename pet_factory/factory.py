@@ -439,8 +439,6 @@ def _mib(n) -> str:
     return "unknown" if n is None else f"{n // (1024 * 1024)} MiB"
 
 
-
-
 def _comfy_vram_free(device_id: int = _CUTOUT_DEVICE_ID):
     """Free VRAM in bytes on `device_id` as ComfyUI reports it, or None if unreadable.
 

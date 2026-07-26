@@ -1138,12 +1138,48 @@ performance promise.
    `comfyui_32g.log` that count is `0` throughout, but that is a VRAM-experiment config and may
    not reflect real 24 GB behavior. Quantify before the fan-out spec, since it sets that spec's
    realistic ceiling.
-4. **Should `CutoutFailed` be retryable?** A one-shot retry after `_CUTOUT.release()` +
-   re-create might rescue a transient OOM. Deferred: prove the failure exists and is transient
-   before building recovery for it. **[Rev.2]** §3.3 raises the stakes — the pool already retries
-   *at the task level* up to `MAX_ATTEMPTS` (3), so the question is not only "should we retry
-   in-process" but "should `CutoutFailed` dead-letter immediately", since a capped-arena failure is
-   deterministic and the other two attempts are pure waste.
+4. **[Rev.4 — CLOSED, WON'T FIX] The pool's retry cost on a deterministic `CutoutFailed`.**
+   Rev.2 framed this as "dead-letter immediately, the other two attempts are pure waste". Both
+   candidate fixes were investigated and **both are rejected on evidence.** The item is closed
+   rather than reworded, because the conclusion is that there is nothing to build here.
+
+   **Rejected: signal "permanent" to the dispatcher.** `pool_dispatcher/storage.py:_fail_locked`
+   branches on `attempts >= max_attempts` and nothing else, and the contract has **no
+   permanent/retryable concept** (`pool_contracts/messages.py` has only `JOB_TERMINAL_STATUSES`,
+   which is the resulting state, not a handler signal). Implementing it means an engine change
+   across four files in `shared_gpu_cpu` — defensible in principle, since "a handler may declare a
+   failure permanent" is generic rather than app-specific. But setting the flag correctly requires
+   distinguishing an **arena-limit** failure (deterministic, retry is waste) from a **device OOM**
+   caused by a co-tenant (transient — retry on another node is exactly right, and
+   `scheduler._recently_failed_here` exists to steer it). That is an error classifier built on
+   zero observed instances. Deferred under the repo's three-instances rule.
+
+   **Rejected on measurement: pre-flight the cutout before generating.** The idea was to keep the
+   3 attempts but make each cheap — one tiny inference at handler start, failing in seconds rather
+   than at the 0.85 mark, ~6.7 min in. It was *built and then reverted*, because **the pipeline
+   itself creates the memory conditions the cutout needs, so the cutout cannot be validated out of
+   sequence:**
+
+   - the real cutout runs at **minimum** memory pressure — immediately after
+     `_evict_comfy_models_for_cutout()` frees ~18 GB;
+   - a pre-flight necessarily runs at **maximum** pressure, while ComfyUI still holds Wan.
+
+   Measured directly: with Wan resident, `cuda:0` free was **2537 MiB** against the cutout's
+   ~6426 MiB working set, and the pre-flight raised the arena error on a build whose real cutout
+   would have succeeded minutes later. On a warm pool node that is not a marginal regression, it
+   is total: **every** build fails pre-flight and burns all three attempts instantly — strictly
+   worse than the problem. A guarded variant (probe only when free VRAM already exceeds the
+   working set) would work, but it adds a second mechanism to rescue the first and silently
+   does nothing on exactly the warm nodes it was meant to protect.
+
+   **What stands instead** is what already exists: `test_the_arena_cap_stays_inside_the_band_where_it_actually_does_something`
+   makes a bad cap fail the build gate rather than the fleet, and §3.3's staged rollout catches it
+   at one node's cost. A configuration error should be caught by a test, not paid for at runtime.
+
+   **The transferable lesson**, and the reason this is written up rather than deleted: *a resource
+   check is only meaningful under the conditions the real work runs in.* The eviction is not
+   incidental setup — it is what makes the cutout fit, so anything validating the cutout must run
+   after it, which is precisely where the failure already surfaces.
 5. **[Rev.2 — NEW; Rev.4 — still open, now with F1 shipped] Is 6426 MiB still too much to hold
    across the whole cutout band?** F1 bounds the arena but does not change *when* it is
    allocated: the session lives for the entire cutout + pack phase. With the loops finished and
