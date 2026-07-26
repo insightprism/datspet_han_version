@@ -102,11 +102,16 @@ _ANCHOR_SEED = 42
 # reports both cards, and this need not be ComfyUI's primary device (§5.2).
 _CUTOUT_DEVICE_ID = 0
 
-# birefnet's measured working set. §2.6: 4 GiB fails outright (ORT raises on a single 822 MB
-# activation in the ASPP decoder block); 6 GiB is the smallest cap measured to pass. 7 GiB is
-# that floor plus headroom, and it costs nothing — peak is identical at 7 GiB and at 10 GiB.
-# Input-size-independent: rembg normalizes every frame to birefnet's 1024² graph, so one value
-# holds for every pet. F1 (deferred) will pass this as the ORT arena's `gpu_mem_limit`.
+# birefnet's measured working set — what the cutout NEEDS to succeed. §2.6: 4 GiB fails
+# outright (ORT raises on a single 822 MB activation in the ASPP decoder block); the capped
+# session settles at ~6426 MiB, and 7 GiB is that plus rounding. Input-size-independent: rembg
+# normalizes every frame to birefnet's 1024² graph, so one value holds for every pet.
+#
+# NOT the same number as _CUTOUT_GPU_MEM_LIMIT_BYTES below, and they must not be merged. This
+# is the REQUIREMENT (how much free VRAM the cutout needs, so it is what F4's watermark is
+# built from); that one is the CEILING (how much ORT is allowed to hoard). Setting the ceiling
+# to this value would leave only ~1 GiB above the failure floor; deriving F4's watermark from
+# the ceiling would make the eviction poll demand 11 GiB and warn when 8 GiB free was fine.
 _CUTOUT_WORKING_SET_BYTES = 7 * 1024**3
 
 # The CUDA context lives OUTSIDE the ORT arena (measured 264 MiB bare, 526–554 MiB with the
@@ -118,6 +123,35 @@ _CUTOUT_PEAK_TOLERANCE_BYTES = 1 * 1024**3
 # visible white flash, so there is no threshold worth tuning — the name exists to make the
 # decision visible and revisitable, not because a nonzero value is expected (§3.2).
 _CUTOUT_MAX_FALLBACK_FRAMES = 0
+
+# ── The ORT arena bound (F1, §2) ─────────────────────────────────────────────────────────
+# Left unbounded, onnxruntime's CUDA arena grows against whatever VRAM happens to be free and
+# never gives it back while the session lives: measured 14618 MiB for a 214 MB model. The cap
+# does not make anything faster and does not change the failure floor — birefnet needs ~6 GiB
+# either way. What it buys is that the cutout stops hoarding ~8 GiB it will never use, and that
+# its footprint becomes a NUMBER (6426 MiB, always) instead of "6-15 GB depending on what was
+# free" — which is what any VRAM budgeting has to be built on.
+_CUTOUT_PROVIDER = "CUDAExecutionProvider"
+
+# READ THIS BEFORE CHANGING THE CAP. Peak-vs-cap is a CLIFF, not a slope (§2.6):
+#
+#     cap  4096 MiB → FAILS          (below the working set)
+#     cap  6144..10240 MiB → 6426 MiB peak   ← the whole benefit, flat across the band
+#     cap 12288 MiB → 12570 MiB peak  ← benefit essentially gone
+#     cap 14336+ / uncapped → ~14620 MiB     ← benefit entirely gone
+#
+# So RAISING this "to be safe" is not safe: past ~10 GiB the arena resumes opportunistic growth
+# and the fix silently stops working — no error, no failed test, no symptom. That is the most
+# likely way this regresses, which is why test_cutout_hygiene pins an UPPER bound as well as a
+# lower one. 8 GiB is the midpoint of the proven-good band [6144, 10240]: 2 GiB clear of the
+# highest cap that still grows, and 2 GiB clear of the lowest that still fails.
+_CUTOUT_GPU_MEM_LIMIT_BYTES = 8 * 1024**3
+
+# The ORT default, and measurably the better of the two here: kSameAsRequested needs a HIGHER
+# cap to work at all (6144 fails under it, passes under this) and settles ~574 MiB higher.
+# ORT's general docs suggest kSameAsRequested when you are short of memory, which is why this
+# looks like the wrong choice and is not — §2.6 rows 6 vs 11 measured it on this model.
+_CUTOUT_ARENA_STRATEGY = "kNextPowerOfTwo"
 
 # The free-VRAM watermark that means ComfyUI's eviction actually landed. Derived from the
 # REQUIREMENT (the cutout must fit), never from an observation of current free VRAM — a
@@ -187,10 +221,30 @@ class _CutoutSession:
         except Exception:
             pass
         from rembg import new_session
+        # The CUDA provider is passed as a (name, options) TUPLE to bound its arena and pin its
+        # device (§2.2). rembg forwards `providers` straight to ort.InferenceSession when it is
+        # a list, and a list holding a tuple is still a list — so this needs no rembg patch.
+        # CPUExecutionProvider stays bare: CPU-only nodes keep the graceful fallback. Note that
+        # fallback is LOAD-time only — ORT does not fall back to CPU when an allocation fails at
+        # run time, so an over-tight cap is a hard error (which is why F2 shipped first).
         session = new_session("birefnet-general-lite",
-                              providers=["CUDAExecutionProvider", "CPUExecutionProvider"])
+                              providers=[(_CUTOUT_PROVIDER, {
+                                  "device_id": _CUTOUT_DEVICE_ID,
+                                  "gpu_mem_limit": _CUTOUT_GPU_MEM_LIMIT_BYTES,
+                                  "arena_extend_strategy": _CUTOUT_ARENA_STRATEGY,
+                              }), "CPUExecutionProvider"])
+        # Bare provider NAME strings, even though options were passed — so the fail-fast below
+        # is unaffected by the tuple. Non-obvious, and pinned by a guard test (§7.1).
         providers = session.inner_session.get_providers()
-        print(f"[pet_factory] rembg providers: {providers}", flush=True)
+        # B1 — the record of whether the cutout got CUDA or silently fell back to CPU at ~1/12
+        # speed. `log.info`, not `print` (SPEC_GPU_MEMORY_HYGIENE §11.2): a bare print goes to
+        # STDOUT, and on a pool node stdout is `run_handler`'s JSON-lines protocol, so this line
+        # arrives as a parse error and survives only as the worker's "non-JSON handler stdout
+        # dropped" warning. Logging puts it on stderr, which the worker reads into the heartbeat
+        # `stderr_tail` on purpose. This promotion was UNSAFE until F5 (§5.5) and the handler
+        # blocks (§11.8) existed — before them INFO was discarded process-wide and the bare print
+        # was strictly more visible than the logger it was to be promoted to.
+        log.info("rembg providers: %s", providers)
         require_gpu = os.environ.get("PET_FACTORY_REQUIRE_GPU", "").strip() in ("1", "true", "on")
         if require_gpu and "CUDAExecutionProvider" not in providers:
             raise RuntimeError(
@@ -385,6 +439,8 @@ def _mib(n) -> str:
     return "unknown" if n is None else f"{n // (1024 * 1024)} MiB"
 
 
+
+
 def _comfy_vram_free(device_id: int = _CUTOUT_DEVICE_ID):
     """Free VRAM in bytes on `device_id` as ComfyUI reports it, or None if unreadable.
 
@@ -443,6 +499,12 @@ def _evict_comfy_models_for_cutout():
         time.sleep(_FREE_POLL_INTERVAL_S)
         after = _comfy_vram_free()
 
+    # INFO for the success line, WARNING for the miss. This depends on the process having
+    # configured root logging at INFO — webui/app.py and shared_gpu_cpu's pool_worker/loop.py
+    # both do, and webui/tests/test_logging_visibility.py pins it. It is worth knowing WHY that
+    # matters: before that config existed, root had no handler, Python's `logging.lastResort`
+    # applied, and INFO was dropped while WARNING survived — so a working eviction logged
+    # NOTHING and only a broken one left a trace. The observability fix was itself invisible.
     landed = after is not None and after >= _FREE_TARGET_VRAM_BYTES
     report = log.info if landed else log.warning
     report("ComfyUI eviction %s: vram_free %s → %s (target %s) after %.1fs",

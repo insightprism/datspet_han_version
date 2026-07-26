@@ -10,6 +10,7 @@ F1 (the ORT arena cap) is NOT implemented yet, so §7.1's provider-options test 
 absent — see the spec's §2.4. `_CUTOUT_WORKING_SET_BYTES` already carries F1's measured budget
 because F4's watermark is derived from it.
 """
+import logging
 import time
 
 import pytest
@@ -30,6 +31,89 @@ def _boom(*_a, **_k):
 def live_cutout_session(monkeypatch):
     """A fake live session so `_CUTOUT.get()` never builds the real birefnet model."""
     monkeypatch.setattr(factory._CUTOUT, "_session", object())
+
+
+# ---- F1: the arena options reach ORT, and the fail-fast survives them (§7.1) ------------
+
+def _capture_new_session(monkeypatch, providers_returned):
+    """Stub `rembg.new_session` and CAPTURE the kwargs it was handed.
+
+    The capture is the point. `test_gpu_fail_fast_and_progress.py`'s stub discards them, which
+    is right for what that file tests and useless here: a stub that ignores `providers` cannot
+    tell whether we passed an options tuple or the bare list we passed before F1, so a test
+    built on it would pass either way."""
+    seen = {}
+
+    def _stub(*args, **kwargs):
+        seen.update(kwargs)
+        return _FakeSession(providers_returned)
+
+    import rembg
+    monkeypatch.setattr(factory._CUTOUT, "_session", None)   # reset the managed session cache
+    monkeypatch.setattr(rembg, "new_session", _stub)
+    return seen
+
+
+class _FakeInner:
+    def __init__(self, providers):
+        self._providers = providers
+
+    def get_providers(self):
+        return self._providers
+
+
+class _FakeSession:
+    def __init__(self, providers):
+        self.inner_session = _FakeInner(providers)
+
+
+def test_the_arena_options_are_actually_passed_to_the_cuda_provider(monkeypatch):
+    """Pins our half of the rembg contract: the CUDA provider must arrive as a
+    `(name, options)` TUPLE carrying all three knobs, with CPU left bare.
+
+    Worth stating what this canNOT cover. rembg forwards `providers` to ORT only because
+    `BaseSession.__init__` pops it when `isinstance(providers, list)` — verified by hand against
+    rembg 2.0.69 / onnxruntime 1.23.2 by building a real session and reading
+    `get_provider_options()` back. If a rembg upgrade changed that, the options would be
+    silently DROPPED and the cap would stop applying with no error anywhere. Proving otherwise
+    needs a real GPU session, which this zero-GPU gate cannot have. So: this test pins what we
+    send, the pinned dependency versions cover what rembg does with it, and §11 records the gap.
+    """
+    seen = _capture_new_session(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"])
+    factory._rembg()
+
+    providers = seen["providers"]
+    assert isinstance(providers, list), "rembg only forwards `providers` when it is a list"
+    cuda, cpu = providers
+    assert cpu == "CPUExecutionProvider", "CPU stays unparameterized — CPU-only nodes fall back"
+
+    name, options = cuda
+    assert name == factory._CUTOUT_PROVIDER
+    assert options == {
+        "device_id": factory._CUTOUT_DEVICE_ID,
+        "gpu_mem_limit": factory._CUTOUT_GPU_MEM_LIMIT_BYTES,
+        "arena_extend_strategy": factory._CUTOUT_ARENA_STRATEGY,
+    }
+
+
+def test_passing_provider_options_does_not_disarm_the_gpu_fail_fast(monkeypatch):
+    """§2.3's non-obvious invariant, and the one that would fail SILENTLY in the bad direction.
+
+    The fail-fast reads `inner_session.get_providers()` and looks for the plain string
+    "CUDAExecutionProvider". If passing a `(name, options)` tuple made ORT report the providers
+    in some richer shape, that `in` check would quietly stop matching — and a GPU node would go
+    back to running the cutout on CPU at ~1/12 speed with the guard silently disarmed, which is
+    the exact 2026-07-21 incident F3 exists to prevent. ORT returns bare NAME strings either way
+    (verified against a real options-carrying session); this pins it."""
+    _capture_new_session(monkeypatch, ["CPUExecutionProvider"])   # CUDA absent despite the options
+    monkeypatch.setenv("PET_FACTORY_REQUIRE_GPU", "1")
+
+    with pytest.raises(RuntimeError, match="CUDA"):
+        factory._rembg()
+
+    _capture_new_session(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"])
+    monkeypatch.setenv("PET_FACTORY_REQUIRE_GPU", "1")
+    assert factory._rembg() is not None      # bare names still satisfy the check
 
 
 # ---- F2: a failed matte fails the build (§7.2) -----------------------------------------
@@ -96,6 +180,33 @@ def test_fallback_budget_is_build_wide_not_per_pose(live_cutout_session, monkeyp
     # Per-pose scoping would let both through and ship a bundle with two white flashes.
     assert excinfo.value.pose_name == "idle"
     assert excinfo.value.frame_index == 0
+
+
+def test_the_provider_line_goes_through_the_logger_not_stdout(monkeypatch, caplog):
+    """B1's record (SPEC_GPU_MEMORY_HYGIENE §11.2). It was a bare `print`, which on a pool node
+    lands in `run_handler`'s JSON-lines **stdout protocol** and survives only as the worker's
+    "non-JSON handler stdout dropped" warning. Logging puts it on stderr, which the worker reads
+    into its heartbeat `stderr_tail` deliberately.
+
+    Pinned because a `print` here is the easy, natural thing to write, and reverting to one
+    would silently move the line back into the result channel."""
+    import rembg
+
+    class _Inner:
+        def get_providers(self):
+            return ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    class _Session:
+        inner_session = _Inner()
+
+    monkeypatch.setattr(factory._CUTOUT, "_session", None)
+    monkeypatch.setattr(rembg, "new_session", lambda *a, **k: _Session())
+
+    with caplog.at_level("INFO", logger="pet_factory.factory"):
+        factory._rembg()
+
+    assert any("rembg providers" in r.getMessage() for r in caplog.records), (
+        "the provider line must be a log record, not a print to stdout")
 
 
 def test_zero_fallback_tolerance_is_the_shipped_decision():
@@ -221,10 +332,38 @@ def test_free_poll_timeout_warns_and_proceeds(monkeypatch, caplog):
     monkeypatch.setattr(factory, "_FREE_POLL_TIMEOUT_S", 0.2)
     monkeypatch.setattr(factory, "_FREE_POLL_INTERVAL_S", 0.05)
 
-    with caplog.at_level("WARNING"):
+    with caplog.at_level(logging.WARNING, logger="pet_factory.factory"):
         factory._evict_comfy_models_for_cutout()     # must return, not raise
 
-    assert any("did NOT reach the target" in r.getMessage() for r in caplog.records)
+    emitted = [r.getMessage() for r in caplog.records]
+    assert any("did NOT reach the target" in m for m in emitted)
+    assert any("/free unreachable" in m for m in emitted)
+
+
+def test_the_eviction_success_line_is_emitted_at_info_with_the_numbers(monkeypatch, caplog):
+    """The success line IS the measurement F4 exists to produce — it is the only place the
+    reclaimed VRAM is ever recorded. Two ways to lose it, both seen:
+
+      1. Logging it below the level the process keeps. The first cut of F4 used `log.info` when
+         nothing configured root logging, so `logging.lastResort` applied (WARNING and above
+         only) and a WORKING eviction logged nothing while a broken one did. `webui/app.py` now
+         calls `basicConfig`, and `webui/tests/test_logging_visibility.py` pins that end; this
+         pins THIS end — that the report is emitted at INFO and carries the numbers.
+      2. Reporting the outcome without the values, which is a status nobody can act on.
+    """
+    monkeypatch.setattr(factory.requests, "post", lambda *a, **k: None)
+    monkeypatch.setattr(factory.requests, "get",
+                        lambda *a, **k: _stats(_device(0, factory._FREE_TARGET_VRAM_BYTES + 1)))
+
+    with caplog.at_level(logging.INFO, logger="pet_factory.factory"):
+        factory._evict_comfy_models_for_cutout()
+
+    info = [r for r in caplog.records if r.levelno == logging.INFO]
+    assert info, "the SUCCESS path must leave a record, not just the failure path"
+    msg = info[-1].getMessage()
+    assert "landed" in msg
+    assert "vram_free" in msg and "target" in msg    # the numbers, not just a verdict
+    assert "MiB" in msg
 
 
 def test_free_poll_reports_unknown_rather_than_zero_when_stats_are_unreadable(monkeypatch):
@@ -246,6 +385,58 @@ def test_cutout_budget_constants_are_named_and_above_the_measured_floor():
     assert factory._CUTOUT_WORKING_SET_BYTES >= MEASURED_FLOOR_BYTES
     assert factory._CUTOUT_PEAK_TOLERANCE_BYTES > 0      # the CUDA context lives outside the arena
     assert factory._CUTOUT_DEVICE_ID >= 0
+
+
+def test_the_arena_cap_stays_inside_the_band_where_it_actually_does_something():
+    """**The most important assertion in this file**, because it guards the only way F1 can fail
+    SILENTLY.
+
+    Peak-vs-cap is a cliff, not a slope (§2.6): the cap buys the full 14618 → 6426 MiB saving
+    anywhere in [6144, 10240] MiB, and buys NOTHING from 12288 upward, where the arena resumes
+    opportunistic growth. Both edges have to be pinned:
+
+      - too low  → `CutoutFailed` on the first frame. Loud, immediate, self-announcing; this
+                   assertion is a convenience.
+      - too high → no error, no failed test, no symptom, no benefit. The fix is simply gone.
+
+    And "the cap looks tight, let's raise it" is the natural instinct after any memory scare —
+    which lands exactly in the dead band. So the upper bound is the assertion that earns its
+    keep. If you are here because this test failed after you raised the cap: re-measure first
+    (§2.6, ≥3 frames), and move this bound only with numbers.
+    """
+    LOWEST_CAP_THAT_WORKS = 6 * 1024**3       # 4096 MiB FAILS; 6144 MiB passes (§2.6 rows 11-12)
+    HIGHEST_CAP_STILL_BOUNDED = 10 * 1024**3  # 10240 MiB → 6424 MiB; 12288 MiB → 12570 (rows 8, +)
+
+    cap = factory._CUTOUT_GPU_MEM_LIMIT_BYTES
+    assert LOWEST_CAP_THAT_WORKS <= cap <= HIGHEST_CAP_STILL_BOUNDED, (
+        f"_CUTOUT_GPU_MEM_LIMIT_BYTES is {cap // 1024**2} MiB, outside the measured band "
+        f"[{LOWEST_CAP_THAT_WORKS // 1024**2}, {HIGHEST_CAP_STILL_BOUNDED // 1024**2}] MiB. "
+        "Below it the cutout raises CutoutFailed on the first frame; above it the arena resumes "
+        "growing to ~14.6 GB and the cap silently buys NOTHING — same build, same speed, no "
+        "error, no symptom. If you raised this after a memory scare, that is the trap: re-read "
+        "the cliff table in factory.py's constants band and re-measure (>=3 frames) before "
+        "moving this bound.")
+    assert factory._CUTOUT_ARENA_STRATEGY == "kNextPowerOfTwo", (
+        "kSameAsRequested needs a higher cap to work at all and settles ~574 MiB higher on this "
+        "model — ORT's generic 'use kSameAsRequested when short of memory' advice does not hold "
+        "here, and §2.6 rows 6 vs 11 are the measurement")
+
+
+def test_the_cap_and_the_requirement_are_separate_numbers():
+    """They answer different questions and merging them breaks something either way: the cap is
+    the CEILING (what ORT may hoard), the working set is the REQUIREMENT (what the cutout needs,
+    and therefore what F4's free-VRAM watermark is built from).
+
+    Capping at the requirement leaves ~1 GiB over the failure floor; deriving the watermark from
+    the cap makes the eviction poll demand 11 GiB and warn when 8 GiB free was perfectly fine.
+    The spec proposed exactly this merge before the cliff was measured, so the trap is real."""
+    assert factory._CUTOUT_GPU_MEM_LIMIT_BYTES > factory._CUTOUT_WORKING_SET_BYTES, (
+        "the arena CEILING must sit above the measured REQUIREMENT — if they are the same "
+        "number, either the cap has ~1 GiB of margin over the failure floor or F4's watermark "
+        "has been derived from the ceiling and will warn when free VRAM was fine")
+    assert factory._FREE_TARGET_VRAM_BYTES == (factory._CUTOUT_WORKING_SET_BYTES
+                                               + factory._CUTOUT_PEAK_TOLERANCE_BYTES), (
+        "F4's watermark must be built from the REQUIREMENT, not the arena ceiling (§5.2)")
 
 
 def test_free_target_is_derived_from_the_requirement_not_from_observed_free_vram():

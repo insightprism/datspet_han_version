@@ -37,7 +37,31 @@ which keeps the §B.1 fleet cutover safe (a v2 or v1 node ignores the newer fiel
 """
 import base64
 import binascii
+import logging
+import os
+import sys
 from pathlib import Path
+
+# ── Logging (SPEC_GPU_MEMORY_HYGIENE §5.5, §11.8) ────────────────────────────────────────
+# The handler does NOT run in the pool worker's process: the worker spawns
+# `python -m pool_worker.run_handler <this file>` (shared_gpu_cpu `pool_worker/spawn.py`).
+# Logging config is per-process, so the worker's own `basicConfig` cannot reach here, and
+# `run_handler.py` sets up none — leaving root handler-less, `logging.lastResort` in force,
+# and every INFO record silently discarded. That is what made F4's verified-eviction report
+# (its success line is INFO) invisible on pool nodes while its failures still surfaced.
+#
+# MUST be stderr: `run_handler` uses **stdout as a JSON-lines protocol** (progress beats plus
+# exactly one terminal result), so anything written there is parsed as a message. stderr is
+# read separately into the worker's `stderr_tail` and shipped in heartbeats, which is exactly
+# where operational lines belong. `basicConfig` defaults to stderr; it is passed explicitly
+# because getting it wrong here corrupts the result channel rather than just looking untidy.
+POOL_HANDLER_LOG_LEVEL = os.environ.get("DATSPET_LOG_LEVEL", "INFO").strip().upper()
+logging.basicConfig(
+    # An operator typo must not stop a pool node taking work — fall back, never raise.
+    level=getattr(logging, POOL_HANDLER_LOG_LEVEL, logging.INFO),
+    stream=sys.stderr,
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+)
 
 METADATA = {
     "task": "pet_factory",

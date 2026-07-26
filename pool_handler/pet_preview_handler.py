@@ -37,7 +37,22 @@ Install onto every pet-capable node alongside pet_factory (Part B):
 """
 import base64
 import binascii
+import logging
+import os
+import sys
 from pathlib import Path
+
+# Same rationale as pet_factory_handler's block (SPEC_GPU_MEMORY_HYGIENE §5.5, §11.8): this runs
+# in a subprocess the worker spawns, so nothing upstream has configured logging, and stdout is a
+# JSON-lines protocol — operational output goes to stderr or it corrupts the result channel.
+# Deliberately duplicated rather than shared: the two handlers are independently installed onto
+# nodes (`pool-install-handler`) and must not grow a common import.
+POOL_HANDLER_LOG_LEVEL = os.environ.get("DATSPET_LOG_LEVEL", "INFO").strip().upper()
+logging.basicConfig(
+    level=getattr(logging, POOL_HANDLER_LOG_LEVEL, logging.INFO),
+    stream=sys.stderr,
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+)
 
 METADATA = {
     "task": "pet_preview",

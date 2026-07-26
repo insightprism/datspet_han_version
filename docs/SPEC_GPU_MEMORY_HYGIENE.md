@@ -1093,14 +1093,29 @@ performance promise.
 1. **[Rev.2 — CLOSED] `_FREE_TARGET_VRAM_BYTES` no longer waits on baseline B4.** §5.2 derives it
    from the cutout's measured budget instead; Rev.1's B4-derived version was circular. **[Rev.3]**
    This is what let F4 ship *before* F1 rather than after it.
-2. **[Rev.3 — CLOSED, and it was pointing the wrong way] The provider `print` in `_new_session`.**
-   Rev.2 proposed promoting it to `log.info`. **Doing that before F5 would have made the line
-   disappear**, because INFO was being discarded (§5.5) — the bare `print` was strictly *more*
-   visible than the logger it was to be promoted to. F5 landed, so the promotion is now safe and
-   is a one-liner whenever someone is next in that function. Recorded rather than deleted because
-   the sequencing is the lesson: an "improve the logging" item can be a regression if nothing has
-   checked that the logging works. B1 still cannot be answered from history —
-   `logs/backend.log` contains zero `rembg providers` lines.
+2. **[Rev.4 — DONE] The provider `print` in `_new_session` is now `log.info`.** Shipped together
+   with item 8, and **only correct in that order** — this is the third time this item has changed
+   direction, and each turn was a different reason the "cheap one-liner" was not one:
+
+   - Rev.2 proposed the promotion outright.
+   - Rev.3 found it would have made the line **disappear**: INFO was discarded process-wide
+     (§5.5), so the bare `print` was strictly *more* visible than the logger.
+   - Rev.4 found F5 alone was still not enough. On a **pool** node the promotion would have been a
+     regression even after F5, because the handler runs in a subprocess F5 never reaches (item 8).
+     Today's `print` at least surfaces there — as the worker's *"non-JSON handler stdout dropped"*
+     warning, since stdout is `run_handler`'s JSON-lines protocol. A bare `log.info` into a
+     handler-less root would have gone nowhere at all.
+
+   So the promotion shipped **with** the handler logging blocks, never before them. Verified
+   end-to-end: the line appears on **stderr** (`… INFO pet_factory.factory: rembg providers:
+   ['CUDAExecutionProvider', 'CPUExecutionProvider']`) and **zero** occurrences on stdout, so the
+   pool's result channel stays clean and the worker picks the line up in its heartbeat
+   `stderr_tail`. §1's B1 grep is unchanged and still matches. Pinned by
+   `test_the_provider_line_goes_through_the_logger_not_stdout`, red-green verified.
+
+   **The lesson is the sequencing, not the line.** "Improve the logging" is a regression whenever
+   nothing has checked that the logging works — and the check has to cover *every process the code
+   runs in*, not just the one in front of you.
 
    **[Rev.3 — REOPENED, and now the promotion is required, not optional.]** On a pool node the
    handler's **stdout is a strict JSON-lines protocol** (`pool_worker/run_handler.py`: progress
@@ -1150,7 +1165,21 @@ performance promise.
    not break a working build. What one build cannot give is the other number §3.4 asks for: how
    many builds the *old* silent fallback was degrading. That is a rate, so it needs a run of
    builds, and it can only ever be estimated now that the fallback is gone.
-8. **[Rev.3 — NEW] F5 does not reach the pool nodes.** Conclusion confirmed; the mechanism is
+8. **[Rev.4 — DONE] F5 now reaches the pool nodes.** Both `pool_handler/pet_factory_handler.py`
+   and `pool_handler/pet_preview_handler.py` configure logging at module scope —
+   `DATSPET_LOG_LEVEL` (default INFO), typo-tolerant, and **explicitly `stream=sys.stderr`**
+   because stdout is `run_handler`'s JSON-lines result protocol and logging there would inject
+   non-JSON lines into the result channel. The handler is the app's own code running in that
+   subprocess, so this needs no change to `shared_gpu_cpu`. Duplicated across the two handlers
+   deliberately: they are independently installed (`pool-install-handler`) and must not grow a
+   shared import. Four guard tests, red-green verified, including one that specifically pins
+   `stream is sys.stderr` — the assertion that protects the result channel.
+
+   Consequence: F4's verified-eviction **success** line is now recorded on pool nodes, not only
+   its failures. The original diagnosis below is kept because the mechanism took two tries to get
+   right:
+
+   **[Rev.3] Conclusion confirmed; the mechanism is
    more specific than first written, and it changes the fix. It is **not** that the worker
    forgets to configure logging — `pool_worker/loop.py`'s `main()` *does* call
    `basicConfig(level=INFO)`. It is that the handler does not run in the worker process at all:
