@@ -1,13 +1,15 @@
 # SPEC — Bundle motion contract (emit the specificity we resolved)
 
-**Status:** **READY TO IMPLEMENT** — **Rev.2** (2026-07-25). Widens what
+**Status:** **READY TO IMPLEMENT** — **Rev.3** (2026-07-26). §3.1/§3.2/§3.3/§7 are
+implemented and verified against six live bundles; **§3.4 (new, highest priority) and §2
+remain.** Widens what
 `pack_datsme_bundle` writes into a DatsMe breed bundle so the host can animate a pet at the
 **same specificity this factory already resolved it at**, and so the poses a user pays GPU
 for actually play. Builds on **`docs/archive/SPEC_MOTION_PROFILES.md`** (the movement layer
 that resolves the profile) and **`docs/SPEC_MOTION_PROFILE_ADMIN.md`** (the editor that
 authors it). Grounded against the working tree.
 
-**Counterpart spec:** `../datsme_me/docs/SPEC_DATSME_MOTION_ENGINE.md` — the host-side
+**Counterpart spec:** `../datsme_me/docs/archive/SPEC_DATSME_MOTION_ENGINE.md` — the host-side
 runtime motion engine that consumes this. That spec is the reason this one exists; read its
 §1.5 for the host's verification of what we transmit today.
 
@@ -62,7 +64,7 @@ optional, and the host tolerates absence (§5).
    `rest_dwell_ms` / `run_arrival_weight`, even though their absence is currently breaking
    things (§1, W5). Content that dictates runtime behavior is the inversion our own
    engine-vs-content rule forbids, and the host has agreed to own it
-   (`SPEC_DATSME_MOTION_ENGINE` §3.4). See §4.
+   (`SPEC_DATSME_MOTION_ENGINE` §3.4, now archived). See §4.
 
 4. **Additive and default-inert** — the same safety property as `SPEC_MOTION_PROFILES` §6.
    Every new manifest field is optional, every new profile field defaults to today's
@@ -206,13 +208,82 @@ The value of the move is that the coupling becomes explicit: the prompts say "si
 facing right" *because* the profile declares `side`/`right`, and the guard test can assert
 they agree.
 
+### 3.4 The tier cap drops `fly` first — **the highest-priority item in this spec** (Rev.3)
+
+**A bird cannot fly and a dragon cannot fly, at the default tier, for every user who asks
+for all the motion they are entitled to.** This is live today.
+
+`_clip_poses_to_cap` (`webui/app.py:1154`) is correct about *how many* poses to keep and
+wrong about *which*. It seeds `REQUIRED_POSES` (walk + idle) and fills the remaining slots
+"from the requested optional poses in CANONICAL order". That order is
+`motion_profiles.CANONICAL_POSES`:
+
+```
+walk, idle, run, sleep, sit, eat, jump, play, swim, fly
+```
+
+`fly` is **last**. At the `plus` tier (`max_poses: 8`, the launch default per
+`tiers/tiers.json`), walk+idle take two slots and the remaining six fill with
+run/sleep/sit/eat/jump/play. `fly` never gets a slot. `avian` enables nine poses and
+`winged_flyer` enables nine — both overflow, both lose exactly `fly`.
+
+**Evidence, not inference.** An "All-Motion Dragon" was generated at the default tier on
+2026-07-25 and written back to DatsMe. Its manifest ships eight clips — `walk, idle, run,
+sleep, sit, eat, jump, play` — and no `fly`. The host resolved it to `winged_flyer`, found
+no habitat-medium gait to bind, and honestly degraded it to the ground habitat with one log
+line. A dragon that cannot fly, from a request for every motion available.
+
+**Why this outranks §2.** §2 is an enabler whose payoff arrives when someone authors a
+breed-level profile. This defect silently removes the defining motion of the two body types
+the host's motion engine was built for, for every user on the launch tier, right now. The
+host cannot compensate: it can only animate what the bundle depicts, and it already reports
+the degradation correctly.
+
+**The fix — seed the profile's signature pose.** Add an optional `signature_pose` to the
+profile JSON:
+
+| profile | `signature_pose` |
+|---|---|
+| `avian` | `"fly"` |
+| `winged_flyer` | `"fly"` |
+| `aquatic` | `"swim"` |
+| `quadruped` | *(absent — its signature motion is walk/run, already required)* |
+| `serpentine` | *(absent — same)* |
+
+`_clip_poses_to_cap` seeds it immediately after `REQUIRED_POSES`, before the canonical fill.
+Everything needed is already in scope at the call site: `motion_profile` — the resolved
+profile key — is computed at `webui/app.py:1411`, four lines above the call at `:1422`. The
+function signature grows one argument.
+
+**The tier interaction, stated honestly.** At `base` (`max_poses: 2`) walk+idle consume both
+slots, so no bird flies at the base tier with or without this fix — that is the tier working
+as designed. The fix changes behavior from `max_poses >= 3` upward.
+
+**Why `signature_pose` and not a per-profile priority array.** One field, one line per
+profile, and it targets the actual defect. A full `pose_priority` ordering is the
+generalization to reach for if a *second* ordering need appears — three-instances
+discipline, and this is instance one.
+
+**Guard test.** For every profile in the registry, clipping "all poses requested" at every
+tier cap `>= 3` must retain that profile's `signature_pose`. The test fails today for
+`avian` and `winged_flyer`, which is how it earns its place.
+
+**The UI mirrors the cap and must mirror the seeding too.** The pose selector shows the user
+what they are buying; if the server clips to a different set than the selector implied, the
+user pays for a build that omits the pose they most wanted. Same seeding rule, both sides.
+
+**Host-side counterpart: none needed.** `SPEC_DATSME_MOTION_ENGINE` §3.3's habitat
+contingency already handles a flyer with no aerial clip — it grounds the pet rather than
+sliding a walk cycle through the sky — and §7.4c pins that behavior with the all-motion
+dragon as a committed fixture, so the degradation stays honest no matter when this is fixed.
+
 ---
 
 ## 4. Explicitly NOT in scope
 
 - **We do not emit behavior weights.** `rest_exit_weight`, `run_arrival_weight`,
   `rest_dwell_ms`, `pick_weight` stay absent. W5 is repaired host-side by profile-owned
-  ambient policy (`SPEC_DATSME_MOTION_ENGINE` §3.4). Emitting them would let a content
+  ambient policy (`SPEC_DATSME_MOTION_ENGINE` §3.4, now archived). Emitting them would let a content
   factory dictate a host's runtime behavior — the boundary this repo's engine-vs-content
   rule exists to hold.
 - **We do not rename poses to match the host's trigger.** The host's reaction trigger
@@ -297,26 +368,25 @@ real bundle, *then* start stamping permanent data. A secondary benefit: once the
 is live it becomes the test harness for this spec — regenerate a bird and watch whether it
 flies.
 
-Revised for Rev.2, now that the host is live. Ordered by **value**, since nothing is
-blocked any more:
+Revised for **Rev.3**. §3.1, §3.2, §3.3 and §7 are **implemented and committed** (`648aad0`,
+`3f796a1`, `ce4927c`) and verified against six live bundles the host now carries as
+regression fixtures. Two items remain, and the order changed:
 
-1. **§2 `motion` block** — the one with real remaining value, and the only item the host
-   cannot work around from its side. Packer + `make_pet_zip` threading `profile.key` /
-   `profile.level` and the record's `catalog_animal` / `catalog_breed`. Inert until the host
-   adds `breed:` / `species:` registry entries, which is one line each once bundles carry
-   the data.
-2. **§7 vocabulary export** — pure data + one script. The host currently hand-maintains
-   `web/src/pet/locomotion/vocabulary.json`; this turns it into a regenerated artifact and
-   ends the drift permanently. Cheap, and it is the item that makes *our* registry the
-   single source it should have been.
-3. **§3.1 `loop`** — unblocked (see §3.1). A `jump` that loops is wrong data regardless of
-   whether the host currently tolerates it.
-4. **§3.3 view fields** — the host now falls back to sheet-level `view_kind`, so tilt is
-   already alive on our bundles. What remains is making the prompt↔manifest coupling
-   explicit and testable rather than implicit.
-5. **§3.2 `timed_buffer_ms`** — lowest urgency: the host's `timedDwellMs` already gives
-   every timed pose a real duration. Author one only where the *content* implies a specific
-   length.
+1. **§3.4 signature-pose seeding — DO THIS FIRST.** A live defect, not an enabler: every
+   `avian` and `winged_flyer` pet built at the launch tier loses `fly`, so the flagship
+   capability of the whole motion layer is unavailable to the users most likely to want it.
+   Proven by the all-motion dragon. Nothing else in this spec costs a user something today.
+2. **§2 `motion` block** — the specificity we resolve and discard. Real value, but it pays
+   off only when a breed-level profile exists, and none does yet. Worth landing while it is
+   cheap because bundles are immutable: pets minted before it can never carry the data.
+   Consider emitting `profile_key` + `profile_level` alone first and letting the host derive
+   the ladder from `level`, which skips threading `catalog_animal`/`catalog_breed` through
+   the pool transport entirely.
+
+**Done (Rev.2 → Rev.3):** §3.1 `loop` (every `triggered` pose non-looping — first proven
+live by the all-motion dragon), §3.2 `timed_buffer_ms` (`sleep: 6000` in all five profiles —
+first proven live by the green snake), §3.3 view fields (sheet-level + per-animation on every
+bundle), §7 vocabulary export.
 
 All five are safe in any order and none of them can break a host that has already shipped —
 every field is optional and the host's degradation ladder has a defined answer for each.
