@@ -3,6 +3,8 @@
   "classes": [
     "aquatic_swimmer",
     "avian_biped",
+    "humanoid_biped",
+    "primate_walker",
     "mammalian_quadruped",
     "limbless_serpentine",
     "winged_flyer"
@@ -17,6 +19,16 @@
       "key": "avian",
       "level": 3,
       "movement_class": "avian_biped"
+    },
+    {
+      "key": "humanoid",
+      "level": 3,
+      "movement_class": "humanoid_biped"
+    },
+    {
+      "key": "primate",
+      "level": 3,
+      "movement_class": "primate_walker"
     },
     {
       "key": "quadruped",

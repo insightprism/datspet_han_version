@@ -4,7 +4,7 @@
     {
       "key": "aquatic",
       "file": "aquatic.json",
-      "label": "Aquatic swimmer — no legs; fins and a tail, body held horizontal, moves by undulating its body and steering with fins. Lives and travels in water (fish, shark, dolphin, seahorse, ray)",
+      "label": "Aquatic swimmer — no legs; fins and a tail, body held horizontal, moves by undulating its body and steering with fins. Lives and travels in water A body that swims with a tail or fluke instead of legs belongs here even if its upper half is human-shaped (fish, shark, dolphin, seahorse, ray, mermaid)",
       "level": 3
     },
     {
@@ -14,9 +14,21 @@
       "level": 3
     },
     {
+      "key": "humanoid",
+      "file": "humanoid.json",
+      "label": "Humanoid — a person-shaped body: fully UPRIGHT on two legs with the hands free, not used for walking. Strides heel-to-toe with the arms swinging in opposition and the hips counter-rotating, torso stable and vertical. Covers anything built on a human frame, real or invented It must have TWO LEGS that it walks on: a human-headed body with four legs, or with a fish tail instead of legs, is not humanoid — classify those by how they get around (human, alien, superhero, robot, elf, zombie)",
+      "level": 3
+    },
+    {
+      "key": "primate",
+      "file": "primate.json",
+      "label": "Primate — two arms with HANDS plus two legs, torso semi-upright rather than horizontal. Moves on all fours with its hands (or knuckles) in contact with the ground, shoulders rolling with each stride; sits upright, and grips, carries and grooms with its hands It is NOT fully upright and its hands are used for locomotion — a person-shaped body that walks upright with free hands is `humanoid`, not this (monkey, ape, gorilla, chimpanzee, orangutan, lemur)",
+      "level": 3
+    },
+    {
       "key": "quadruped",
       "file": "quadruped.json",
-      "label": "Four-legged land animal — four walking legs and NO wings. Walks, trots and runs on all fours with a diagonal gait; may have a tail. Includes lizards and other four-legged reptiles, and animals that GLIDE on a skin membrane rather than beating wings (dog, cat, horse, bear, elephant, komodo dragon, monkey, flying squirrel)",
+      "label": "Four-legged land animal — four walking legs and NO wings. Walks, trots and runs on all fours with a diagonal gait; may have a tail. Includes lizards and other four-legged reptiles, and animals that GLIDE on a skin membrane rather than beating wings. Its front limbs are LEGS, not arms with hands (dog, cat, horse, bear, elephant, komodo dragon, flying squirrel)",
       "level": 3
     },
     {

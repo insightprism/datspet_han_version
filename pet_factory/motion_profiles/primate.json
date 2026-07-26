@@ -1,0 +1,107 @@
+{
+  "key": "primate",
+  "level": 3,
+  "movement_class": "primate_walker",
+  "base_pose": "standing on all fours in a knuckle-walk stance, torso semi-upright, long arms reaching down to the ground",
+  "view": {
+    "view_kind": "side",
+    "native_facing": "right",
+    "mirroring_policy": "flip"
+  },
+  "keywords": [
+    "primate", "monkey", "ape", "gorilla", "chimpanzee", "chimp", "bonobo",
+    "orangutan", "gibbon", "baboon", "mandrill", "macaque", "lemur",
+    "marmoset", "tamarin", "capuchin", "howler monkey", "spider monkey"
+  ],
+  "poses": {
+    "walk": {
+      "enabled": true,
+      "runtime_role": "active",
+      "action": "knuckle-walking forward on its hands and feet",
+      "suffix": ", performing a full walk cycle in place: the long arms swinging forward and planting their knuckles down as the hind legs step through behind them, shoulders rolling with each stride, torso semi-upright and rocking gently, classic looping sprite walk animation, no horizontal movement of the body, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "mid knuckle-walk stride, one long arm planted forward on its knuckles and the other swinging back, hind legs mid-step, torso semi-upright and leaning forward, head raised"
+      }
+    },
+    "idle": {
+      "enabled": true,
+      "runtime_role": "rest",
+      "action": "sitting upright, looking around calmly",
+      "suffix": ", chest rising and falling with slow breathing, head turning to glance around, one hand shifting its grip on its knee, shoulders settling, gentle looping idle animation, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "seated upright on its haunches, arms resting on its knees, back slightly rounded, head raised, eyes open and alert"
+      }
+    },
+    "run": {
+      "enabled": true,
+      "runtime_role": "active",
+      "action": "bounding forward quickly on its hands and feet",
+      "suffix": ", the arms reaching out and pulling the body through each bound while both hind legs drive off together, shoulders rolling hard, torso low and pitched forward, energetic looping run animation, no horizontal movement of the body, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "mid-bound, both arms stretched forward and planted on the ground, hind legs gathered and pushing off together, back arched, body low and driving forward"
+      }
+    },
+    "sleep": {
+      "enabled": true,
+      "runtime_role": "timed",
+      "action": "curled up asleep, breathing slowly",
+      "suffix": ", chest and shoulders rising and falling with each slow breath, arms hugged loosely around itself, one hand twitching now and then, eyes staying closed throughout, calm looping sleep animation, no camera movement, no panning",
+      "timed_buffer_ms": 6000,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "curled up on its side, knees drawn up toward its chest, long arms wrapped around itself, head tucked down, eyes closed"
+      }
+    },
+    "sit": {
+      "enabled": true,
+      "runtime_role": "timed",
+      "action": "sitting and grooming itself",
+      "suffix": ", hands picking and combing through the fur on its opposite forearm, head tilting to follow what they are doing, shoulders shifting, slow steady breathing, gentle looping animation, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "seated upright with knees folded, one hand raised to the opposite forearm mid-groom, head tilted down toward its hands"
+      }
+    },
+    "eat": {
+      "enabled": true,
+      "runtime_role": "timed",
+      "action": "eating a piece of fruit held in its hands",
+      "suffix": ", both hands lifting the fruit to its mouth and lowering it again, jaw working as it chews, head bobbing slightly with each bite, elbows opening and closing, small looping feeding animation, no camera movement, no panning",
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "seated, both hands holding a piece of fruit up to its open mouth, head tilted forward toward it, elbows bent out to the sides"
+      }
+    },
+    "jump": {
+      "enabled": true,
+      "runtime_role": "triggered",
+      "action": "leaping upward in an excited burst",
+      "suffix": ", pushing off hard with both legs and throwing both arms up overhead, the body extending upward then landing and folding back down, one reaction leap, no horizontal movement, no camera movement, no panning",
+      "loop": false,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "airborne mid-leap, both arms thrown up overhead, legs tucked beneath the body, torso stretched upward, mouth open in excitement"
+      }
+    },
+    "play": {
+      "enabled": true,
+      "runtime_role": "triggered",
+      "action": "clapping and bouncing playfully",
+      "suffix": ", hands clapping together in front of its chest, shoulders bouncing up and down, head shaking side to side, feet hopping in place, lively reaction loop, no camera movement, no panning",
+      "loop": false,
+      "control": {
+        "kind": "pose_prompt",
+        "pose": "crouched low with both hands raised and clapping together in front of its chest, shoulders hunched up, head tilted playfully, knees bent"
+      }
+    },
+    "swim": {
+      "enabled": false
+    },
+    "fly": {
+      "enabled": false
+    }
+  }
+}
