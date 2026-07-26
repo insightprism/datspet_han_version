@@ -665,34 +665,43 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
                         on_stage=lambda msg: prog(msg, 0.10),
                         base_pose=profile.base_pose)
 
-    # Loop the selected poses — each a Wan I2V generation from the same base sprite.
-    # Progress is distributed across the N poses over the [0.10, 0.85] band (the
-    # 0.85→1.0 tail is the cutout + pack step, unchanged).
-    # §3.9.1 pose_prompt anchor: a fresh still in the pose (a wings-spread bird flaps
-    # where a standing one only twitches). The anchor is drawn from the DESCRIPTION,
-    # so it works when the description carries the pet's identity — typed animals and
-    # designer pets (validated §7.1/§7.2/§7.3). The caller passes `pose_anchor=False`
-    # for photo UPLOADS, whose stored description is a bare noun a fresh still can't
-    # match to the specific photo (they keep the shared base until the `depth` kind
-    # ships). The anchor's style prompt mirrors how the base was drawn — the remix
-    # prompt for reference-based pets (matches the designed still's palette), the base
-    # prompt for typed ones — so the fly pose and the walk pose stay the same animal.
+    # Generate the poses in TWO PHASES so ComfyUI doesn't thrash its ~12 GB models.
+    # Phase A draws every pose's anchor still (all Z-Image txt2img); Phase B runs every
+    # Wan I2V loop. Batching by model means Z-Image loads ONCE (base + all anchors) and
+    # Wan loads ONCE — a single model switch for the whole build, instead of reloading a
+    # model between the anchor and the loop on EVERY pose. Once every pose carries a clause,
+    # the interleaved order spent ~5 min of an 8-pose build in model reloads alone. Output
+    # is byte-identical: each loop still starts from its own anchor at the same _ANCHOR_SEED.
+    #
+    # §3.9.1 pose_prompt anchor: a fresh still in the pose (a wings-spread bird flaps where a
+    # standing one only twitches), drawn from the DESCRIPTION so it works for typed animals and
+    # designer pets (§7.1/§7.2/§7.3). `pose_anchor=False` (photo UPLOADS, whose stored noun a
+    # fresh still can't match) keeps the shared base. The anchor's style prompt mirrors how the
+    # base was drawn — the remix prompt for reference pets, the base prompt for typed.
     anchor_prompt = _remix_prompt if reference_image is not None else _base_prompt
-    pose_files = {}
     n = len(pose_names)
+
+    # Phase A — all anchor stills up front (Z-Image stays loaded across base + every anchor).
+    # A pose with no clause reuses the shared base. Fixed _ANCHOR_SEED so the anchor reproduces
+    # what the Motion Lab drew while the clause was authored (§3.9.1 — a faithful Lab preview).
+    pose_starts = {}
     for i, name in enumerate(pose_names):
-        pose = profile.pose(name)
-        frac = 0.10 + (0.75 * i / max(1, n))
-        prog(f"Animating the {name}…", round(frac, 3))
-        start = base
-        clause = mp.anchor_clause(pose) if pose_anchor else None
-        if clause:
-            # Fixed _ANCHOR_SEED (not the random build seed) so the anchor reproduces what
-            # the Motion Lab drew while the clause was authored (§3.9.1 — the Lab is a
-            # faithful preview only if the build draws the anchor at the SAME seed).
-            start = COMFY_OUTPUT_DIR / _run(_static_image_wf(anchor_prompt(animal, clause), _ANCHOR_SEED))
-            _wait_stable(start)
-        pose_files[name] = _run(_loop_wf(mp.compose_pose_prompt(animal, pose), str(start), _ANCHOR_SEED))
+        clause = mp.anchor_clause(profile.pose(name)) if pose_anchor else None
+        if not clause:
+            pose_starts[name] = base
+            continue
+        prog(f"Sketching the {name} pose…", round(0.10 + 0.12 * i / max(1, n), 3))
+        start = COMFY_OUTPUT_DIR / _run(_static_image_wf(anchor_prompt(animal, clause), _ANCHOR_SEED))
+        _wait_stable(start)
+        pose_starts[name] = start
+
+    # Phase B — all Wan I2V loops (Wan loads once), each from its own anchor. This band
+    # [0.22, 0.85] is the bulk of the wall time; the 0.85→1.0 tail is the cutout + pack step.
+    pose_files = {}
+    for i, name in enumerate(pose_names):
+        prog(f"Animating the {name}…", round(0.22 + 0.63 * i / max(1, n), 3))
+        pose_files[name] = _run(_loop_wf(mp.compose_pose_prompt(animal, profile.pose(name)),
+                                         str(pose_starts[name]), _ANCHOR_SEED))
 
     prog("Cutting out backgrounds & packing…", 0.85)
     # Unload ComfyUI's Wan models so the GPU has room for birefnet (the next job
