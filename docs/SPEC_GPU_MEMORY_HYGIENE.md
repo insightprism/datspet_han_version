@@ -1,6 +1,6 @@
 # SPEC — GPU memory hygiene: bound the allocators, make the failures loud
 
-**Status:** **Rev.4** (2026-07-26) — **COMPLETE. All five fixes are implemented and measured.**
+**Status:** **Rev.5** (2026-07-26) — **COMPLETE. All five fixes are implemented and measured.**
 Five small, independent fixes to the build's GPU memory handling and to the *visibility* of its
 failures. Grounded against the working tree (`pet_factory/factory.py`, `pet_env.sh`,
 `webui/app.py`).
@@ -16,6 +16,15 @@ gate is **478 green**. Every headline claim is a measurement, not an estimate:
 | ComfyUI eviction | **~18 GB reclaimed in 0.5 s** — a number nobody had before F4 |
 | a real 8-pose build | **128/128 frames matted**, 0 opaque fallbacks, 0 ERROR lines |
 | cutout speed | **unchanged** — 0.27–0.28 s/frame capped and uncapped alike |
+
+**[Rev.5] The gate is 484 green, and §10 now carries three MEASURED dead ends** so nobody spends
+a day rediscovering them. Where a build's time actually goes was measured for the first time
+(loops are ~69% of it, and ~82% of a loop is model *movement*, not compute), and the three
+optimizations that look obvious from that number were tested: ComfyUI's **`--highvram` OOMs** —
+the staging it removes is the only reason a ~34 GB model stack fits on a 24 GB card; **resolution
+scales the 7 s of sampling, not the 33 s of movement**; and **`_fill_holes_alpha` is inside the
+noise**. §10 also records that the 2-GPU fan-out's long-cited blocker does not exist — a whole
+build already runs on GPU 1 with **no code change**, env only.
 
 **[Rev.4] F1 shipped, reversing Rev.3's deferral.** Rev.3 deferred it on three objections (§2.7,
 kept verbatim). Measuring four more caps retired two of them: peak-vs-cap is a **cliff, not a
@@ -1073,11 +1082,80 @@ performance promise.
   two concurrent self-contained builds would both put their cutout on cuda:0. The fan-out spec
   therefore starts from a cutout that is already per-device pinned and bounded at a known
   6426 MiB, rather than having to introduce device pinning, a memory bound, and concurrency in
-  one change. The remaining obstacle is unchanged: `COMFY_URL` / `COMFY_OUTPUT_DIR` are module
-  globals.
-- **Vectorizing `_fill_holes_alpha`** — an interpreted BFS over a 256² alpha, run once per frame,
-  128 times in an 8-pose build. Possibly significant CPU cost, possibly noise. Measure it with
-  F2/F3's trustworthy instrumentation before touching it.
+  one change.
+
+  **[Rev.5 — the "remaining obstacle" was never an obstacle. Measured: a whole build already runs
+  on GPU 1 with NO code change.**](#) Every earlier revision called
+  `COMFY_URL` / `COMFY_OUTPUT_DIR` being module globals the blocker. They are globals *read from
+  the environment at import*, so a per-card build needs only env:
+
+  ```bash
+  CUDA_VISIBLE_DEVICES=1 \                                   # the in-process birefnet cutout
+  PET_FACTORY_COMFY_URL=http://127.0.0.1:19963 \             # start_comfyui_gpu1.sh, --cuda-device 1
+  PET_FACTORY_COMFY_OUTPUT=<ComfyUI>/output_gpu1 \
+      python -c "from pet_factory import make_pet_zip; ..."
+  ```
+
+  A complete 3-pose build ran this way on 2026-07-26 in **176.9 s**, fully isolated, while GPU 0
+  stayed free. Threading the endpoint through `_run`/`make_pet_zip` is required only to split **one**
+  build across two cards — not for the self-contained-per-card design, which is the one actually
+  wanted. Two further confirmations from the same run: `:19963` reports its device as `cuda:0`
+  (that is `--cuda-device 1` remapping), so F4's index lookup reads the right card without
+  changes; and `_CUTOUT_DEVICE_ID = 0` under `CUDA_VISIBLE_DEVICES=1` correctly lands the cutout
+  on physical GPU 1. **The fan-out's cost estimate should be revised down accordingly** — the
+  remaining work is orchestration (who dispatches to which card, and cross-process
+  serialization), not plumbing.
+
+  **[Rev.5] Related, and load-bearing for that orchestration: `GPU_LOCK` is process-local.** It is
+  a `threading.Lock` in `webui/app.py`, so it serializes only builds *that backend process*
+  starts. A CLI build, a script, or the Motion Lab bypasses it entirely. Observed twice on
+  2026-07-26: an out-of-process build saturated ComfyUI while a user was in the designer, and the
+  UI surfaced *"The GPU is busy generating a pet"* — which is the preview path's
+  `GPU_LOCK.acquire(timeout=1.5)` fast-fail, pointing at the lock while the real cause was
+  saturation from outside the process. A second occurrence corrupted a measurement run. Any
+  fan-out multiplies the number of things driving ComfyUI, so cross-process serialization is a
+  prerequisite, not a nicety.
+
+- **[Rev.5] ComfyUI's `--highvram` — TRIED, MEASURED, DO NOT RETRY.** The loop band is ~69% of a
+  build, so it is the only part worth optimizing, and per-loop time is dominated by *model
+  movement*, not compute. Warm 704² loop, 3-pose A/B on 2026-07-26:
+
+  | | per loop |
+  |---|---|
+  | two Wan expert stagings (13.6 GB each) | ~15 s |
+  | `WanTEModel` re-staged (6419 MB) + VAE + encode/decode | ~18 s |
+  | **actual sampling, 4 steps** | **~7 s** |
+  | total | ~40 s (measured 42.0 / 40.3 / 36.9) |
+
+  **~82% is model movement.** That makes `--highvram` look obvious — ComfyUI's own help says it
+  "keeps them in GPU memory" instead of unloading, and `enables_dynamic_vram()`
+  (`comfy/cli_args.py:284`) shows the flag switches the staging path off. **It does not work: it
+  OOMs.** Both runs died with `Requested to load WAN21` → `OutOfMemory`, then `_run` polled a
+  file that never appeared until its 360 s ceiling. Zero `"prepared for dynamic VRAM loading"`
+  lines confirm the flag took effect — that *is* the failure. Resident-loading a 13.6 GB expert
+  plus a 6.4 GB TE plus VAE plus context does not fit in 24 GB.
+
+  **The conclusion that matters: the staging cost is not waste ComfyUI could avoid — it is the
+  only reason a ~34 GB model stack runs on a 24 GB card at all.** So the levers are fewer/smaller
+  models, more VRAM per card, or parallelism across cards. Not a flag.
+
+  Two corollaries, both correcting earlier guesses in this spec's own review thread:
+
+  - **Resolution is not a lever.** 704² → 512² scales the ~7 s of sampling, not the ~33 s of
+    movement — worth ~2 s per loop. Same for frame count and step count.
+  - **The "two-pass expert split" (all poses' high-noise steps, then all low-noise) is a much
+    weaker idea than it first appeared.** It was estimated at ~37% on the assumption that
+    consecutive same-expert prompts would stage once. Leg A falsifies the premise: ComfyUI
+    **re-staged on every prompt even when the model did not change** (init waits `15,15` on the
+    cold loop, then `7,7 / 8,8 / 7,7`). There is a warm-cache effect that roughly halves it, but
+    it is per-prompt regardless of model identity. Any revival of this idea must first measure
+    whether consecutive same-expert prompts stage faster — the 37% figure was extrapolation and
+    should not be quoted.
+- **Vectorizing `_fill_holes_alpha` — MEASURED, NOT WORTH IT.** An interpreted BFS over a 256²
+  alpha, run once per frame, 128 times in an 8-pose build; it looked like a plausible hidden CPU
+  cost. It is not: the whole cutout + pack band runs at **0.365 s/frame** end-to-end against
+  **0.27–0.36 s/frame** for birefnet inference alone (§2.6). Inference dominates; the flood fill
+  is inside the noise. Closed on data, not deferred.
 - **Pipelining the cutout behind the loops** — ~15% tail, and mutually exclusive with the fan-out
   since both want the second card.
 - **Prod/pool behavior.** The web tier runs `PET_GEN_BACKEND=pool` with no ML stack and never
