@@ -12,6 +12,9 @@
 >   `docs/reference_docs/wan_single_expert_comparison.png`). **Read §10 before attempting any
 >   generation-speed optimization**, or you will re-run experiments that are already answered.
 >   §10 also records the ComfyUI graph+seed caching trap that nearly produced a fake 22× result.
+> - **§11.11 — an open DEFECT in F4**, found during the 2026-07-26 deploy: it verifies ComfyUI's
+>   self-reported free VRAM, which can read free while the driver has not released. Not an
+>   outage; do read it before trusting an "eviction landed" line.
 > - **§2.6 + `scripts/probe_cutout_arena.py`** — the sweep behind every constant in §6.
 >   Re-run it when the cutout model, onnxruntime, or rembg changes, or when a new GPU joins.
 >
@@ -1390,6 +1393,34 @@ performance promise.
     where they *go*. Worth a line in `start_petmaker_backend_only.sh`, or a note in `CLAUDE.md`
     that a build whose evidence matters must be run via `start_all.sh`. Until then the paper
     trail has a hole that no amount of logging code will close.
+11. **[Rev.6 — NEW, and it is a defect in F4 itself] F4 verifies the WRONG NUMBER.**
+   `_comfy_vram_free()` polls ComfyUI's `/system_stats` `vram_free` — which is ComfyUI's own
+   torch-level view, not the driver's. Measured on `omen-pet` during the 2026-07-26 deploy, both
+   readings taken at the same instant:
+
+   | source | free VRAM |
+   |---|---|
+   | ComfyUI `/system_stats` | **23400 MiB** |
+   | driver (`nvidia-smi`) | **~6.5 GB** actually available to another process |
+
+   F4 duly logged `ComfyUI eviction landed: vram_free 23400 MiB → 23400 MiB (target 8192 MiB)
+   after 0.1s`, and a cutout run immediately afterwards **failed** on the 822 MB activation.
+   Torch can consider memory free while its caching allocator still holds it from the driver, so
+   another process — which is exactly what the cutout is — cannot use it.
+
+   **This is the same false-green class the whole spec exists to remove, found inside the fix
+   built to remove it.** F4 replaced an unverifiable `sleep(1.5)`; a verdict that can report
+   success on an unfree card is only partly better.
+
+   **It does not break production** — the real pipeline's timing means the card IS free by the
+   time the cutout runs, proven by a full `make_pet_zip` on omen the same day returning
+   `alpha=(0, 255)`. Every failing probe was an out-of-sequence `_remove_bg` call, i.e. §11.4's
+   mistake made again. So this is a reporting defect, not an outage.
+
+   **Fix:** read driver-level free memory (pynvml, or `nvidia-smi --query-gpu=memory.free`) for
+   the watermark, and keep the ComfyUI reading only as the before/after narrative. Until then,
+   treat "eviction landed" as necessary but not sufficient.
+
 10. **[Rev.3 — NEW] F5's format is not structured.** `basicConfig` with a text format is right for
    a dev box read by a human. If the pool ever ships these logs somewhere that parses them, it
    becomes the wrong choice and should move to JSON. Noted so the decision stays visible rather
