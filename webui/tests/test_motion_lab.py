@@ -17,6 +17,13 @@ class _FakePF:
     def _static_image_wf(self, prompt, seed):
         return {"kind": "still", "prompt": prompt, "seed": seed}
 
+    def _remix_prompt(self, animal, pose="standing"):
+        return f"cute cartoon {animal}, exactly {animal}, {pose}"
+
+    def _img2img_wf(self, prompt, image_path, seed, denoise=0.6):
+        return {"kind": "img2img", "prompt": prompt, "src": image_path,
+                "seed": seed, "denoise": denoise}
+
     def _loop_wf(self, prompt, path, seed):
         return {"kind": "loop", "prompt": prompt, "src": path, "seed": seed}
 
@@ -129,3 +136,80 @@ def test_prune_lab_assets_sweeps_stale_scratch(lab_client):
     motion_lab._prune_lab_assets()
     assert not old.exists(), "a scratch asset past the TTL should be swept"
     assert new.exists(), "a fresh scratch asset should be kept"
+
+
+# --- upload door parity (the reference path) --------------------------------
+def _png_bytes():
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 30), (9, 9, 9)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _upload_reference(lab_client, monkeypatch, *, caption):
+    """Upload a photo, with the REAL upload door's captioner stubbed at its call site —
+    the Lab runs `app._caption_upload`, deliberately, so that path is exercised here."""
+    import app as app_mod
+    monkeypatch.setattr(app_mod, "_caption_upload", lambda *a, **k: caption)
+    r = lab_client.post("/api/admin/motion-lab/reference",
+                        files={"image": ("p.png", _png_bytes(), "image/png")})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_upload_reference_reports_the_captioners_verdict(lab_client, monkeypatch):
+    """The caption is DATA, not a decision: the browser fills the animal field from it.
+    A triage rejection surfaces as usable=false rather than being swallowed — that
+    rejection is what silently drew a dog from a photo of a person (2026-07-26)."""
+    ok = _upload_reference(lab_client, monkeypatch,
+                           caption={"subject": "lion", "features": "golden mane", "description": "a lion"})
+    assert ok["usable"] is True and ok["subject"] == "lion" and ok["features"] == "golden mane"
+    assert lab_client.get(f"/api/admin/motion-lab/asset/{ok['reference_id']}.png").status_code == 200
+
+    rejected = _upload_reference(lab_client, monkeypatch, caption=None)
+    assert rejected["usable"] is False and rejected["subject"] == ""
+
+
+def test_a_reference_switches_the_template_and_only_the_base_is_img2img(lab_client, monkeypatch):
+    """Mirrors factory.py:733 exactly. A reference swaps _base_prompt for _remix_prompt on
+    EVERY draw, but only the shared base is redrawn img2img — a build never img2img's a pose
+    anchor, so drawing one that way here would flatter the Lab and lie about the build."""
+    ref = _upload_reference(lab_client, monkeypatch,
+                            caption={"subject": "lion", "features": "", "description": ""})
+    rid = ref["reference_id"]
+    sent = []
+    import motion_lab
+    real_start = motion_lab._start
+    monkeypatch.setattr(motion_lab, "_start", lambda wf, ext: (sent.append(wf), real_start(wf, ext))[1])
+
+    base = lab_client.post("/api/admin/motion-lab/still", json={
+        "animal": "lion", "clause": "standing", "seed": 42,
+        "reference_id": rid, "base": True, "strength": 0.55})
+    assert base.status_code == 200, base.text
+    assert sent[-1]["kind"] == "img2img"
+    assert sent[-1]["denoise"] == 0.55
+    assert "exactly lion" in sent[-1]["prompt"]          # the REMIX template
+
+    anchor = lab_client.post("/api/admin/motion-lab/still", json={
+        "animal": "lion", "clause": "mid-stride", "seed": 42, "reference_id": rid})
+    assert anchor.status_code == 200, anchor.text
+    assert sent[-1]["kind"] == "still", "an anchor must stay txt2img even with a reference"
+    assert "exactly lion" in sent[-1]["prompt"] and "mid-stride" in sent[-1]["prompt"]
+
+
+def test_without_a_reference_the_lab_draws_from_text_as_before(lab_client, monkeypatch):
+    """The typed-pet path is unchanged: no reference → the base template, txt2img."""
+    sent = []
+    import motion_lab
+    real_start = motion_lab._start
+    monkeypatch.setattr(motion_lab, "_start", lambda wf, ext: (sent.append(wf), real_start(wf, ext))[1])
+    r = lab_client.post("/api/admin/motion-lab/still", json={"animal": "lion", "clause": "", "seed": 42})
+    assert r.status_code == 200
+    assert sent[-1]["kind"] == "still" and "exactly" not in sent[-1]["prompt"]
+
+
+def test_an_unknown_reference_id_is_a_clean_404(lab_client):
+    r = lab_client.post("/api/admin/motion-lab/still", json={
+        "animal": "lion", "clause": "", "seed": 42, "reference_id": "deadbeef1234", "base": True})
+    assert r.status_code == 404

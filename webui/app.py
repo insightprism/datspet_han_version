@@ -196,6 +196,15 @@ if PET_GEN_BACKEND == "local":
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
 ALLOWED_IMAGE_MIMES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 
+# Shown when an upload arrives with no typed noun AND the captioner could not name it
+# (engine off, or triage rejected the photo). The door asks instead of guessing — see the
+# comment at the raise site for what guessing cost. Worded as an instruction, because the
+# user can fix it in one action: the noun field is already on the form.
+UNNAMED_UPLOAD_MESSAGE = (
+    "We couldn't tell what this picture is. Type what it is — a dog, a red panda, "
+    "a person — and upload it again."
+)
+
 # How hard to redraw an uploaded photo into a sprite (SPEC_PET_DESIGNER_FLOW §3.5).
 # High on purpose: a photograph is far from the side-profile, flat-shaded, white-
 # background still Wan I2V needs, and the gap is what makes today's raw-photo
@@ -976,11 +985,20 @@ def create_reference(
     if caption and caption.get("subject"):
         suggested = caption["subject"].strip()[:60]
 
-    subject = animal or suggested or "pet"
+    # Nothing named it → ASK, never guess. The old fallback substituted the literal noun
+    # "pet", which is not a neutral default but a species assertion: it drew a cartoon DOG
+    # from a photograph of a person (2026-07-26), and because the profile was resolved from
+    # a deliberately-blanked noun it also pinned motion_profile null, so the build would
+    # have animated that person on all fours. A confident wrong subject is worse than a
+    # question — the noun field the answer belongs in is already on the form.
+    subject = animal or suggested
+    if not subject:
+        raise HTTPException(422, UNNAMED_UPLOAD_MESSAGE)
     # Resolve the motion profile ONCE from the subject noun — used both for the base pose
-    # the redraw is drawn in (SPEC_BUNDLE_MOTION_CONTRACT §3.1) and pinned on the record below.
-    surface_noun = animal or suggested or ""
-    upload_profile_key = motion_resolver.resolve_motion_key(surface_noun) if surface_noun else None
+    # the redraw is drawn in (SPEC_BUNDLE_MOTION_CONTRACT §3.1) and pinned on the record
+    # below. Unconditional now that `subject` is guaranteed: an upload can no longer reach
+    # the build with motion_profile null and keyword-resolve from whatever the fallback was.
+    upload_profile_key = motion_resolver.resolve_motion_key(subject)
     # Extend the redraw prompt with the AI's short visual cue, but ONLY when the AI
     # supplied the noun (the field was empty) — _remix_prompt repeats the description
     # to win over the source's colours, so a features hint reinforces the redraw.
@@ -1005,7 +1023,7 @@ def create_reference(
         isolate = settings_admin.bool_setting("upload_isolate")
         png = _render_still(render_description, request, owner, reference_path=tmp,
                             strength=redraw_strength, isolate=isolate,
-                            base_pose=_base_pose_for(upload_profile_key, surface_noun))
+                            base_pose=_base_pose_for(upload_profile_key, subject))
     finally:
         tmp.unlink(missing_ok=True)
     # §3.4: a photo carries no reliable surface signal → universal axes only; but a
@@ -1019,7 +1037,7 @@ def create_reference(
         # keyword fallback). No noun at all → leave it to keyword-resolve at build.
         motion_profile=upload_profile_key,
         source="upload", generated=True, suggested_subject=suggested,
-        surface=_resolve_typed_surface(surface_noun) if surface_noun else None))
+        surface=_resolve_typed_surface(subject)))
 
 
 @app.get("/api/reference/{reference_id}.png")

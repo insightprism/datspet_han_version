@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   motionAdmin, motionLab, getDatsmeSession, AdminApiError, CANONICAL_POSES, fetchMotions,
-  type MotionAdminList, type MotionClassification, type MotionProfileDetail, type MotionProfileFile,
+  type MotionAdminList, type MotionClassification, type MotionProfileDetail, type MotionProfileFile, type LabReference,
   type LabAsset, type LabJob, type LabEndpoint,
 } from "@/lib/api";
 import { ProfileEditor, type Draft } from "../ProfileEditor";
@@ -71,6 +71,11 @@ export default function MotionLabPage() {
   const [animal, setAnimal] = useState("robin");
   const [matchedProfileFor, setMatchedProfileFor] = useState("");   // the animal the profile was auto-matched from
   const [buildMatch, setBuildMatch] = useState<MotionClassification | null>(null);  // what a real build would resolve to
+  // An uploaded photo: present → every draw uses the REMIX template and the base is
+  // redrawn img2img from it, exactly as a build with a reference does (factory.py:733).
+  const [reference, setReference] = useState<LabReference | null>(null);
+  const [refBusy, setRefBusy] = useState(false);
+  const [refStrength, setRefStrength] = useState(0.85);   // base-only denoise
   const [seed, setSeed] = useState(DEFAULT_SEED);
   const [base, setBase] = useState<LabAsset | null>(null);
   const [basePose, setBasePose] = useState("standing");   // the posture the base still is drawn in (profile.base_pose)
@@ -176,6 +181,21 @@ export default function MotionLabPage() {
     return () => clearTimeout(t);
   }, [animal]);
 
+  async function uploadReference(file: File) {
+    setErr(""); setNotice(""); setRefBusy(true);
+    try {
+      const r = await motionLab.uploadReference(file);
+      setReference(r);
+      clearRenders();                       // the base and every anchor are now stale
+      if (r.subject) setAnimal(r.subject);  // the captioner's noun, as the upload door would use it
+      setNotice(r.usable
+        ? `Triage accepted it — the captioner called it “${r.subject}”${r.features ? ` (${r.features})` : ""}.`
+        : "Triage REJECTED this photo, so the real upload door would have no noun for it. Type one yourself.");
+    } catch (e) {
+      setErr(e instanceof AdminApiError ? e.message : "Upload failed.");
+    } finally { setRefBusy(false); }
+  }
+
   function clearRenders() {
     setBase(null);
     setCells((c) => Object.fromEntries(Object.entries(c).map(([n, cell]) => [n, { ...cell, still: null, loop: null }])));
@@ -186,7 +206,8 @@ export default function MotionLabPage() {
   async function doDrawBase(): Promise<LabAsset | null> {
     setBaseElapsed(0); setBasePhase("pending");
     // The base still's pose word IS base_pose (empty → the backend's "standing" default).
-    const { job_id } = await motionLab.startStill(animal, basePose.trim(), seed);
+    const { job_id } = await motionLab.startStill(animal, basePose.trim(), seed,
+      reference ? { reference_id: reference.reference_id, base: true, strength: refStrength } : undefined);
     setBaseJob(job_id);
     try {
       const a = await pollJob(job_id, (e, ph) => { setBaseElapsed(e); setBasePhase(ph); });
@@ -196,7 +217,9 @@ export default function MotionLabPage() {
   }
   async function doDrawAnchor(name: string, clause: string): Promise<LabAsset | null> {
     patch(name, { elapsed: 0, phase: "pending" });
-    const { job_id } = await motionLab.startStill(animal, clause, seed);
+    // Anchors stay txt2img even with a reference — a build never img2img's an anchor.
+    const { job_id } = await motionLab.startStill(animal, clause, seed,
+      reference ? { reference_id: reference.reference_id } : undefined);
     patch(name, { jobId: job_id });
     try {
       const a = await pollJob(job_id, (e, ph) => patch(name, { elapsed: e, phase: ph }));
@@ -438,6 +461,43 @@ export default function MotionLabPage() {
               {baseBusy && <CancelBtn onClick={() => cancelJob(baseJob)} />}
             </div>
           </div>
+        </div>
+
+        {/* Upload door parity. WITHOUT a reference the Lab draws from text (_base_prompt) —
+            which is only how a TYPED pet is built. A designed or uploaded pet is built from
+            the remix template, and its base is redrawn img2img from the reference. Loading a
+            photo here puts the Lab on that second path, so both can be previewed. */}
+        <div className="flex flex-wrap items-center gap-3 border-t pt-3" style={{ borderColor: "var(--line)" }}>
+          <span className="mono text-xs" style={{ color: "var(--muted)" }}>from a photo</span>
+          <label className="mono cursor-pointer rounded-lg border px-3 py-1.5 text-xs"
+            style={{ color: "var(--accent)", borderColor: "var(--line)" }}>
+            {refBusy ? "reading…" : reference ? "replace" : "upload"}
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden"
+              disabled={refBusy}
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadReference(f); }} />
+          </label>
+          {reference && (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={motionLab.assetUrl(reference.url)} alt="reference" width={48} height={48}
+                className="rounded" style={{ objectFit: "cover", border: "1px solid var(--line)" }} />
+              <span className="mono text-xs" style={{ color: reference.usable ? "var(--green)" : "var(--orange)" }}>
+                {reference.usable ? `triage ok — “${reference.subject}”` : "triage REJECTED — no noun from the AI"}
+              </span>
+              <label className="mono flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
+                base denoise
+                <input type="range" min={0.3} max={0.9} step={0.05} value={refStrength}
+                  onChange={(e) => { setRefStrength(Number(e.target.value)); setBase(null); }} />
+                <span style={{ color: "var(--heading)" }}>{refStrength.toFixed(2)}</span>
+              </label>
+              <button onClick={() => { setReference(null); clearRenders(); }}
+                className="mono rounded border px-2 py-1 text-xs"
+                style={{ color: "var(--faint)", borderColor: "var(--line)" }}>clear</button>
+              <span className="mono w-full text-xs" style={{ color: "var(--faint)" }}>
+                anchors now use the remix template (txt2img, as a build does); only the base is redrawn from the photo
+              </span>
+            </>
+          )}
         </div>
 
         {/* line 2 — motion profile + CRUD (the same Edit/Duplicate/Delete as the Motions page) */}

@@ -176,14 +176,17 @@ def test_upload_redraw_strength_is_the_users_choice(client, no_gpu, sent, expect
     which side they want — "faithful" keeps their photo's look but preserves the
     photographic pose Wan I2V animates badly; "sprite" animates reliably but looks
     redrawn. The server takes the number and clamps it; it does not decide."""
-    r = client.post("/api/reference", data={"strength": sent}, files=_upload())
+    r = client.post("/api/reference", data={"animal": "corgi", "strength": sent}, files=_upload())
     assert r.status_code == 200, r.text
     assert no_gpu[-1]["strength"] == expected
 
 
-def test_upload_without_an_animal_hint_still_works(client, no_gpu):
-    """`animal` is a HINT on the upload door, not a requirement — a photo already
-    says what the animal is; the name only sharpens the redraw prompt."""
+def test_upload_without_an_animal_hint_still_works(client, no_gpu, app_mod, monkeypatch):
+    """`animal` stays a HINT rather than a requirement — but only because something else
+    can name the photo. With the captioner able to read it, an empty field is fine and the
+    AI's noun is used. (When NOTHING can name it, the door asks — see the 422 tests: the
+    old behaviour there was to answer "pet" and draw a dog.)"""
+    _mock_caption(app_mod, monkeypatch, subject="corgi")
     r = client.post("/api/reference", files=_upload())
     assert r.status_code == 200, r.text
     assert r.json()["source"] == "upload"
@@ -227,21 +230,40 @@ def test_upload_empty_field_is_captioned_by_the_ai(client, no_gpu, app_mod, monk
     assert no_gpu[-1]["isolate"] is False                            # flag default OFF (decision 6a)
 
 
+def test_upload_always_pins_a_motion_profile(client, no_gpu, app_mod, monkeypatch):
+    """The bug this closes (2026-07-26): an unnamed upload resolved its profile from a
+    deliberately-blanked noun, so the reference was saved with motion_profile null and the
+    build keyword-resolved from the "pet" fallback — a photo of a person animated as a
+    quadruped, and the `humanoid` profile was unreachable from this door entirely.
+
+    Every upload that gets past the naming gate now carries a resolved key, whether the
+    noun was typed or captioned."""
+    monkeypatch.setattr(app_mod.motion_resolver, "resolve_motion_key", lambda a: "humanoid")
+
+    typed = client.post("/api/reference", data={"animal": "person"}, files=_upload()).json()
+    assert typed["motion_profile"] == "humanoid"
+
+    _mock_caption(app_mod, monkeypatch, subject="person")
+    captioned = client.post("/api/reference", files=_upload()).json()
+    assert captioned["motion_profile"] == "humanoid"
+    assert captioned["suggested_subject"] == "person"
+
+
 def test_upload_isolation_is_gated_by_the_flag(client, no_gpu, app_mod):
     """SPEC_UPLOAD_LIKENESS §2.2, decision 6a — the `upload_isolate` switch gates the
     cutout on the upload door: OFF (default) → isolate=False; ON → isolate=True. This
     is the A/B harness AND the fleet gate (the pool param ships only when on)."""
     import db
     # Default OFF → no isolation.
-    client.post("/api/reference", files=_upload())
+    client.post("/api/reference", data={"animal": "corgi"}, files=_upload())
     assert no_gpu[-1]["isolate"] is False
     # Flip the flag ON → the next upload isolates.
     db.set_setting("upload_isolate", "true")
-    client.post("/api/reference", files=_upload())
+    client.post("/api/reference", data={"animal": "corgi"}, files=_upload())
     assert no_gpu[-1]["isolate"] is True
     # Flip it back OFF → isolation stops.
     db.set_setting("upload_isolate", "false")
-    client.post("/api/reference", files=_upload())
+    client.post("/api/reference", data={"animal": "corgi"}, files=_upload())
     assert no_gpu[-1]["isolate"] is False
 
 
@@ -266,33 +288,35 @@ def test_typed_noun_wins_and_skips_the_ai(client, no_gpu, app_mod, monkeypatch):
     assert no_gpu[-1]["description"] == "corgi"
 
 
-def test_not_a_subject_degrades_to_the_manual_field(client, no_gpu, app_mod, monkeypatch):
-    """Triage gates: a screenshot (is_subject False) degrades to today's behaviour —
-    no suggestion, subject 'pet' — never a confident wrong caption."""
+def test_not_a_subject_is_refused_rather_than_guessed(client, no_gpu, app_mod, monkeypatch):
+    """Triage gates: a screenshot (is_subject False) leaves nothing to name the upload,
+    so the door ASKS. It used to answer "pet" — a species assertion dressed as a default,
+    which drew a dog from a photo of a person and pinned no motion profile (2026-07-26)."""
     _mock_caption(app_mod, monkeypatch, is_subject=False)
-    body = client.post("/api/reference", files=_upload()).json()
-    assert body["suggested_subject"] is None
-    assert body["description"] == "pet"
+    r = client.post("/api/reference", files=_upload())
+    assert r.status_code == 422
+    assert "type what it is" in r.json()["detail"].lower()
+    assert not no_gpu, "nothing should have been rendered for an unnamed upload"
 
 
 def test_captioner_is_inert_without_a_key(client, no_gpu, monkeypatch):
-    """No key → the captioner never runs; an empty-field upload behaves exactly as
-    before (subject 'pet'). The engine stays optional — the door works turned off."""
+    """No key → the captioner never runs. The door still works turned off, but an
+    empty noun field now has no answer, so it asks for one instead of inventing it."""
     monkeypatch.delenv("DATSPET_AI_API_KEY", raising=False)
-    body = client.post("/api/reference", files=_upload()).json()
-    assert body["suggested_subject"] is None
-    assert body["description"] == "pet"
+    r = client.post("/api/reference", files=_upload())
+    assert r.status_code == 422
+    assert not no_gpu
 
 
 def test_ai_toggle_off_skips_the_captioner_even_on_an_empty_field(client, no_gpu, app_mod, monkeypatch):
     """The 'AI enabled' toggle turned OFF sends ai_caption=false. Even with the engine
-    configured AND an empty noun field, the captioner must NOT run — an empty field
-    draws 'pet'. The toggle disables the server captioner, not just the UI field."""
+    configured AND an empty noun field, the captioner must NOT run — the toggle disables
+    the server captioner, not just the UI field. With nobody left to name it, the door
+    asks; the user turned the namer off, so they supply the noun."""
     _mock_caption(app_mod, monkeypatch)  # engine on + mocked, but the flag gates it off
-    body = client.post("/api/reference",
-                       data={"ai_caption": "false"}, files=_upload()).json()
-    assert body["suggested_subject"] is None
-    assert body["description"] == "pet"
+    r = client.post("/api/reference", data={"ai_caption": "false"}, files=_upload())
+    assert r.status_code == 422
+    assert not no_gpu
 
 
 def test_ai_toggle_off_uses_the_typed_noun(client, no_gpu, app_mod, monkeypatch):

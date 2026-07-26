@@ -2,78 +2,104 @@
   "key": "humanoid",
   "level": 3,
   "movement_class": "humanoid_biped",
-  "base_pose": "standing upright on two legs, arms relaxed at its sides",
+  "base_pose": "standing upright on two legs, arms relaxed at the sides",
   "view": {
     "view_kind": "side",
     "native_facing": "right",
     "mirroring_policy": "flip"
   },
   "keywords": [
-    "humanoid", "human", "person", "man", "woman", "boy", "girl", "child",
-    "alien", "superhero", "hero", "android", "robot", "cyborg",
-    "elf", "dwarf", "wizard", "witch", "knight", "ninja", "pirate", "astronaut",
-    "zombie", "vampire", "mummy", "troll", "orc", "goblin", "giant", "avatar"
+    "humanoid",
+    "human",
+    "person",
+    "man",
+    "woman",
+    "boy",
+    "girl",
+    "child",
+    "alien",
+    "superhero",
+    "hero",
+    "android",
+    "robot",
+    "cyborg",
+    "elf",
+    "dwarf",
+    "wizard",
+    "witch",
+    "knight",
+    "ninja",
+    "pirate",
+    "astronaut",
+    "zombie",
+    "vampire",
+    "mummy",
+    "troll",
+    "orc",
+    "goblin",
+    "giant",
+    "avatar"
   ],
   "poses": {
     "walk": {
       "enabled": true,
       "runtime_role": "active",
-      "action": "walking forward on two legs",
-      "suffix": ", performing a full walk cycle in place: the legs striding heel-to-toe one after the other, arms swinging in opposition to the legs, hips counter-rotating with each step, torso held upright and stable, classic looping sprite walk animation, no horizontal movement of the body, no camera movement, no panning",
+      "action": "walking forward upright on two legs",
+      "suffix": ", performing a full walk cycle in place: the legs striding heel-to-toe one after the other, arms swinging in opposition to the legs, hips counter-rotating, torso held upright, classic looping sprite walk animation, no horizontal movement of the body, no camera movement, no panning",
       "control": {
         "kind": "pose_prompt",
-        "pose": "mid-stride, one leg forward with the heel landing and the other pushing off behind, opposite arms swinging forward and back, torso upright, head level"
+        "pose": "upright on two legs, mid-stride, one leg forward with the heel landing and the other pushing off behind, opposite arms swinging, torso vertical, head level"
       }
     },
     "idle": {
       "enabled": true,
       "runtime_role": "rest",
-      "action": "standing at ease, shifting its weight",
-      "suffix": ", chest rising and falling with slow breathing, weight shifting gently from one foot to the other, head turning to look around, arms swaying a little at its sides, gentle looping idle animation, no camera movement, no panning",
+      "action": "standing around idly, looking bored",
+      "suffix": ", weight shifting from one foot to the other, head turning to look around, chest rising and falling with slow breathing, shoulders settling, gentle looping idle animation, no camera movement, no panning",
       "control": {
         "kind": "pose_prompt",
-        "pose": "standing upright and relaxed, weight resting on one leg, arms loose at its sides, head raised, eyes open"
+        "pose": "standing upright on two legs, idling and looking bored, arms folded across the chest, head turned to one side, eyes open"
       }
     },
     "run": {
       "enabled": true,
       "runtime_role": "active",
-      "action": "running at a steady pace",
-      "suffix": ", the legs driving through a full running stride with the knees lifting high, arms bent and pumping in opposition, torso leaning forward, hips counter-rotating quickly, energetic looping run animation, no horizontal movement of the body, no camera movement, no panning",
+      "action": "running upright on two legs",
+      "suffix": ", the legs driving through a full running stride with the knees lifting high, arms bent and pumping in opposition, hips counter-rotating quickly, energetic looping run animation, no horizontal movement of the body, no camera movement, no panning",
       "control": {
         "kind": "pose_prompt",
-        "pose": "mid-run stride, one knee driven up high and the other leg extended behind, opposite arms bent and pumping, torso leaning forward, head up"
+        "pose": "upright on two legs, mid-run stride, one knee driven up high and the other leg extended behind, arms bent and pumping, chest up, head forward"
       }
     },
     "sleep": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "curled up asleep, breathing slowly",
+      "action": "asleep on the ground, breathing slowly",
       "suffix": ", chest rising and falling with each slow breath, one shoulder settling with the rhythm, a hand twitching now and then, eyes staying closed throughout, calm looping sleep animation, no camera movement, no panning",
       "timed_buffer_ms": 6000,
       "control": {
         "kind": "pose_prompt",
-        "pose": "lying curled on its side, knees drawn up, hands tucked up near its face, eyes closed"
+        "pose": "a two-legged figure lying asleep on one side, legs bent, arms folded in front, head resting down, eyes closed"
       }
     },
     "sit": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "sitting down, relaxed",
-      "suffix": ", chest rising and falling with slow breathing, head turning to glance around, hands resting and shifting on its knees, shoulders settling, gentle looping animation, no camera movement, no panning",
+      "action": "sitting down on the ground, relaxed",
+      "suffix": ", chest rising and falling with slow breathing, head turning to glance around, hands resting and shifting on the knees, shoulders settling, gentle looping animation, no camera movement, no panning",
       "control": {
         "kind": "pose_prompt",
-        "pose": "seated with knees bent and feet flat on the ground, back upright, hands resting on its knees, head raised"
+        "pose": "sitting upright on the ground, two legs bent in front with the feet flat, back straight, hands resting on the knees, head raised"
       }
     },
     "eat": {
       "enabled": true,
       "runtime_role": "timed",
-      "action": "eating something held in its hands",
-      "suffix": ", both hands raising the food to its mouth and lowering it again, jaw working as it chews, head nodding slightly with each bite, elbows bending and straightening, small looping feeding animation, no camera movement, no panning",
+      "action": "eating something held in both hands",
+      "suffix": ", both hands raising the food to the mouth and lowering it again, jaw working while chewing, head nodding slightly with each bite, elbows bending and straightening, small looping feeding animation, no camera movement, no panning",
       "control": {
         "kind": "pose_prompt",
-        "pose": "standing, both hands holding food up to its open mouth, head tilted forward toward it, elbows bent"
+        "pose": "standing upright on two legs, both hands holding food up to the open mouth, head tilted forward, elbows bent"
       }
     },
     "jump": {
@@ -84,18 +110,18 @@
       "loop": false,
       "control": {
         "kind": "pose_prompt",
-        "pose": "airborne mid-jump, both arms thrown up overhead, knees tucked up, torso stretched upward, face bright with excitement"
+        "pose": "upright on two legs, airborne mid-jump, both arms thrown up overhead, knees tucked up, body stretched upward"
       }
     },
     "play": {
       "enabled": true,
       "runtime_role": "triggered",
-      "action": "waving and bouncing cheerfully",
-      "suffix": ", one arm waving overhead while the other swings at its side, shoulders bouncing, head tilting side to side, knees bobbing in place, lively reaction loop, no camera movement, no panning",
+      "action": "waving hello with one hand and grinning",
+      "suffix": ", one hand waving side to side above the shoulder, the other hand staying down at the side, shoulders shifting with the wave, head turning to follow it, lively reaction loop, no camera movement, no panning",
       "loop": false,
       "control": {
         "kind": "pose_prompt",
-        "pose": "standing with one arm raised overhead mid-wave, the other arm out to the side, knees slightly bent, head tilted, smiling"
+        "pose": "standing upright on two legs, waving hello with one raised hand, the other hand down at the side, head turned toward the viewer, grinning"
       }
     },
     "fly": {
@@ -105,7 +131,7 @@
       "suffix": ", clothing and hair streaming back in the wind, the extended arm holding steady while the trailing arm and the legs shift with the airflow, torso held straight and level, steady looping flight animation, hovering in place, no horizontal movement of the body, no camera movement, no panning",
       "control": {
         "kind": "pose_prompt",
-        "pose": "airborne in flight, body stretched out level, one arm extended forward and the other trailing back along the body, legs straight and together, head raised looking forward"
+        "pose": "a two-legged figure airborne in flight, body stretched out level, one arm extended forward and the other trailing back, legs straight and together, head raised looking forward"
       }
     },
     "swim": {

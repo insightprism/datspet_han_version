@@ -1,5 +1,5 @@
 {
-  "_doc": "SPEC_UPLOAD_LIKENESS §2.5 (lever E / Phase 2.1), purpose 1 of 2 — the gate that makes the 'nothing to redraw' branch real. It runs BEFORE pet_likeness so a screenshot, a landscape, a logo, or a blurry photo degrades to the manual field instead of being captioned confidently. The subject may be an ANIMAL or a PERSON: the product started as pet-only, but users upload photos of themselves and of people to see them animated, so the gate is subject-versus-not-a-subject, not animal-versus-not-an-animal. `fast` tier — a near-binary judgement (SPEC_DATSPET_AI_ENGINE decision 17: start small, bump on evidence). This is a CONSUMER contribution: it lives in the engine's registry the way an animal's base.png lives in animal_catalog, but the engine (SPEC_DATSPET_AI_ENGINE) owns none of it and names no purpose key.",
+  "_doc": "SPEC_UPLOAD_LIKENESS §2.5 (lever E / Phase 2.1), purpose 1 of 2 — the gate that makes the 'nothing to redraw' branch real. It runs BEFORE pet_likeness so a screenshot, a landscape, a logo, or a blurry photo degrades to the manual field instead of being captioned confidently. The subject may be an ANIMAL or a PERSON: the product started as pet-only, but users upload photos of themselves and of people to see them animated, so the gate is subject-versus-not-a-subject, not animal-versus-not-an-animal. `fast` tier — a near-binary judgement (SPEC_DATSPET_AI_ENGINE decision 17: start small, bump on evidence). This is a CONSUMER contribution: it lives in the engine's registry the way an animal's base.png lives in animal_catalog, but the engine (SPEC_DATSPET_AI_ENGINE) owns none of it and names no purpose key. 2026-07-26: the `usable` question no longer requires a SIDE-PROFILE shot. It did, and a front-facing portrait therefore failed the gate, the captioner bailed, and the upload door fell back to the literal noun 'pet' — drawing a dog from a photograph of a person. The view is the prompt's job (prompt_templates), not the uploader's.",
   "purpose_key": "image_triage",
   "display_name": "Upload triage",
   "description": "Cheap gate on an uploaded photo: is the subject a single, clearly-depicted animal or person we can redraw as a cartoon? Runs first; a fail routes the user back to the manual field.",
@@ -7,16 +7,26 @@
   "max_tokens": 128,
   "input": "image",
   "template_vars": [],
-  "system_prompt": "You screen uploaded images for a cartoon generator. Decide only two things: whether the main subject is a single, clearly-depicted subject we could redraw as a cartoon — an animal OR a person — as opposed to a screenshot, object, scene, chart, logo, or text; and whether it is clear enough to redraw as a side-profile cartoon sprite. A photo, a drawing, or a cartoon all count — the question is subject-versus-not-a-subject, not photo-versus-illustration. Do not name the subject here. Answer only in the required JSON shape.",
-  "user_prompt_template": "Is the main subject of this image a single animal or person, clear enough to redraw as a cartoon sprite?",
+  "system_prompt": "You screen uploaded images for a cartoon generator. Decide only two things: whether the main subject is a single, clearly-depicted subject we could redraw as a cartoon — an animal OR a person — as opposed to a screenshot, object, scene, chart, logo, or text; and whether it is clear enough to redraw at all, meaning the subject is in focus, large enough in frame, and not badly obscured. Judge only clarity, NOT the camera angle: a front-facing portrait, a head-and-shoulders shot and a full-body side view are all usable, because the generator redraws the subject into whatever view it needs. A photo, a drawing, or a cartoon all count — the question is subject-versus-not-a-subject, not photo-versus-illustration. Do not name the subject here. Answer only in the required JSON shape.",
+  "user_prompt_template": "Is the main subject of this image a single animal or person, clear enough to redraw as a cartoon? Judge clarity only — any camera angle is acceptable.",
   "output_schema": {
     "type": "object",
     "properties": {
-      "is_subject": { "type": "boolean" },
-      "usable": { "type": "boolean" },
-      "reason": { "type": "string" }
+      "is_subject": {
+        "type": "boolean"
+      },
+      "usable": {
+        "type": "boolean"
+      },
+      "reason": {
+        "type": "string"
+      }
     },
-    "required": ["is_subject", "usable", "reason"],
+    "required": [
+      "is_subject",
+      "usable",
+      "reason"
+    ],
     "additionalProperties": false
   },
   "is_active": true

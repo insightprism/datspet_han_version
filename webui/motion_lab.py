@@ -22,6 +22,7 @@ PET_GEN_BACKEND=local. pet_factory is imported LAZILY inside the job thread.
 """
 from __future__ import annotations
 
+import io
 import os
 import shutil
 import threading
@@ -31,7 +32,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -259,6 +260,16 @@ class StillBody(BaseModel):
     animal: str
     clause: str = ""
     seed: int = _DEFAULT_SEED
+    # A reference uploaded via /reference (§ upload door parity). Its presence switches
+    # the prompt TEMPLATE from _base_prompt to _remix_prompt, exactly as factory.py:733
+    # does — so the Lab can preview a designed or uploaded pet, which it never could.
+    reference_id: str = ""
+    # `base` distinguishes the shared base still from a pose anchor. The backend cannot
+    # infer it: BOTH arrive with a non-empty clause (the base card sends base_pose). It
+    # matters because a build draws the base img2img from the reference but every anchor
+    # txt2img — see the branch in start_still.
+    base: bool = False
+    strength: float = 0.85          # base-only: the img2img denoise, clamped like the app's
 
 
 class AnimateBody(BaseModel):
@@ -282,6 +293,55 @@ class SuggestBody(BaseModel):
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+@router.post("/reference")
+async def upload_reference(image: UploadFile = File(...)):
+    """Take a photo into the Lab and run it through the REAL upload door's captioner.
+
+    The Lab could have kept the image raw and let the admin type the noun — one variable
+    at a time is usually the Lab's whole discipline. Running triage + pet_likeness instead
+    is deliberate: that path decides what a real upload is called, and getting it wrong is
+    what drew a dog from a photograph of a person (2026-07-26). Exercising it here, beside
+    the poses it feeds, is cheaper than discovering it in a 3-minute build.
+
+    Returns the caption as DATA, never as a decision: the browser fills the animal field
+    with `subject` and the admin overrides it freely. `usable: false` means triage rejected
+    the photo — surfaced rather than swallowed, because that rejection is the failure mode
+    worth being able to see.
+    """
+    import app as app_mod          # lazy: app imports THIS module at startup (design_calibration §2)
+
+    if image.content_type not in app_mod.ALLOWED_IMAGE_MIMES:
+        raise HTTPException(400, f"unsupported image type: {image.content_type}")
+    body = await image.read()
+    if len(body) > app_mod.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Image exceeds 12 MB limit")
+
+    # Normalize to PNG so /asset can serve it and ComfyUI can read it, whatever came in.
+    from PIL import Image as PILImage
+    asset_id = uuid.uuid4().hex[:12]
+    path = _lab_dir() / f"{asset_id}.png"
+    PILImage.open(io.BytesIO(body)).convert("RGB").save(path, "PNG")
+
+    caption = app_mod._caption_upload(body, image.content_type, "", None)
+    return {
+        "reference_id": asset_id,
+        "url": f"{router.prefix}/asset/{asset_id}.png",
+        "usable": bool(caption),
+        "subject": (caption or {}).get("subject") or "",
+        "features": (caption or {}).get("features") or "",
+        "description": (caption or {}).get("description") or "",
+    }
+
+
+def _lab_reference(reference_id: str) -> Path:
+    if not reference_id.isalnum():
+        raise HTTPException(400, "bad reference_id")
+    path = _lab_dir() / f"{reference_id}.png"
+    if not path.exists():
+        raise HTTPException(404, "reference not found — upload it again")
+    return path
+
+
 @router.post("/still")
 def start_still(body: StillBody):
     animal = (body.animal or "").strip()[:_MAX_ANIMAL]
@@ -289,8 +349,24 @@ def start_still(body: StillBody):
         raise HTTPException(400, "animal is required")
     clause = (body.clause or "").strip()[:_MAX_CLAUSE]
     pf = _pf()
-    prompt = pf._base_prompt(animal, clause) if clause else pf._base_prompt(animal)
-    return _start(pf._static_image_wf(prompt, _clean_seed(body.seed)), "png")
+    seed = _clean_seed(body.seed)
+    if not body.reference_id:
+        prompt = pf._base_prompt(animal, clause) if clause else pf._base_prompt(animal)
+        return _start(pf._static_image_wf(prompt, seed), "png")
+
+    # With a reference, mirror make_pet_zip exactly (factory.py §Phase A):
+    #   - the REMIX template replaces the base one, for both the base and every anchor
+    #     (`anchor_prompt = _remix_prompt if reference_image is not None else _base_prompt`);
+    #   - the BASE is redrawn img2img FROM the photo;
+    #   - every ANCHOR is still drawn txt2img at the anchor seed. An anchor is never
+    #     img2img in a build — a fresh still is the entire point of the pose_prompt tier —
+    #     so drawing one here from the photo would flatter the Lab and lie about the build.
+    reference = _lab_reference(body.reference_id)
+    prompt = pf._remix_prompt(animal, clause) if clause else pf._remix_prompt(animal)
+    if body.base:
+        strength = min(0.9, max(0.3, float(body.strength)))
+        return _start(pf._img2img_wf(prompt, str(reference), seed, strength), "png")
+    return _start(pf._static_image_wf(prompt, seed), "png")
 
 
 @router.post("/animate")

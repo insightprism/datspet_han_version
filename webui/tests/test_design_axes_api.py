@@ -103,8 +103,11 @@ def test_an_unknown_creature_gets_universal_axes_only(client, no_gpu):
 
 
 def test_an_upload_without_a_name_gets_universal_axes_only(client, no_gpu):
-    """§3.4: a photo carries no reliable surface signal."""
-    ref = client.post("/api/reference", files=_upload()).json()
+    """§3.4: a photo carries no reliable surface signal — a noun that implies no coat,
+    plumage or scales leaves the upload on the universal axes. ("robot" rather than a
+    nameless upload: since 2026-07-26 the door refuses an upload nothing can name, so
+    the noun is the vehicle here, and it is deliberately surface-free.)"""
+    ref = client.post("/api/reference", data={"animal": "robot"}, files=_upload()).json()
     assert set(_axes_for(client, ref["reference_id"])) == {"body", "pattern", "expression"}
 
 
