@@ -6,15 +6,22 @@
   "tier": "fast",
   "max_tokens": 32,
   "input": "text",
-  "template_vars": ["animal", "profiles"],
+  "template_vars": [
+    "animal",
+    "profiles"
+  ],
   "system_prompt": "You classify an animal into ONE body-type motion category for a pet animation engine. Judge by how the animal MOVES — its body plan and gait — not its size, colour, or habitat. Choose the single best-matching category key from the list the user gives. If nothing fits well, choose the closest body plan. Answer only in the required JSON shape.",
-  "user_prompt_template": "Animal: {animal}\n\nCategories (key — description):\n{profiles}\n\nReturn the single best-matching category key in profile_key.",
+  "user_prompt_template": "Animal: {animal}\n\nCategories, one per line as `key`: description —\n{profiles}\n\nReturn the single best-matching category KEY — exactly the backticked token before the colon, nothing else — in profile_key.",
   "output_schema": {
     "type": "object",
     "properties": {
-      "profile_key": { "type": "string" }
+      "profile_key": {
+        "type": "string"
+      }
     },
-    "required": ["profile_key"],
+    "required": [
+      "profile_key"
+    ],
     "additionalProperties": false
   },
   "is_active": true

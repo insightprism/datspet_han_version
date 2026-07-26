@@ -35,12 +35,20 @@ def invalidate() -> None:
 
 
 def _profiles_block() -> str:
-    """The `{profiles}` prompt block — one `key — label (movement_class)` line per
-    live profile, so the model chooses from exactly what the registry ships."""
-    return "\n".join(
-        f"{p['key']} — {p['label']} ({p['movement_class']})"
-        for p in mp.list_profiles()
-    )
+    """The `{profiles}` prompt block — one `key: description` line per live profile, so
+    the model chooses from exactly what the registry ships.
+
+    The key is fenced in backticks and comes first, before a single colon, because the
+    DESCRIPTIONS are prose: labels are body-plan sentences containing their own dashes,
+    commas and parenthesised examples. The old `key — label (movement_class)` format put
+    a second parenthesised token at the end of that prose and the model started answering
+    with the movement_class ("primate_walker") instead of the key ("primate") — which
+    `classify` then rejected as invalid and silently degraded to keyword resolution.
+
+    `movement_class` is deliberately NOT sent: it is the host's playback key, it tells the
+    model nothing about how an animal moves, and it was the thing being mistaken for the
+    answer."""
+    return "\n".join(f"`{p['key']}`: {p['label']}" for p in mp.list_profiles())
 
 
 def classify(animal: str) -> tuple[str, str]:
