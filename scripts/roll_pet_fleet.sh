@@ -5,6 +5,7 @@
 #   scripts/roll_pet_fleet.sh                       # roll every online pet node to this repo's HEAD
 #   scripts/roll_pet_fleet.sh --dry-run             # show the plan, touch nothing
 #   scripts/roll_pet_fleet.sh --stash               # stash a node's dirty engine/handler files, then ff
+#   scripts/roll_pet_fleet.sh --verify-build          # + a REAL make_pet_zip per node (F1/F2 coverage)
 #   scripts/roll_pet_fleet.sh --verify-url https://pet-staging.datsme.me   # + a real upload job at the end
 #
 # WHY THIS EXISTS (the 2026-07-23 upload_isolate roll)
@@ -52,13 +53,15 @@ DISPATCHER_URL="${DISPATCHER_URL:-https://pool.datsme.me}"
 POOL_BOX="${POOL_BOX:-root@5.161.70.13}"                    # holds the app key + env files
 LOCAL_REPO="$(cd "$(dirname "$0")/.." && pwd)"             # this checkout = the source of truth
 
-DRY=0; STASH=0; VERIFY_URL=""
+DRY=0; STASH=0; VERIFY_URL=""; VERIFY_BUILD=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --dry-run)    DRY=1; shift ;;
-    --stash)      STASH=1; shift ;;
-    --verify-url) VERIFY_URL="$2"; shift 2 ;;
-    *) echo "unknown arg: $1"; echo "usage: $0 [--dry-run] [--stash] [--verify-url URL]"; exit 2 ;;
+    --dry-run)      DRY=1; shift ;;
+    --stash)        STASH=1; shift ;;
+    --verify-build) VERIFY_BUILD=1; shift ;;
+    --verify-url)   VERIFY_URL="$2"; shift 2 ;;
+    *) echo "unknown arg: $1"
+       echo "usage: $0 [--dry-run] [--stash] [--verify-build] [--verify-url URL]"; exit 2 ;;
   esac
 done
 
@@ -187,6 +190,46 @@ for n in $DISCOVERED; do
   if [ "$v" = "$TARGET_VER" ]; then ok "$n -> v$v"; else bad "$n -> $v (expected v$TARGET_VER)"; mixed=1; fi
 done
 [ "$mixed" = 1 ] && note "A stale node still online means isolate jobs routed there 422. Fix before flipping upload_isolate on."
+
+# ------------------------------------------------- optional REAL BUILD, per node (2026-07-26)
+# --verify-url below proves the pet_preview path. It does NOT touch the cutout, so it says
+# nothing about the two changes most able to kill a node: F1's arena cap and F2's now-fatal
+# cutout failure. This does — one real make_pet_zip per node, checking the alpha channel.
+#
+# It exists because the alternative was tried and went badly: verifying a node by calling
+# factory._remove_bg() directly failed 3x on omen-pet and nearly got a healthy node reported as
+# broken. The cutout's memory conditions are created by the pipeline (the eviction frees ~18 GB
+# immediately before it), so a probe outside that sequence tests a world that does not exist —
+# SPEC_GPU_MEMORY_HYGIENE §11.4. Run the build; never poke the cutout.
+if [ "$VERIFY_BUILD" = 1 ]; then
+  hdr "4. REAL BUILD per node (the only check that exercises F1 + F2)"
+  for n in "${TARGETS[@]}"; do            # TARGETS = mapped AND online (set above); not NODE_ORDER
+    repo="${NODE_REPO[$n]}"; unit="${NODE_UNIT[$n]}"
+
+    # GUARD: never start a GPU build on a node that is already busy. On 2026-07-26 a build was
+    # launched while the backend reported active_jobs=1 — it collided with a user's job, spoiled
+    # the measurement AND made the designer UI report "the GPU is busy". GPU_LOCK is a
+    # threading.Lock, so it cannot see work started outside the backend process.
+    busy=$(run_on "$n" "curl -s -m 5 http://127.0.0.1:19954/api/health 2>/dev/null | grep -o '\"active_jobs\":[0-9]*' | cut -d: -f2")
+    if [ -n "$busy" ] && [ "$busy" != "0" ]; then
+      bad "$n: backend reports active_jobs=$busy — refusing to start a build that would collide"
+      continue
+    fi
+
+    # Run the checker FROM THE NODE'S OWN CHECKOUT, under the worker unit's environment, with
+    # PYTHONPATH pinned. No ssh heredoc and no /tmp script: both broke a run during that deploy
+    # (an escaped quote inside an f-string, then the repo missing from sys.path).
+    py=$(run_on "$n" "systemctl show '$unit' -p ExecStart --value 2>/dev/null | grep -oE '/[^ ]*/python[0-9.]*' | head -1")
+    [ -z "$py" ] && { bad "$n: could not resolve the worker's python from $unit"; continue; }
+    note "$n: building a real pet via $py (~2 min)"
+    out=$(run_on "$n" "cd '$repo' && eval \$(systemctl show '$unit' -p Environment --value | tr ' ' '\n' | sed 's/^/export /') && PYTHONPATH='$repo' '$py' '$repo/scripts/_node_build_check.py' 2>&1 | grep '^VERDICT' | head -1")
+    case "$out" in
+      "VERDICT OK"*) ok "$n: ${out#VERDICT OK }" ;;
+      "")            bad "$n: build check produced no verdict (see the node's output)" ;;
+      *)             bad "$n: ${out#VERDICT }" ;;
+    esac
+  done
+fi
 
 # ---------------------------------------------------------------- optional real job
 if [ -n "$VERIFY_URL" ]; then
