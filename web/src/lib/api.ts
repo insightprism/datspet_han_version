@@ -313,6 +313,15 @@ export interface MotionAdminList {
   writable: boolean;
   profiles: MotionProfileSummary[];
 }
+// Every piece of text a generation sends, served from the Python constants
+// (pet_factory/prompt_templates.py + motion_profiles) so the editor's prompt preview can
+// never drift from what generation actually sends. Placeholders are `{animal}` / `{pose}`
+// (still) and `{animal}` / `{action}` / `{suffix}` (motion). No negative prompts: the
+// samplers run at cfg 1.0, which cancels negative conditioning out (see factory.py).
+export interface MotionPromptTemplates {
+  still: { base: string; remix: string; default_pose: string };
+  motion: { template: string };
+}
 export interface MotionProfileDetail {
   profile: MotionProfileFile;
   label: string;
@@ -356,6 +365,7 @@ const motionFetch = (path: string, init?: RequestInit) =>
 export const motionAdmin = {
   list: (): Promise<MotionAdminList> => motionFetch(""),
   get: (key: string): Promise<MotionProfileDetail> => motionFetch(`/${encodeURIComponent(key)}`),
+  promptTemplates: (): Promise<MotionPromptTemplates> => motionFetch("/prompt-templates"),
   create: (profile: MotionProfileFile, label: string) =>
     motionFetch("", { method: "POST", body: JSON.stringify({ profile, label }) }),
   update: (key: string, profile: MotionProfileFile, label: string) =>

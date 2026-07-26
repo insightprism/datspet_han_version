@@ -228,13 +228,25 @@ def load_motion_profile(key: str, *, fallback_animal: Optional[str] = None) -> M
     return _default_profile()
 
 
+# The Wan I2V motion-prompt template. Note how little of it is template: unlike the
+# still prompt (prompt_templates.BASE_STILL_TEMPLATE, ~20 words of house style), Wan is
+# animating an image that ALREADY carries the style, so the profile's action+suffix are
+# effectively the whole instruction. That is why a suffix that forgets to name a limb
+# has no template safety net behind it (§4 of the animation reference).
+# A named constant, not an inline f-string, so the admin prompt preview can render the
+# template itself without duplicating the wording in the frontend.
+MOTION_PROMPT_TEMPLATE = "cute cartoon {animal} {action}, side profile, facing right{suffix}"
+
+
 def compose_pose_prompt(animal: str, pose: Pose) -> str:
     """Build the Wan I2V motion prompt for one pose. The template matches today's
     hardcoded form exactly — `cute cartoon {animal} {action}, side profile, facing
     right{suffix}` — so the `quadruped` walk/idle poses (action="walking" /
     "sitting calmly", suffix=the old WALK/IDLE_SUFFIX) reproduce today's prompts
     byte-for-byte. This is the backward-compat pin (§6)."""
-    return f"cute cartoon {animal} {pose.action}, side profile, facing right{pose.suffix}"
+    return MOTION_PROMPT_TEMPLATE.format(
+        animal=animal, action=pose.action, suffix=pose.suffix,
+    )
 
 
 def anchor_clause(pose: Optional[Pose]) -> Optional[str]:

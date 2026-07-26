@@ -23,6 +23,17 @@ import ai_engine
 _cache: dict[str, str] = {}
 
 
+def invalidate() -> None:
+    """Drop the cached AI classifications. Called by the motion-profile admin write
+    path after every successful mutation, because a profile's `label` IS the
+    classifier's description of that body type (`_profiles_block`) — editing a label
+    to fix a misclassification would otherwise change nothing for any animal already
+    classified in this process, and the author would conclude the label is unused.
+    The registry cache next door (mp.reload) is already dropped on the same event;
+    this is the same invalidation for the layer above it."""
+    _cache.clear()
+
+
 def _profiles_block() -> str:
     """The `{profiles}` prompt block — one `key — label (movement_class)` line per
     live profile, so the model chooses from exactly what the registry ships."""

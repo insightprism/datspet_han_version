@@ -19,8 +19,10 @@ from pydantic import BaseModel
 
 import admin_common
 import datsme_integration
+import motion_resolver
 from pet_factory import animal_catalog as animal_catalog_mod
 from pet_factory import motion_profiles as mp
+from pet_factory import prompt_templates as pt
 from pet_factory.motion_profiles import admin as mp_admin
 
 router = APIRouter(
@@ -75,6 +77,18 @@ def _audit(request: Request, op: str, key: str) -> None:
     print(f"[motion-admin] {who} {op} profile {key!r}", flush=True)
 
 
+def _after_write(request: Request, op: str, key: str) -> None:
+    """The one place every successful mutation passes through: audit line + the cache
+    drops that make the write actually visible. `mp_admin.write_profile` already
+    reloads the registry/profile caches; the AI classifier keeps a SEPARATE per-process
+    cache of animal → profile key, and a profile's `label` is that classifier's
+    description of the body type — so an unflushed entry would silently ignore a label
+    edit made specifically to fix a misclassification. New write endpoints call this,
+    not `_audit`, so the invalidation can't be forgotten."""
+    _audit(request, op, key)
+    motion_resolver.invalidate()
+
+
 # ---------------------------------------------------------------------------
 # Request bodies
 # ---------------------------------------------------------------------------
@@ -127,6 +141,33 @@ def list_profiles():
     }
 
 
+# NOTE: registered BEFORE `/{key}` — FastAPI matches in declaration order, and a
+# literal path under the same prefix must win over the parameterized one.
+@router.get("/prompt-templates")
+def prompt_templates():
+    """Every piece of text a generation sends, per model call (§5).
+
+    A profile is only HALF of each prompt: the still template + `control.pose`, and the
+    motion template + `action`/`suffix`. The editor renders the assembled result so an
+    author can see what actually reaches the models. Served from the Python constants
+    rather than restated in the frontend, so an edit to either template can't leave the
+    preview quietly lying. Pure strings — no factory import, so this stays valid on the
+    GPU-less tier (prompt_templates carries no ML dependency).
+
+    There are no negative prompts to serve: every sampler runs at cfg 1.0, which cancels
+    the negative conditioning out entirely (measured — factory.INERT_NEGATIVE)."""
+    return {
+        "still": {
+            "base": pt.BASE_STILL_TEMPLATE,
+            "remix": pt.REMIX_STILL_TEMPLATE,
+            "default_pose": pt.DEFAULT_POSE,
+        },
+        "motion": {
+            "template": mp.MOTION_PROMPT_TEMPLATE,
+        },
+    }
+
+
 @router.get("/{key}")
 def get_profile(key: str):
     """One profile's full JSON (the edit form's source)."""
@@ -152,7 +193,7 @@ def create_profile(body: ProfileBody, request: Request):
         entry = mp_admin.write_profile(body.profile, label=body.label, existing_key=None)
     except mp_admin.ProfileWriteError as e:
         raise HTTPException(422, {"error": "validation_failed", "errors": e.errors})
-    _audit(request, "create", entry["key"])
+    _after_write(request, "create", entry["key"])
     return {"created": entry}
 
 
@@ -165,7 +206,7 @@ def update_profile(key: str, body: ProfileBody, request: Request):
         entry = mp_admin.write_profile(body.profile, label=body.label, existing_key=key)
     except mp_admin.ProfileWriteError as e:
         raise HTTPException(422, {"error": "validation_failed", "errors": e.errors})
-    _audit(request, "update", key)
+    _after_write(request, "update", key)
     return {"updated": entry}
 
 
@@ -179,7 +220,7 @@ def delete_profile(key: str, request: Request):
     except mp_admin.ProfileWriteError as e:
         # default / pinned / absent → 409 (a content-policy refusal, not bad input)
         raise HTTPException(409, str(e))
-    _audit(request, "delete", key)
+    _after_write(request, "delete", key)
     return {"deleted": key}
 
 
@@ -192,5 +233,5 @@ def duplicate_profile(key: str, body: DuplicateBody, request: Request):
         clone = mp_admin.duplicate_profile(key, new_key=body.new_key, new_label=body.new_label)
     except mp_admin.ProfileWriteError as e:
         raise HTTPException(409, str(e))
-    _audit(request, "duplicate", body.new_key)
+    _after_write(request, "duplicate", body.new_key)
     return {"created": {"key": body.new_key}, "profile": clone}

@@ -18,6 +18,7 @@ import {
   type MotionAdminList, type MotionProfileSummary,
 } from "@/lib/api";
 import { ProfileEditor, blankProfile, type Draft } from "./ProfileEditor";
+import { PromptTemplateReference, useMotionPromptTemplates } from "./promptTemplates";
 import ConfirmModal from "@/components/ConfirmModal";
 
 export default function MotionAdminPage() {
@@ -28,6 +29,10 @@ export default function MotionAdminPage() {
   const [notice, setNotice] = useState("");
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The profiles are half of a pose's prompt; the templates are the other half. They're
+  // global (same sentences for every profile), so they get a tab rather than a field.
+  const [tab, setTab] = useState<"profiles" | "templates">("profiles");
+  const templates = useMotionPromptTemplates();
 
   const refresh = useCallback(async () => {
     const l = await motionAdmin.list();
@@ -140,17 +145,35 @@ export default function MotionAdminPage() {
               read-only instance — author on dev
             </span>
           )}
-          <button onClick={startNew} disabled={!list?.writable}
-            className="mono rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-45"
-            style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}>
-            + New profile
-          </button>
+          {tab === "profiles" && (
+            <button onClick={startNew} disabled={!list?.writable}
+              className="mono rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-45"
+              style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}>
+              + New profile
+            </button>
+          )}
         </div>
+      </div>
+
+      <div className="mb-4 flex gap-1 border-b" style={{ borderColor: "var(--line)" }}>
+        {([["profiles", "Profiles"], ["templates", "Prompt templates"]] as const).map(([id, text]) => (
+          <button key={id} onClick={() => setTab(id)}
+            className="mono px-3 py-2 text-sm"
+            style={{
+              color: tab === id ? "var(--heading)" : "var(--faint)",
+              borderBottom: `2px solid ${tab === id ? "var(--accent)" : "transparent"}`,
+              marginBottom: "-1px",
+            }}>
+            {text}
+          </button>
+        ))}
       </div>
 
       {notice && <div className="mono mb-4 text-sm" style={{ color: "var(--green)" }}>{notice}</div>}
 
-      <div className="grid gap-6" style={{ gridTemplateColumns: draft ? "minmax(220px, 300px) 1fr" : "1fr" }}>
+      {tab === "templates" && <PromptTemplateReference templates={templates} />}
+
+      <div className="grid gap-6" style={{ display: tab === "profiles" ? "grid" : "none", gridTemplateColumns: draft ? "minmax(220px, 300px) 1fr" : "1fr" }}>
         {/* List pane */}
         <div className="flex flex-col gap-2">
           {list?.profiles.map((p) => (

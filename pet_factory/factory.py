@@ -40,6 +40,7 @@ import requests
 from PIL import Image, ImageSequence
 
 from . import motion_profiles as mp
+from . import prompt_templates
 
 log = logging.getLogger(__name__)
 
@@ -67,9 +68,16 @@ WAN_TE = "umt5_xxl_fp8_e4m3fn_scaled.safetensors"
 WAN_LORA_HIGH = "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors"
 WAN_LORA_LOW = "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"
 
-NEG = ("oversaturated, neon, vibrant, hyper-colored, anime, blurry, photo, "
-       "realistic, low quality, watermark, signature, multiple subjects, "
-       "deformed, human, person, hands, text")
+# Every sampler below runs at cfg 1.0, because both models are distilled (Z-Image-Turbo
+# 8-step, Wan + LightX2V 4-step LoRA) and are trained for it. At cfg 1.0 classifier-free
+# guidance degenerates to `output = positive` and the negative conditioning cancels out
+# entirely. MEASURED, not assumed (2026-07-26): one seed, one positive, three negatives —
+# the authored one, empty, and one listing the subject itself — produced byte-identical
+# PIXELS, while changing the positive changed them. So there is no negative prompt here;
+# the graph still requires the input, and this is it. `test_samplers_run_at_cfg_one`
+# fails if a future model raises cfg, which is when a negative would start mattering again.
+CFG_DISABLES_NEGATIVE = 1.0
+INERT_NEGATIVE = ""
 
 # The seed the pose_prompt ANCHOR (and its loop) is drawn at — FIXED, not the build's
 # random per-run seed. The Motion Lab authors pose clauses at this same seed
@@ -232,11 +240,11 @@ def _static_image_wf(prompt, seed):
         "3": {"class_type": "CLIPLoader", "inputs": {"clip_name": ZIMAGE_TE, "type": "lumina2"}},
         "4": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
         "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": prompt}},
-        "7": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": NEG}},
+        "7": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": INERT_NEGATIVE}},
         "8": {"class_type": "EmptySD3LatentImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1}},
         "9": {"class_type": "KSampler", "inputs": {
             "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["8", 0],
-            "seed": seed, "steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+            "seed": seed, "steps": 8, "cfg": CFG_DISABLES_NEGATIVE, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
         "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["2", 0]}},
         "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": "petfactory_still"}},
     }
@@ -254,11 +262,11 @@ def _img2img_wf(prompt, image_path, seed, denoise=0.6):
         "4": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 3.0}},
         "5": {"class_type": "VHS_LoadImagePath", "inputs": {"image": image_path, "custom_width": 1024, "custom_height": 1024}},
         "6": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": prompt}},
-        "7": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": NEG}},
+        "7": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": INERT_NEGATIVE}},
         "8": {"class_type": "VAEEncode", "inputs": {"pixels": ["5", 0], "vae": ["2", 0]}},
         "9": {"class_type": "KSampler", "inputs": {
             "model": ["4", 0], "positive": ["6", 0], "negative": ["7", 0], "latent_image": ["8", 0],
-            "seed": seed, "steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": denoise}},
+            "seed": seed, "steps": 8, "cfg": CFG_DISABLES_NEGATIVE, "sampler_name": "euler", "scheduler": "simple", "denoise": denoise}},
         "10": {"class_type": "VAEDecode", "inputs": {"samples": ["9", 0], "vae": ["2", 0]}},
         "11": {"class_type": "SaveImage", "inputs": {"images": ["10", 0], "filename_prefix": "petfactory_remix"}},
     }
@@ -278,17 +286,17 @@ def _loop_wf(prompt, start_image_path, seed, length=17, fps=16, width=704, heigh
         "8": {"class_type": "ModelSamplingSD3", "inputs": {"model": ["6", 0], "shift": 8.0}},
         "9": {"class_type": "VHS_LoadImagePath", "inputs": {"image": start_image_path, "custom_width": 0, "custom_height": 0}},
         "10": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": prompt}},
-        "11": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": ""}},
+        "11": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["3", 0], "text": INERT_NEGATIVE}},
         "12": {"class_type": "WanFirstLastFrameToVideo", "inputs": {
             "positive": ["10", 0], "negative": ["11", 0], "vae": ["4", 0],
             "width": width, "height": height, "length": length, "batch_size": 1,
             "start_image": ["9", 0], "end_image": ["9", 0]}},
         "13": {"class_type": "KSamplerAdvanced", "inputs": {
-            "model": ["7", 0], "add_noise": "enable", "noise_seed": seed, "steps": 4, "cfg": 1.0,
+            "model": ["7", 0], "add_noise": "enable", "noise_seed": seed, "steps": 4, "cfg": CFG_DISABLES_NEGATIVE,
             "sampler_name": "euler", "scheduler": "simple", "positive": ["12", 0], "negative": ["12", 1],
             "latent_image": ["12", 2], "start_at_step": 0, "end_at_step": 2, "return_with_leftover_noise": "enable"}},
         "14": {"class_type": "KSamplerAdvanced", "inputs": {
-            "model": ["8", 0], "add_noise": "disable", "noise_seed": seed, "steps": 4, "cfg": 1.0,
+            "model": ["8", 0], "add_noise": "disable", "noise_seed": seed, "steps": 4, "cfg": CFG_DISABLES_NEGATIVE,
             "sampler_name": "euler", "scheduler": "simple", "positive": ["12", 0], "negative": ["12", 1],
             "latent_image": ["13", 0], "start_at_step": 2, "end_at_step": 4, "return_with_leftover_noise": "disable"}},
         "15": {"class_type": "VAEDecode", "inputs": {"samples": ["14", 0], "vae": ["4", 0]}},
@@ -434,28 +442,12 @@ def _prep_reference_image(src, *, isolate: bool = False) -> Path:
     return Path(out)
 
 
-def _base_prompt(animal: str, pose: str = "standing") -> str:
-    # "facing right" matters: DatsMe authors pets facing right and mirrors them
-    # for leftward movement, so the source must face right. `pose` defaults to
-    # "standing" (the base still); a per-pose anchor (§3.9.1 pose_prompt) passes its
-    # clause here instead, so the anchor is the SAME prompt as the base with only the
-    # pose word changed — the fly pose and the walk pose stay the same animal.
-    return (f"a cute cartoon {animal}, side profile view, facing right, {pose}, "
-            "soft pastel colors, muted palette, simple flat shading, white background, "
-            "storybook style")
-
-
-def _remix_prompt(animal: str, pose: str = "standing") -> str:
-    # The remix prompt deliberately DROPS the "soft pastel colors, muted
-    # palette" clause of _base_prompt: a remix description is usually about
-    # changing the color ("purple monkey"), and the pastel clause fights the
-    # requested color harder than the img2img source image does. Emphasizing
-    # the description twice helps it win over the source's original colors.
-    # `pose` defaults to "standing"; a per-pose anchor (§3.9.1) swaps its clause
-    # in, so a reference-based pet's fly anchor matches its designed still's palette.
-    return (f"a cute cartoon {animal}, exactly {animal}, side profile view, "
-            f"facing right, {pose}, rich saturated colors, simple flat shading, "
-            "white background, storybook style")
+# The two still templates live in the pure `prompt_templates` module so the GPU-less
+# web tier can read them for the admin's prompt preview without importing this module
+# (numpy/PIL at the top). These stay the generation-side entry points; the sentences
+# themselves have exactly one definition.
+_base_prompt = prompt_templates.base_still_prompt
+_remix_prompt = prompt_templates.remix_still_prompt
 
 
 # The historical sheet-level view — the constants the packer emitted before view
