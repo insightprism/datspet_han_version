@@ -1,5 +1,27 @@
 # SPEC — GPU memory hygiene: bound the allocators, make the failures loud
 
+> **ARCHIVED 2026-07-26 — executed to completion.** All five fixes (F1–F5) shipped, verified
+> against real builds, and guarded by tests on the standard gate. Nothing here is a proposal.
+>
+> **Do not implement from this document.** Two parts of it are still *live reference* and are
+> deliberately kept rather than deleted:
+>
+> - **§10 — the measured dead ends.** `--highvram` (OOMs), lower resolution (scales the 7 s of
+>   sampling, not the 33 s of movement), vectorizing `_fill_holes_alpha` (inside the noise), and
+>   dropping one Wan expert (14% for fringed edges — image at
+>   `docs/reference_docs/wan_single_expert_comparison.png`). **Read §10 before attempting any
+>   generation-speed optimization**, or you will re-run experiments that are already answered.
+>   §10 also records the ComfyUI graph+seed caching trap that nearly produced a fake 22× result.
+> - **§2.6 + `scripts/probe_cutout_arena.py`** — the sweep behind every constant in §6.
+>   Re-run it when the cutout model, onnxruntime, or rembg changes, or when a new GPU joins.
+>
+> **Living successors:** the shipped code is the authority — `pet_factory/factory.py`
+> (the constants band, `_CutoutSession`, `_evict_comfy_models_for_cutout`), `webui/app.py`
+> (logging), `pool_handler/*.py` (per-process logging), and the guard tests in
+> `pet_factory/tests/test_cutout_hygiene.py` + `webui/tests/test_logging_visibility.py`.
+> Carried-forward open items are §11.5, §11.7, §11.9 and §11.10 — all notes for a future 2-GPU
+> fan-out spec, none blocking.
+
 **Status:** **Rev.5** (2026-07-26) — **COMPLETE. All five fixes are implemented and measured.**
 Five small, independent fixes to the build's GPU memory handling and to the *visibility* of its
 failures. Grounded against the working tree (`pet_factory/factory.py`, `pet_env.sh`,
@@ -1242,11 +1264,18 @@ performance promise.
    `_prep_reference_image`'s "subject isolation failed, using the raw photo". Both write to
    stdout; both are on the pool path. Per the repo's sweep rule, promote them in the same change
    rather than fixing the one this spec happened to notice.
-3. **Expert-swap cost during Phase B is unmeasured.** The ComfyUI log records
-   `Requested to load WAN21` twice per generation and an `N models unloaded` count; on
-   `comfyui_32g.log` that count is `0` throughout, but that is a VRAM-experiment config and may
-   not reflect real 24 GB behavior. Quantify before the fan-out spec, since it sets that spec's
-   realistic ceiling.
+3. **[Rev.5 — CLOSED, MEASURED] Expert-swap cost during Phase B.** Asked since Rev.2 as the
+   number that would set the fan-out spec's realistic ceiling. Answered on 2026-07-26 (§10):
+   a warm 704² loop is **~40 s**, of which **~15 s is the two Wan expert stagings, ~18 s is the
+   text encoder re-staging plus VAE/codec, and only ~7 s is sampling — ~82% model movement.**
+
+   The framing in this item was wrong in one respect, which is worth keeping. It assumed the
+   cost was a *swap* — models being evicted and reloaded because they collide. `0 models
+   unloaded` holds on the real 24 GB card too, and nothing is ever evicted: ComfyUI never fully
+   loads these models, it **streams** them (`prepared for dynamic VRAM loading. 13630MB Staged`).
+   So the cost is not contention between the two experts, it is the per-prompt price of running
+   a ~34 GB stack on a 24 GB card at all — which is why `--highvram`, the fix that would follow
+   from the swap framing, OOMs instead of helping (§10).
 4. **[Rev.4 — CLOSED, WON'T FIX] The pool's retry cost on a deterministic `CutoutFailed`.**
    Rev.2 framed this as "dead-letter immediately, the other two attempts are pure waste". Both
    candidate fixes were investigated and **both are rejected on evidence.** The item is closed
