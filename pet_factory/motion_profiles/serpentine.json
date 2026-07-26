@@ -21,7 +21,8 @@
     "adder",
     "eel",
     "worm",
-    "serpentine"
+    "serpentine",
+    "legless lizard"
   ],
   "poses": {
     "walk": {

@@ -16,7 +16,7 @@
     {
       "key": "quadruped",
       "file": "quadruped.json",
-      "label": "Four-legged land animal — four walking legs and NO wings. Walks, trots and runs on all fours with a diagonal gait; may have a tail (dog, cat, horse, bear, elephant, lizard, monkey)",
+      "label": "Four-legged land animal — four walking legs and NO wings. Walks, trots and runs on all fours with a diagonal gait; may have a tail. Includes lizards and other four-legged reptiles, and animals that GLIDE on a skin membrane rather than beating wings (dog, cat, horse, bear, elephant, komodo dragon, monkey, flying squirrel)",
       "level": 3
     },
     {
@@ -28,7 +28,7 @@
     {
       "key": "winged_flyer",
       "file": "winged_flyer.json",
-      "label": "Winged flyer — wings IN ADDITION to its legs, not instead of them: either four legs plus a separate pair of wings, or an insect's legs plus wings. Can walk on its legs and fly by beating wings that are not its forelimbs (dragon, wyvern, griffin, bat, butterfly, bee, pegasus)",
+      "label": "Winged flyer — wings IN ADDITION to its legs, not instead of them: either four legs plus a separate pair of wings, or an insect's legs plus wings. Can walk on its legs and fly by beating wings that are not its forelimbs. Gliding on a skin membrane does NOT count — the wings must beat (dragon, wyvern, griffin, bat, butterfly, bee, pegasus)",
       "level": 3
     }
   ]

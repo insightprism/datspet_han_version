@@ -44,7 +44,24 @@
     "zebra",
     "kangaroo",
     "quadruped",
-    "mammal"
+    "mammal",
+    "komodo dragon",
+    "komodo",
+    "bearded dragon",
+    "monitor lizard",
+    "lizard",
+    "gecko",
+    "iguana",
+    "chameleon",
+    "skink",
+    "salamander",
+    "newt",
+    "tortoise",
+    "crocodile",
+    "alligator",
+    "flying squirrel",
+    "sugar glider",
+    "colugo"
   ],
   "poses": {
     "walk": {
