@@ -38,7 +38,13 @@
     "orc",
     "goblin",
     "giant",
-    "avatar"
+    "avatar",
+    "yeti",
+    "bigfoot",
+    "sasquatch",
+    "abominable snowman",
+    "wendigo",
+    "ogre"
   ],
   "poses": {
     "walk": {
