@@ -50,11 +50,14 @@ def test_motions_keyword_returns_species_correct_menu(app_mod):
     assert "jump" not in snames                         # serpentine disables jump
 
 
-def test_motions_hides_triggered_poses(app_mod):
-    # jump/play are triggered (§7) — authored but hidden from the launch menu.
+def test_motions_offers_every_enabled_pose_including_triggered(app_mod):
+    # The rule: a pose ENABLED for the profile is selectable — triggered ones too
+    # (play/jump). A picked triggered pose ships in the bundle; DatsMe force-plays it on
+    # interaction (manifest runtime_role/loop say so). Only DISABLED poses are absent.
     dog = app_mod.motions(animal="dog")
     names = [p["name"] for p in dog["poses"]]
-    assert "jump" not in names and "play" not in names
+    assert "jump" in names and "play" in names          # triggered, now offered
+    assert "fly" not in names                            # quadruped disables fly
 
 
 def test_motions_required_flag_on_walk_idle(app_mod):

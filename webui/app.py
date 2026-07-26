@@ -1150,11 +1150,6 @@ def preview_design(
         source="design", min_strength=min_strength, generated=True))
 
 
-# Poses NOT offered in the selector at launch: triggered roles that only play if a
-# DatsMe interaction behavior fires them (SPEC_MOTION_PROFILES §7/§9.1). They stay
-# authored in the profiles but hidden so no user pays GPU for a pose that won't move.
-_HIDDEN_POSE_ROLES = frozenset({"triggered"})
-
 
 def _clip_poses_to_cap(poses_pkg: dict, max_poses: int) -> dict:
     """Clip a requested pose package to the caller's tier cap (§8.6), server-side
@@ -1202,16 +1197,14 @@ def motions(animal: str = "", profile: str = ""):
     else:
         prof = mp.resolve_motion_profile(animal)
 
-    poses = []
-    for name in prof.enabled_poses():
-        pose = prof.pose(name)
-        if pose.runtime_role in _HIDDEN_POSE_ROLES:
-            continue   # authored but not offered at launch (§7)
-        poses.append({
-            "name": name,
-            "required": name in mp.REQUIRED_POSES,
-            "enabled": True,
-        })
+    # Every pose the profile ENABLES is offerable — including triggered ones (play, jump).
+    # A triggered pose the user picks ships in the bundle and DatsMe force-plays it on
+    # interaction (its manifest runtime_role/loop say so); the auto state machine still
+    # skips it. The rule is simply: configured for this motion ⇒ selectable.
+    poses = [
+        {"name": name, "required": name in mp.REQUIRED_POSES, "enabled": True}
+        for name in prof.enabled_poses()
+    ]
     return {
         "profile": prof.key,
         "level": prof.level,
