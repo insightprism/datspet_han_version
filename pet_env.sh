@@ -7,7 +7,8 @@
 # 2) LD_LIBRARY_PATH points onnxruntime-gpu at the CUDA-12 runtime wheels
 #    installed in this repo's .venv (the ComfyUI venv's torch bundles CUDA 13,
 #    which onnxruntime-gpu can't use), so the birefnet cutout runs on the GPU
-#    (~12x faster than the silent CPU fallback).
+#    (~12x faster than the silent CPU fallback) — and PET_FACTORY_REQUIRE_GPU
+#    makes it an ERROR if that didn't take, instead of a silent 12x slowdown.
 
 # ComfyUI's output dir. MUST be absolute — factory.py reads it from a worker
 # thread whose CWD is webui/, so a relative value (e.g. a stale "./ComfyUI/
@@ -38,6 +39,15 @@ export PET_FACTORY_COMFY_URL="${PET_FACTORY_COMFY_URL:-http://127.0.0.1:19953}"
 _PF_NV="$REPO/.venv/lib/python3.10/site-packages/nvidia"
 export LD_LIBRARY_PATH="$_PF_NV/cublas/lib:$_PF_NV/cudnn/lib:$_PF_NV/cuda_runtime/lib:$_PF_NV/cufft/lib:$_PF_NV/curand/lib:$_PF_NV/cuda_nvrtc/lib:$_PF_NV/nvjitlink/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 unset _PF_NV
+
+# This box is a declared GPU node, so REFUSE to run the birefnet cutout on CPU
+# (SPEC_GPU_MEMORY_HYGIENE §4; factory._CutoutSession._new_session). onnxruntime
+# drops a provider it can't load WITHOUT raising, so a broken CUDA install yields
+# correct output at ~1/12 speed, indefinitely, with no signal — and every timing
+# number taken against it is meaningless. This turns that into a loud startup error.
+# It is a detector, not a speedup: CUDA loads fine here today, so expect no change.
+# Do NOT set this on CPU/pool web tiers — they keep the graceful CPU fallback.
+export PET_FACTORY_REQUIRE_GPU=1
 
 # ---------------------------------------------------------------------------
 # 5) DatsMe partner integration (DPP). Only needed when running DatsPet as a

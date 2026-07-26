@@ -30,6 +30,7 @@ Needs ComfyUI up (./start_comfyui_only.sh).
 """
 import io
 import json
+import logging
 import os
 import shutil
 import threading
@@ -88,6 +89,27 @@ if PET_GEN_BACKEND == "local" and not os.environ.get("PET_FACTORY_COMFY_URL"):
     print("[webui] WARNING: PET_GEN_BACKEND=local but PET_FACTORY_COMFY_URL is unset — "
           "generation will try ComfyUI at the :8188 default, NOT our :19953. "
           "Source pet_env.sh (which sets it) before starting the backend.", flush=True)
+
+# ── Logging (SPEC_GPU_MEMORY_HYGIENE §5, §11.2) ────────────────────────────────────────
+# Nothing here configured logging before, so the root logger had NO handler and Python's
+# `logging.lastResort` applied: WARNING and above reached stderr, INFO was silently DROPPED.
+# That voided every INFO-level report the factory makes — most importantly the verified-
+# eviction line, whose whole job is to record what happened on a SUCCESSFUL build. A
+# detector that only logs its failures cannot distinguish "it worked" from "it never ran",
+# which is the exact false-green class of bug that spec exists to remove. Measured before
+# this landed: the eviction's success line printed nothing at all.
+#
+# Safe against uvicorn: uvicorn's dictConfig defines only `uvicorn*` loggers (which do not
+# propagate) and never touches root, so this neither fights it nor double-prints. And
+# basicConfig is a documented no-op when the root logger already has handlers, so a host
+# that embeds this app keeps its own configuration.
+# Stdlib only — no ML import, so the GPU-less posture above is unaffected.
+BACKEND_LOG_LEVEL = os.environ.get("DATSPET_LOG_LEVEL", "INFO").strip().upper()
+logging.basicConfig(
+    # A typo in the env var must not stop the backend booting — fall back, don't raise.
+    level=getattr(logging, BACKEND_LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+)
 
 # pet_factory (and its ML stack: rembg → onnxruntime-CUDA, the ComfyUI-driving code) is
 # imported ONLY in the local branch, lazily (spec §A.4). This is what keeps the GPU-less

@@ -92,6 +92,62 @@ _ANCHOR_SEED = 42
 # The former WALK_SUFFIX/IDLE_SUFFIX constants were removed — quadruped.json carries
 # their exact wording, and tests/test_motion_profiles.py pins it byte-for-byte (§6).
 
+# ── GPU memory hygiene (SPEC_GPU_MEMORY_HYGIENE) ─────────────────────────────────────────
+# Every value here is MEASURED, not chosen — §2.6 of that spec is the sweep that produced
+# them, run against this repo's onnxruntime 1.23.2 / rembg 2.0.69 on a 3090. Re-measure (≥3
+# frames — the arena's high-water lands on the SECOND inference, not the first) before
+# changing any of them, and re-measure whenever the cutout model changes.
+
+# The CUDA device the cutout runs on. Also the `/system_stats` device SELECTOR: a 2-GPU box
+# reports both cards, and this need not be ComfyUI's primary device (§5.2).
+_CUTOUT_DEVICE_ID = 0
+
+# birefnet's measured working set. §2.6: 4 GiB fails outright (ORT raises on a single 822 MB
+# activation in the ASPP decoder block); 6 GiB is the smallest cap measured to pass. 7 GiB is
+# that floor plus headroom, and it costs nothing — peak is identical at 7 GiB and at 10 GiB.
+# Input-size-independent: rembg normalizes every frame to birefnet's 1024² graph, so one value
+# holds for every pet. F1 (deferred) will pass this as the ORT arena's `gpu_mem_limit`.
+_CUTOUT_WORKING_SET_BYTES = 7 * 1024**3
+
+# The CUDA context lives OUTSIDE the ORT arena (measured 264 MiB bare, 526–554 MiB with the
+# session loaded), so a process's VRAM total can legitimately exceed the working set. Anything
+# comparing measured peak against the budget must allow this much (§2.5).
+_CUTOUT_PEAK_TOLERANCE_BYTES = 1 * 1024**3
+
+# Opaque fallback frames tolerated in a build: NONE. One opaque frame in a walk cycle is a
+# visible white flash, so there is no threshold worth tuning — the name exists to make the
+# decision visible and revisitable, not because a nonzero value is expected (§3.2).
+_CUTOUT_MAX_FALLBACK_FRAMES = 0
+
+# The free-VRAM watermark that means ComfyUI's eviction actually landed. Derived from the
+# REQUIREMENT (the cutout must fit), never from an observation of current free VRAM — a
+# watermark read off today's behavior would certify whatever it found, including a broken
+# eviction (§5.2).
+_FREE_TARGET_VRAM_BYTES = _CUTOUT_WORKING_SET_BYTES + _CUTOUT_PEAK_TOLERANCE_BYTES
+_FREE_POLL_TIMEOUT_S = 20        # bounded wait, replaces a blind sleep(1.5) that verified nothing
+_FREE_POLL_INTERVAL_S = 0.5      # poll cadence
+_COMFY_HTTP_TIMEOUT_S = 10       # per-request timeout for the eviction POST and each stats read
+
+
+class CutoutFailed(RuntimeError):
+    """The birefnet matte failed on a frame, so this build has no transparent sprite to ship
+    (SPEC_GPU_MEMORY_HYGIENE §3).
+
+    Raised in place of the historical silent fallback to a fully-opaque alpha. The product IS
+    the transparency — an opaque sprite is unusable in DatsMe — so a failed matte is a FAILED
+    build, not a degraded one. The old fallback also made every other measurement in the
+    pipeline untrustworthy: a build that silently shipped a white rectangle reported the same
+    `done` at progress 1.0 as a perfect one."""
+
+    def __init__(self, pose_name, frame_index, cause):
+        self.pose_name = pose_name
+        self.frame_index = frame_index
+        self.cause = cause
+        super().__init__(
+            f"birefnet cutout failed on pose {pose_name!r} frame {frame_index} "
+            f"({type(cause).__name__}: {cause}) — refusing to ship an opaque sprite")
+
+
 # ── birefnet cutout session — single-instance, GPU-bounded lifetime ─────────────────────
 # onnxruntime's CUDA arena NEVER returns memory to the GPU while the session lives (it
 # caches for reuse), so a persistent global session permanently holds its high-water-mark
@@ -323,6 +379,77 @@ def _run(wf: dict, timeout: int = 360) -> str:
     raise TimeoutError("ComfyUI generation timed out")
 
 
+def _mib(n) -> str:
+    """Bytes as a MiB string for logs; `None` (unreadable) stays visibly unknown rather
+    than silently becoming 0."""
+    return "unknown" if n is None else f"{n // (1024 * 1024)} MiB"
+
+
+def _comfy_vram_free(device_id: int = _CUTOUT_DEVICE_ID):
+    """Free VRAM in bytes on `device_id` as ComfyUI reports it, or None if unreadable.
+
+    Selects the device by its `index`, NOT `devices[0]` (SPEC_GPU_MEMORY_HYGIENE §5.2). A
+    2-GPU box reports BOTH cards, and the card we care about is the one the CUTOUT runs on —
+    which need not be ComfyUI's primary device. ComfyUI happens to sort its primary first
+    today, so devices[0] would usually work; relying on that would silently couple the cutout's
+    device to ComfyUI's, which is exactly the coupling a per-card build fan-out has to break."""
+    try:
+        stats = requests.get(f"{COMFY_URL}/system_stats", timeout=_COMFY_HTTP_TIMEOUT_S).json()
+    except Exception:
+        return None
+    for dev in stats.get("devices", []):
+        if dev.get("index") == device_id:
+            return dev.get("vram_free")
+    return None
+
+
+def _evict_comfy_models_for_cutout():
+    """Ask ComfyUI to drop its Wan models, then VERIFY the eviction actually landed
+    (SPEC_GPU_MEMORY_HYGIENE §5).
+
+    ComfyUI's `/free` only sets a flag on its prompt queue and returns 200 **unconditionally**
+    — the real `unload_all_models()` runs later, on the prompt worker. So neither the 200 nor
+    the fixed `sleep(1.5)` this replaced carried any information: an unreachable endpoint, a
+    200 that unloaded nothing, and a real eviction all looked identical in the log. Poll
+    `/system_stats` until the cutout's budget fits, and say what happened either way.
+
+    Measured against the live instance 2026-07-26: 5535 MiB free → 23874 MiB in 0.5 s, i.e.
+    ~18 GB reclaimed, one poll interval. The `sleep(1.5)` was 3x longer than needed AND proved
+    nothing; this is shorter AND says what happened.
+
+    NEVER raises, and never gates the build (§0.5): a stubborn cache or a stopped ComfyUI is a
+    logged WARNING, not a failed pet. Missing the target does not mean the cutout will fail —
+    free VRAM on this box also moves with processes we do not control (a foreign job was seen
+    holding 23 GB of cuda:0), and `/free` cannot reclaim what ComfyUI never held. So the honest
+    posture is: try, report, continue, and let F2 raise a REAL error if the cutout actually
+    dies. A pre-emptive abort here would fail builds that would have succeeded."""
+    started = time.time()
+    before = _comfy_vram_free()
+    try:
+        requests.post(f"{COMFY_URL}/free", json={"unload_models": True, "free_memory": True},
+                      timeout=_COMFY_HTTP_TIMEOUT_S)
+    except Exception as e:
+        log.warning("ComfyUI /free unreachable (%s: %s) — proceeding to the cutout unevicted",
+                    type(e).__name__, e)
+
+    # Start the poll budget HERE, not at `started`: the two hops above (the `before` read and
+    # the POST) can each burn a full _COMFY_HTTP_TIMEOUT_S, so a `started`-based deadline is
+    # already blown by the time we get here — and the loop then never re-reads at all. That
+    # fails exactly when a sluggish ComfyUI makes the read-back most valuable. `started` still
+    # measures the whole operation for the report below.
+    deadline = time.time() + _FREE_POLL_TIMEOUT_S
+    after = _comfy_vram_free()
+    while (after is None or after < _FREE_TARGET_VRAM_BYTES) and time.time() < deadline:
+        time.sleep(_FREE_POLL_INTERVAL_S)
+        after = _comfy_vram_free()
+
+    landed = after is not None and after >= _FREE_TARGET_VRAM_BYTES
+    report = log.info if landed else log.warning
+    report("ComfyUI eviction %s: vram_free %s → %s (target %s) after %.1fs",
+           "landed" if landed else "did NOT reach the target, proceeding anyway",
+           _mib(before), _mib(after), _mib(_FREE_TARGET_VRAM_BYTES), time.time() - started)
+
+
 def _wait_stable(path: Path, tries: int = 30):
     """Wait until the file size stops changing (guards against reading a file
     another process is still writing/re-encoding)."""
@@ -481,15 +608,33 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
                     # the loop — never inside prep()'s per-frame try/except which would swallow it.
     total_frames = sum(len(f) for f in pose_frames.values()) or 1
     done_frames = 0
+    # BUILD-wide, deliberately outside prep(): _CUTOUT_MAX_FALLBACK_FRAMES is a budget for the
+    # whole bundle, and prep() runs once PER POSE. Scoped inside, a tolerance of N would silently
+    # mean N *per pose* — up to 8N opaque frames in an 8-pose build — which is not what the
+    # constant says. Invisible at today's value of 0; a trap the moment anyone raises it.
+    fallbacks = 0
 
-    def prep(frames):
-        nonlocal done_frames
+    def prep(pose_name, frames):
+        nonlocal done_frames, fallbacks
         out = []
-        for fr in frames:
+        for i, fr in enumerate(frames):
             orig = fr.convert("RGB")
             try:
                 a = _remove_bg(orig).convert("RGBA").split()[3]     # birefnet alpha matte
-            except Exception:
+            except Exception as e:
+                # A per-frame raise from a PIL RGB input means the SESSION is broken (a CUDA
+                # OOM, a provider that failed to load), not that one frame is odd. There is no
+                # realistic transient here, and spending GPU time on the remaining ~127 frames
+                # after the session dies is waste — so fail the build (§3.2).
+                fallbacks += 1
+                if fallbacks > _CUTOUT_MAX_FALLBACK_FRAMES:
+                    log.error("cutout failed on pose %r frame %d (%s: %s) — failing the build "
+                              "instead of shipping an opaque sprite",
+                              pose_name, i, type(e).__name__, e)
+                    raise CutoutFailed(pose_name, i, e) from e
+                log.warning("cutout fell back to an opaque alpha on pose %r frame %d (%s: %s) — "
+                            "%d/%d tolerated", pose_name, i, type(e).__name__, e,
+                            fallbacks, _CUTOUT_MAX_FALLBACK_FRAMES)
                 a = Image.new("L", orig.size, 255)
             result = orig.convert("RGBA")
             result.putalpha(a)                                     # original colors + matte
@@ -507,7 +652,7 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
     cursor = 0
     animations = {}
     for name, frames in pose_frames.items():
-        cells = prep(frames)
+        cells = prep(name, frames)
         start = ((cursor + columns - 1) // columns) * columns      # next pose starts on a new row
         idx = list(range(start, start + len(cells)))
         placed.append((name, cells, idx))
@@ -756,13 +901,7 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
                                          str(pose_starts[name]), _ANCHOR_SEED))
 
     prog("Cutting out backgrounds & packing…", 0.85)
-    # Unload ComfyUI's Wan models so the GPU has room for birefnet (the next job
-    # reloads them). Harmless if the endpoint isn't available.
-    try:
-        requests.post(f"{COMFY_URL}/free", json={"unload_models": True, "free_memory": True}, timeout=10)
-        time.sleep(1.5)
-    except Exception:
-        pass
+    _evict_comfy_models_for_cutout()
 
     pose_frames = {}
     pose_meta = {}
