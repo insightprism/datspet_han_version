@@ -1143,6 +1143,37 @@ performance promise.
 
   - **Resolution is not a lever.** 704² → 512² scales the ~7 s of sampling, not the ~33 s of
     movement — worth ~2 s per loop. Same for frame count and step count.
+  - **[Rev.5] Dropping one Wan expert — TRIED, MEASURED, REJECTED.** The obvious follow-on: each
+    expert is 13.6 GB and stages per prompt, so running all 4 steps on ONE expert should save
+    ~7 s of a ~40 s loop. Tested on 2026-07-26 as one loop per variant off a shared anchor, with
+    a trailing baseline as a drift check. Image:
+    `docs/reference_docs/wan_single_expert_comparison.png`.
+
+    | variant | time | outcome |
+    |---|---|---|
+    | 2-expert baseline (warm) | **33.3 s** | reference |
+    | high-noise expert only | **28.6 s** (−14%) | renders, but **fringed, fuzzy edges** |
+    | low-noise expert only | 33.1 s (−0.6%) | **broken — noise explosion**, and no speed gain |
+
+    This also answers *why* there are two, empirically. The schedule starts from pure noise, so
+    the **high-noise expert is load-bearing** — without it the sampler never resolves an image
+    (the low-only webp is 2.3× the file size of the others, which is the noise compressing
+    badly). And the **low-noise expert is what produces the clean flat edges**: without it the
+    subject renders correctly but with a furry fringe. They do genuinely different jobs.
+
+    Rejected for a reason specific to this product rather than general quality: the deliverable
+    is a **transparent sprite**, so birefnet has to matte that outline, and fringe makes a worse
+    alpha. It also contradicts the `"simple flat shading, storybook"` the prompts ask for. The
+    degradation survives downscaling to the 256² cell — checked, not assumed. 14% of the loop
+    band is not worth fuzzier sprites when the second GPU gives ~2× at no quality cost.
+
+  - **[Rev.5] A/B METHODOLOGY TRAP, for whoever measures here next: ComfyUI caches on
+    graph + seed.** In the run above, the second submission of an identical baseline workflow
+    returned in **1.5 s** with a **byte-identical** output file — a cache hit, not a generation.
+    Taken at face value that is a 22× speedup that does not exist. Vary the seed or bust the
+    cache between arms, and always include a repeat-of-baseline arm at the END: it catches both
+    this and genuine drift, and it is what made the numbers above trustworthy.
+
   - **The "two-pass expert split" (all poses' high-noise steps, then all low-noise) is a much
     weaker idea than it first appeared.** It was estimated at ~37% on the assumption that
     consecutive same-expert prompts would stage once. Leg A falsifies the premise: ComfyUI
