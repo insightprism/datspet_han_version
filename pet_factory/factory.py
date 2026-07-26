@@ -21,10 +21,12 @@ the same machine as ComfyUI (shared filesystem).
 import io
 import json
 import os
+import gc
 import random
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
@@ -82,25 +84,41 @@ _ANCHOR_SEED = 42
 # The former WALK_SUFFIX/IDLE_SUFFIX constants were removed — quadruped.json carries
 # their exact wording, and tests/test_motion_profiles.py pins it byte-for-byte (§6).
 
-_REMBG = None
+# ── birefnet cutout session — single-instance, GPU-bounded lifetime ─────────────────────
+# onnxruntime's CUDA arena NEVER returns memory to the GPU while the session lives (it
+# caches for reuse), so a persistent global session permanently holds its high-water-mark
+# footprint — measured ~6–15 GB depending on how much was free when the arena grew — and
+# starves the NEXT build's Wan generation on the same 24 GB card. The permanent fix is to
+# make the cutout session a MANAGED, single-instance resource that dies when its work ends:
+#   • created lazily on a build's cutout, with the GPU-node fail-fast (§4.B item A);
+#   • DESTROYED the instant that cutout finishes (make_pet_zip's finally → release()),
+#     returning the arena to the GPU — verified empirically: 6.4 GB → 0.26 GB after gc;
+#   • killed by an idle watchdog after IDLE_TIMEOUT_S if a release was ever missed (a crash,
+#     or a caller that used pack_datsme_bundle directly), so the GPU is never held idle.
+# A lock serialises create/get/destroy: there is only ever ONE session, and the watchdog
+# can't reclaim it mid-cutout (every frame's get() bumps the idle clock).
+class _CutoutSession:
+    IDLE_TIMEOUT_S = 300   # kill an idle cutout session after 5 min (the safety net)
+    _POLL_S = 30           # how often the watchdog checks (a knob so tests can run it fast)
 
+    def __init__(self):
+        self._lock = threading.RLock()
+        self._session = None
+        self._last_used = 0.0
+        self._watchdog = None
 
-def _rembg():
-    """Lazily create the birefnet cutout session. Prefers the GPU (CUDA, ~12x faster). On a node
-    that declares itself a GPU node (PET_FACTORY_REQUIRE_GPU=1) a SILENT CPU fallback is a
-    misconfiguration, not an acceptable slow path — CPU birefnet blows the pool's watchdog (the
-    2026-07-21 incident; shared_gpu_cpu spec §4.B). onnxruntime does NOT raise when a provider
-    can't load, it just drops it — so we inspect the ACTUAL providers and fail fast, ONCE at
-    session init (never inside prep()'s per-frame try/except, which would swallow it). CPU-only
-    nodes (flag unset) keep the graceful fallback."""
-    global _REMBG
-    if _REMBG is None:
+    def _new_session(self):
+        """Build the birefnet session + the GPU-node fail-fast. Prefers CUDA (~12x faster). On a
+        declared GPU node (PET_FACTORY_REQUIRE_GPU=1) a SILENT CPU fallback is a misconfiguration
+        that blows the pool watchdog (2026-07-21 incident; shared_gpu_cpu §4.B) — onnxruntime
+        drops a provider it can't load without raising, so we inspect the ACTUAL providers and
+        fail fast HERE, once, never inside prep()'s per-frame try/except. CPU-only nodes keep the
+        graceful fallback."""
         import onnxruntime as ort
         try:
-            # onnxruntime 1.22+ ships CUDA/cuDNN as separate nvidia-*-cu12 wheels but does NOT
-            # add them to the loader path on import — without this preload the CUDA provider .so
-            # cannot dlopen libcublasLt.so.12 etc. and silently falls back to CPU (§4.A). No-op /
-            # harmless on a CPU-only node where those wheels aren't installed.
+            # onnxruntime 1.22+ ships CUDA/cuDNN as separate nvidia-*-cu12 wheels but does NOT add
+            # them to the loader path on import — without this preload the CUDA provider .so can't
+            # dlopen libcublasLt.so.12 etc. and silently falls back to CPU (§4.A). Harmless on CPU.
             ort.preload_dlls()
         except Exception:
             pass
@@ -115,13 +133,55 @@ def _rembg():
                 f"birefnet CUDA provider failed to load on a GPU node (providers={providers}); "
                 "check onnxruntime CUDA libs, e.g. libcublasLt.so.12 — refusing to run the cutout "
                 "on CPU where it would exceed the pool watchdog")
-        _REMBG = session
-    return _REMBG
+        return session
+
+    def get(self):
+        """The live cutout session, created on first use (fail-fast on a mis-set GPU node).
+        Bumps the idle clock so the watchdog never reclaims a session mid-cutout."""
+        with self._lock:
+            if self._session is None:
+                self._session = self._new_session()   # may raise (fail-fast) — stays None then
+                self._start_watchdog()
+            self._last_used = time.time()
+            return self._session
+
+    def release(self):
+        """Destroy the session NOW and hand its GPU memory back (onnxruntime frees the CUDA
+        arena when the session is GC'd). Called the instant a build's cutout finishes; a no-op
+        if none exists. The lock makes it safe against the watchdog and a concurrent get()."""
+        with self._lock:
+            if self._session is not None:
+                self._session = None
+                gc.collect()
+
+    def _start_watchdog(self):
+        if self._watchdog is None or not self._watchdog.is_alive():
+            self._watchdog = threading.Thread(
+                target=self._watch, name="cutout-idle-watchdog", daemon=True)
+            self._watchdog.start()
+
+    def _watch(self):
+        while True:
+            time.sleep(self._POLL_S)
+            with self._lock:
+                if (self._session is not None
+                        and time.time() - self._last_used >= self.IDLE_TIMEOUT_S):
+                    self._session = None
+                    gc.collect()
+
+
+_CUTOUT = _CutoutSession()
+
+
+def _rembg():
+    """The live birefnet session (see _CutoutSession) — a thin accessor so the fail-fast
+    contract and its tests read the same as before the session became managed."""
+    return _CUTOUT.get()
 
 
 def _remove_bg(img: Image.Image) -> Image.Image:
     from rembg import remove
-    return remove(img.convert("RGB"), session=_rembg())
+    return remove(img.convert("RGB"), session=_CUTOUT.get())
 
 
 # Subject-crop geometry (SPEC_UPLOAD_LIKENESS §2.2). Tuned so a cropped subject
@@ -425,8 +485,8 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
     that pass neither. Returns the .zip bytes — post it to /api/pets/me/upload."""
     pose_meta = pose_meta or {}
     sheet_view = view or _DEFAULT_VIEW
-    _rembg()   # eager init so a GPU-required-but-CPU-only node fails fast HERE (§4.B item A),
-               # before the loop — where prep()'s per-frame try/except cannot swallow the error.
+    _CUTOUT.get()   # create the cutout session + GPU-node fail-fast HERE (§4.B item A), before
+                    # the loop — never inside prep()'s per-frame try/except which would swallow it.
     total_frames = sum(len(f) for f in pose_frames.values()) or 1
     done_frames = 0
 
@@ -724,13 +784,19 @@ def make_pet_zip(animal: str, on_progress=None, breed_id=None, reference_image=N
                            "timed_buffer_ms": p.timed_buffer_ms, "view": p.view}
 
     breed_id = breed_id or _slug(animal)
-    zip_bytes = pack_datsme_bundle(pose_frames, breed_id,
-                                   display_name or animal.title(),
-                                   pose_meta=pose_meta,
-                                   movement_class=profile.movement_class,
-                                   view=profile.view,
-                                   on_frame=lambda done, total: prog(
-                                       "Cutting out backgrounds & packing…",
-                                       round(0.85 + 0.14 * done / total, 3)))
+    try:
+        zip_bytes = pack_datsme_bundle(pose_frames, breed_id,
+                                       display_name or animal.title(),
+                                       pose_meta=pose_meta,
+                                       movement_class=profile.movement_class,
+                                       view=profile.view,
+                                       on_frame=lambda done, total: prog(
+                                           "Cutting out backgrounds & packing…",
+                                           round(0.85 + 0.14 * done / total, 3)))
+    finally:
+        # The cutout is the build's last GPU step — free birefnet's ~14 GB the instant it's
+        # done (or errored) so the next build's generation gets the whole card. onnxruntime
+        # never releases the arena while the session lives, so we destroy the session here.
+        _CUTOUT.release()
     prog("Done!", 1.0)
     return breed_id, zip_bytes
