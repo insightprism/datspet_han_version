@@ -1,19 +1,32 @@
 # SPEC — GPU memory hygiene: bound the allocators, make the failures loud
 
-**Status:** **Rev.3** (2026-07-26) — **F2, F3 and F4 are IMPLEMENTED; F1 is deferred.** Four
-small, independent fixes to the build's GPU memory handling and to the *visibility* of its
+**Status:** **Rev.4** (2026-07-26) — **COMPLETE. All five fixes are implemented and measured.**
+Five small, independent fixes to the build's GPU memory handling and to the *visibility* of its
 failures. Grounded against the working tree (`pet_factory/factory.py`, `pet_env.sh`,
 `webui/app.py`).
 
-**Where this stands.** F2 (loud cutout failure), F3 (armed GPU fail-fast), F4 (verified
-eviction) and **[Rev.3] F5 (visible logging, §5.5)** are in the tree with 16 guard tests in
+**Where this stands.** F1 (bounded arena), F2 (loud cutout failure), F3 (armed GPU fail-fast),
+F4 (verified eviction) and F5 (visible logging) are all in the tree, with 20 guard tests in
 `pet_factory/tests/test_cutout_hygiene.py` and 3 in `webui/tests/test_logging_visibility.py`; the
-gate is **474 green**. **F1 — the ORT arena cap — is NOT implemented and still needs work**: §2.6
-proved the mechanism and produced a calibration, but the open questions in §2.7 have to be closed
-before a cap is put in front of real builds. F1's measured budget already lives in the tree as
-`_CUTOUT_WORKING_SET_BYTES`, because F4's watermark is derived from it (§5.2) — so landing F1 is
-adding provider options that read a constant that is already there, not a new calibration.
-Table B (§9) records what each landed fix actually measured.
+gate is **478 green**. Every headline claim is a measurement, not an estimate:
+
+| | measured |
+|---|---|
+| cutout VRAM | **14618 → 6426 MiB** (8 GiB reclaimed), via the shipped `factory._rembg()` path |
+| ComfyUI eviction | **~18 GB reclaimed in 0.5 s** — a number nobody had before F4 |
+| a real 8-pose build | **128/128 frames matted**, 0 opaque fallbacks, 0 ERROR lines |
+| cutout speed | **unchanged** — 0.27–0.28 s/frame capped and uncapped alike |
+
+**[Rev.4] F1 shipped, reversing Rev.3's deferral.** Rev.3 deferred it on three objections (§2.7,
+kept verbatim). Measuring four more caps retired two of them: peak-vs-cap is a **cliff, not a
+slope**, so the full saving is available anywhere in a 4 GiB-wide band and the cap does not have
+to run near the failure floor. §2.8 records how each objection resolved. The same measurement
+exposed a *new* and nastier risk — above ~10 GiB the cap silently buys nothing, with no error and
+no symptom — which is now the assertion the guard test exists for.
+
+**What is left is measurement, not code** (§11): B2's timing bands and B3's peak still need one
+build run through `start_all.sh` rather than a hand-started backend, and the pool nodes need
+their own logging config before any of this is visible there.
 
 **[Rev.3] F5 is new, and F4 did not work without it.** Post-implementation review found the app
 configured logging *nowhere*, so the root logger had no handler and Python's `logging.lastResort`
@@ -281,6 +294,42 @@ for.
   uncapped alike in the probe, so no slowdown is expected. **A slowdown here is a finding, not a
   pass** — it would mean allocator churn is material and the cap needs raising.
 
+#### [Rev.4] Independent end-to-end verification — ACCEPTANCE MET
+
+F1 was verified by an independent reviewer against a **like-for-like real build**: same animal
+(`black bat`), same 8 poses, same instrumented runner, run before and after F1. Not a probe — the
+whole pipeline.
+
+| | no F1 (11:35) | **with F1 (12:13)** |
+|---|---|---|
+| **peak VRAM, this process** | 14618 MiB | **6426 MiB — 8 GiB reclaimed** |
+| B5 per-frame alpha | 128 frames, 0 opaque | **128 frames, 0 opaque** |
+| B1 providers | CUDA | CUDA |
+| B4 eviction | 5631 → 23875 MiB, 0.7 s | 5535 → 23457 MiB, 0.5 s |
+| total wall time | 470.9 s | **456.0 s** |
+
+**6426 MiB, to the MiB, matching both §2.6 row 17 and the projection in §9.** The probe's number
+transfers to the real pipeline exactly. Also confirmed on the shipped session:
+`get_provider_options()` reads back `gpu_mem_limit=8589934592`, `kNextPowerOfTwo`, `device_id=0`,
+while `get_providers()` still returns **bare names** — so §2.3's fail-fast invariant holds on the
+real object, not just on a stub. And `release()` still returns the arena: **6426 → 264 MiB**.
+
+**One honest finding, per the "a slowdown is a finding" rule above.** The cutout band moved
+**46.7 s → 53.9 s** (+15%, 0.365 → 0.421 s/frame at the band level). Three reasons not to act on
+it yet, and one reason not to dismiss it: the loops band moved −25.2 s between the same two runs,
+so band-level run-to-run variance is already ±25 s; the total build got *faster* (−14.9 s); and
+§2.6's controlled probe measures the inference itself at 0.27–0.28 s/frame capped and uncapped
+alike, which is the number the cap could plausibly affect. The band also contains eviction, webp
+decode, `_fill_holes_alpha` and PNG packing — none of which the cap touches. **But it is one
+sample.** Re-run the pair before treating +7 s as noise; it is 1.6% of total, so nothing is
+blocked on the answer.
+
+**A false alarm worth recording, because §2.8 predicted it.** The reviewer's first `release()`
+check read 6426 → 6426 MiB and looked like a regression. Cause: the *test* held a local reference
+to the session (`sess = factory._rembg()`), so `release()`'s `self._session = None` could not drop
+the last reference. Re-run without holding one: 6426 → 264 MiB. §2.8 called this exact trap in
+advance — which is the value of having written it down.
+
 ### 2.6 [Rev.2] The measurement
 Probe: real `rembg.new_session("birefnet-general-lite")` in this repo's `.venv`, 3–4 consecutive
 `remove()` calls on a 704×704 RGB frame (the Wan loop output size, `_loop_wf`'s `width/height`),
@@ -305,6 +354,37 @@ CUDA context and is directly comparable to B3.
 | 11 | kNextPowerOfTwo | 6144 MiB | ok | 6426 MiB |
 | 12 | kNextPowerOfTwo | 4096 MiB | FAILS | — |
 | 13 | kSameAsRequested + HEURISTIC + `max_workspace=0` | 4096 MiB | FAILS | — |
+| 14 | kNextPowerOfTwo | **12288 MiB** | ok | **12570 MiB** ← benefit gone |
+| 15 | kNextPowerOfTwo | 14336 MiB | ok | 14616 MiB |
+| 16 | kNextPowerOfTwo | 16384 MiB | ok | 14626 MiB |
+| 17 | **shipped code path** — `factory._rembg()` @ 8192 MiB | 8192 MiB | ok | **6426 MiB** |
+
+**[Rev.4] Rows 14–17 are why F1 shipped, and rows 14–16 nearly stopped it.** Rev.3's §2.7
+deferred F1 partly on "a tighter cap means more benefit and more risk". Rows 8–16 falsify the
+premise: peak-vs-cap is a **cliff, not a slope**.
+
+```
+   cap  4096            FAILS
+   cap  6144 .. 10240   6424-6426 MiB   ← the entire benefit, FLAT across the band
+   cap 12288            12570 MiB       ← benefit essentially gone
+   cap 14336+ / none    ~14620 MiB      ← benefit entirely gone
+```
+
+Two consequences, and they point in opposite directions:
+
+- **The risk was over-priced.** You do not have to run close to the floor to get the saving. The
+  proven-good band is 4 GiB wide, so the shipped cap sits 2 GiB clear of the highest cap that
+  still fails *and* 2 GiB clear of the lowest that stops working. Rev.3's headline objection was
+  built on a slope that does not exist.
+- **A new, worse risk appeared.** Above ~10 GiB the fix silently stops working: no error, no
+  failed test, no symptom, same build, same speed. And "the cap looks tight, raise it" is exactly
+  what anyone does after a memory scare. That is now the most likely way F1 regresses, and it is
+  why `test_the_arena_cap_stays_inside_the_band_where_it_actually_does_something` asserts an
+  **upper** bound — the assertion that earns its keep — with a failure message that explains the
+  cliff rather than just printing two numbers.
+
+Row 17 is the acceptance measurement: not a hand-built probe session but `factory._rembg()`
+itself, the shipped path, with ORT reading back `gpu_mem_limit=8589934592`.
 
 Supporting observations from the same probe:
 
@@ -322,7 +402,7 @@ Supporting observations from the same probe:
   confirming the existing `_CutoutSession.release()` design (§3.2) empirically, and matching the
   code comment's "6.4 GB → 0.26 GB after gc".
 
-### 2.7 [Rev.3] Why F1 is deferred — what still needs work
+### 2.7 [Rev.3 — SUPERSEDED by §2.8, kept verbatim] Why F1 was deferred
 
 §2.6 settled the mechanism and the number. It did not settle whether to ship, and three things
 have to be answered first. **The first is the serious one.**
@@ -352,6 +432,40 @@ have to be answered first. **The first is the serious one.**
 
 Nothing here contradicts §2.6 — the calibration stands and `_CUTOUT_WORKING_SET_BYTES` already
 carries it. F1 is a ~10-line change once these are closed.
+
+### 2.8 [Rev.4] How each of §2.7's objections resolved — F1 SHIPPED
+
+Kept above verbatim rather than rewritten, because two of the three were wrong for reasons worth
+being able to re-read.
+
+1. **"Buys nothing measurable today" — half stands, and stopped being the deciding question.**
+   Still true that a single serialized build is unaffected: the cutout is the last GPU step, the
+   arena is released immediately after, and per-frame inference is 0.27–0.28 s capped exactly as
+   uncapped. What the objection under-weighted is `device_id`. It arrives in the *same* provider
+   options tuple as `gpu_mem_limit`, and ORT's default is `device_id: 0` — measured. So without
+   F1 two concurrent self-contained builds both put their cutout on cuda:0, each growing toward
+   14.6 GB of a 24 GB card. F1 is therefore not an optimization the fan-out would *like*; it is
+   the mechanism the fan-out cannot exist without. Plus the live case: on this shared box the
+   uncapped arena holds ~8 GiB it will never use for the whole cutout band.
+2. **"The floor is bracketed, so the margin is thin" — falsified.** It rested on tighter = better
+   = riskier. Rows 8–16 show the benefit is flat across [6144, 10240], so the cap can sit in the
+   middle of a 4 GiB band and lose nothing. The floor never needed bisecting; the objection was
+   an artifact of assuming a slope. What it correctly identified — that a too-tight cap is a hard
+   `CutoutFailed`, not a graceful degradation — remains true and is why the band's lower edge is
+   asserted too.
+3. **"Everything was measured standalone on an idle card" — closed for the code path, still open
+   for the concurrent case.** Row 17 re-measures through `factory._rembg()` — the real managed
+   session, real fail-fast, real `_remove_bg` — and gets 6426 MiB with ORT reading the cap back.
+   What is *not* yet proven is the cap under a genuinely contended card. It is the same lazy
+   arena and the failure would be loud, so this is a residual, not a blocker; §11 tracks it, and
+   B3 on the next real build settles it.
+
+**One thing F1 nearly broke, caught during verification.** Measuring through the shipped path
+first showed `release()` freeing nothing — 6426 MiB still held. That was the *measurement*
+holding a reference to the session, not a defect: re-run without binding it (as
+`pack_datsme_bundle` never does) and it drops **6426 → 264 MiB**. Recorded because "the managed
+session stopped releasing" is exactly the kind of regression a cap could plausibly cause, and the
+first reading looked like it.
 
 ---
 
@@ -644,12 +758,12 @@ item is now closed with that dependency recorded rather than left as free-standi
 ## 6. Named constants
 
 All in `factory.py`'s constants band next to `_ANCHOR_SEED`, each with a comment citing its
-section here. **[Rev.3] ✅ = in the tree; ⬜ = lands with F1 (§2.7).**
+section here. **[Rev.4] All of them are now in the tree — F1 shipped, so there is no ⬜ left.**
 
 | | constant | value | § | rationale |
 |---|---|---|---|---|
 | ✅ | `_CUTOUT_DEVICE_ID` | `0` | 2.2, 5.2 | the CUDA device the cutout runs on; also the `/system_stats` device selector. Shipped early because F4 needs the selector |
-| ✅ | `_CUTOUT_WORKING_SET_BYTES` | `7 * 1024**3` | 2.4, 2.6 | birefnet's measured budget: floor is between 4 GiB (fails) and 6 GiB (passes); 7 GiB is floor + 1 GiB headroom, and peaks identically to 10 GiB. Rev.1's 4 GiB fails every frame. **[Rev.3] Renamed** from `_CUTOUT_GPU_MEM_LIMIT_BYTES`: it is in the tree *before* the cap it will become, because F4's watermark derives from it, and a constant named for an ORT option nothing yet passes would be a lie |
+| ✅ | `_CUTOUT_WORKING_SET_BYTES` | `7 * 1024**3` | 2.4, 2.6 | birefnet's measured REQUIREMENT — the capped session settles at 6426 MiB, and this is that plus rounding. Rev.1's 4 GiB fails every frame. **[Rev.3] Renamed** from `_CUTOUT_GPU_MEM_LIMIT_BYTES` because F4's watermark derives from it and it shipped first. **[Rev.4]** That rename turned out to be load-bearing rather than cosmetic: F1 needed a *different* number for the cap, and had the two still shared a name they would have been silently merged |
 | ✅ | `_CUTOUT_PEAK_TOLERANCE_BYTES` | `1 * 1024**3` | 2.5, 5.2 | **[Rev.2] new.** The CUDA context lives outside the arena (264 MiB bare, 526–554 MiB with the session loaded), so process peak can legitimately exceed the budget. Names what Rev.1 §2.5 left as the unnamed word "tolerance" |
 | ✅ | `_CUTOUT_MAX_FALLBACK_FRAMES` | `0` | 3.2 | one opaque frame is a visible white flash; the name makes the decision revisitable |
 | ✅ | `_FREE_TARGET_VRAM_BYTES` | `_CUTOUT_WORKING_SET_BYTES + _CUTOUT_PEAK_TOLERANCE_BYTES` | 5.2 | derived from the requirement (the cutout must fit), not from observed B4 — Rev.1's derivation was circular |
@@ -657,28 +771,37 @@ section here. **[Rev.3] ✅ = in the tree; ⬜ = lands with F1 (§2.7).**
 | ✅ | `_FREE_POLL_INTERVAL_S` | `0.5` | 5.2 | poll cadence |
 | ✅ | `_COMFY_HTTP_TIMEOUT_S` | `10` | 5.2 | **[Rev.3] new**, not in Rev.2's table: the per-request timeout for the eviction POST and each stats read. Rev.2 would have had these as inline literals. Only the new call sites use it; the pre-existing inline `timeout=` values in `_run` are left alone as out of scope |
 | ✅ | `BACKEND_LOG_LEVEL` | `os.environ["DATSPET_LOG_LEVEL"]` or `"INFO"` | 5.5 | **[Rev.3] new**, and in `webui/app.py` rather than `factory.py` — the only constant here that is not a factory value, because the defect it fixes is the app's. Operator-overridable so a pool node drowning in INFO has a lever that is not a code change; an unparseable value falls back rather than raising at import |
-| ⬜ | `_CUTOUT_PROVIDER` | `"CUDAExecutionProvider"` | 2.2 | the parameterized provider name, used by both the options tuple and the fail-fast check |
-| ⬜ | `_CUTOUT_ARENA_STRATEGY` | `"kNextPowerOfTwo"` | 2.3, 2.6 | **[Rev.2]** the ORT default, and measurably better than `kSameAsRequested` on both axes — tolerates a tighter cap and settles ~574 MiB lower. Rev.1 specified `kSameAsRequested` and called it mandatory; that is falsified by §2.6 rows 6 vs 11 |
-| ⬜ | `_CUTOUT_GPU_MEM_LIMIT_BYTES` | `= _CUTOUT_WORKING_SET_BYTES` | 2.2, 2.4 | the ORT arena cap itself. When F1 lands it is an alias, not a new number — the calibration is already in the tree |
+| ✅ | `_CUTOUT_PROVIDER` | `"CUDAExecutionProvider"` | 2.2 | the parameterized provider name, used by both the options tuple and the fail-fast check |
+| ✅ | `_CUTOUT_ARENA_STRATEGY` | `"kNextPowerOfTwo"` | 2.3, 2.6 | **[Rev.2]** the ORT default, and measurably better than `kSameAsRequested` on both axes — tolerates a tighter cap and settles ~574 MiB lower. Rev.1 specified `kSameAsRequested` and called it mandatory; that is falsified by §2.6 rows 6 vs 11. Pinned by name in a guard test, because ORT's *generic* docs recommend the opposite and this looks like a bug to a reader who has not seen the measurement |
+| ✅ | `_CUTOUT_GPU_MEM_LIMIT_BYTES` | `8 * 1024**3` | 2.2, 2.6, 2.8 | **[Rev.4] NOT an alias of `_CUTOUT_WORKING_SET_BYTES`, and Rev.3's table was wrong to say it would be.** They answer different questions: this is the CEILING (what ORT may hoard), that is the REQUIREMENT (what the cutout needs, hence what F4's watermark is built from). Merging them either caps at 7 GiB with ~1 GiB over the floor, or drags F4's watermark to 11 GiB so the poll warns when 8 GiB free was fine — `test_the_cap_and_the_requirement_are_separate_numbers` pins the split. 8 GiB is the midpoint of the proven-good band [6144, 10240] (§2.6): 2 GiB clear of the highest failing cap, 2 GiB clear of the lowest that stops bounding anything |
 
 ---
 
 ## 7. Guard tests
 
-`pet_factory/tests/test_cutout_hygiene.py` — **[Rev.3] written, 13 tests, green.** Zero-GPU,
-zero network, stubbed sessions, following `test_gpu_fail_fast_and_progress.py`'s existing
-patterns. Two tests below are additions the implementation showed were worth pinning; item 1 is
-absent because F1 is.
+`pet_factory/tests/test_cutout_hygiene.py` — **[Rev.4] 20 tests, green.** Zero-GPU, zero network,
+stubbed sessions, following `test_gpu_fail_fast_and_progress.py`'s existing patterns. Items 7+
+are additions the implementation showed were worth pinning.
 
-1. **`test_provider_options_reach_ort_and_do_not_break_the_gpu_fail_fast`** — **[Rev.3] NOT
-   WRITTEN: it belongs to F1, which is deferred (§2.7).** Kept here so it lands with the cap.
-   **[Rev.2] Rev.1's version of this test was tautological.** It stubbed `rembg.new_session`
-   wholesale, so ORT never saw the options and the test pinned nothing about the tuple. Have the
-   stub **capture** its `providers` kwarg and assert *both* halves: (a) the captured list's first
-   element is a `(name, dict)` tuple carrying `device_id` / `gpu_mem_limit` /
-   `arena_extend_strategy`, and (b) a stub `get_providers()` returning bare names still satisfies
-   the CUDA check. (a) is the contract with rembg; (b) is §2.3's non-obvious invariant. Neither is
-   checkable without the capture.
+**[Rev.4] Each new F1 assertion was red-green verified** — mutated to the wrong value and watched
+to fail, then restored. An assertion nobody has seen fail is a guess about what it covers. The
+five mutations checked: cap raised to 12 GiB (the silent dead band), cap raised to 16 GiB, cap
+lowered to 4 GiB, strategy switched to `kSameAsRequested`, and the cap aliased to
+`_CUTOUT_WORKING_SET_BYTES` — which is what Rev.3's own §6 told an implementer to do. All five
+caught. Two of them originally failed with a bare `AssertionError` and no message; both now
+explain the cliff, because this is the assertion someone meets *after* deciding to raise the cap
+and a naked traceback would just look like an obstacle.
+
+1. **`test_the_arena_options_are_actually_passed_to_the_cuda_provider`** and
+   **`test_passing_provider_options_does_not_disarm_the_gpu_fail_fast`** — **[Rev.4] written**,
+   split in two because they pin different contracts. **[Rev.2] Rev.1's single version was
+   tautological**: it stubbed `rembg.new_session` wholesale, so ORT never saw the options and the
+   test could not tell an options tuple from the bare list that preceded F1. The stub now
+   **captures** its `providers` kwarg. (a) asserts the CUDA provider arrives as a `(name, dict)`
+   tuple carrying all three knobs with CPU left bare — our half of the rembg contract; (b)
+   asserts a `get_providers()` returning bare names still satisfies the CUDA check — §2.3's
+   invariant, and the one that fails in the *dangerous* direction, since a fail-fast that stops
+   matching silently re-arms the 1/12-speed CPU fallback F3 exists to catch.
 2. **`test_cutout_failure_raises_instead_of_shipping_opaque_alpha`** — `_remove_bg` raises →
    `pack_datsme_bundle` raises `CutoutFailed`; assert no bytes returned. Pins §3.2.
 3. **`test_cutout_failure_still_releases_the_session`** — the `finally` release survives the new
@@ -694,6 +817,22 @@ absent because F1 is.
    not the relevant floor (§0.2), the measured working set is. This is the test that catches a
    future model swap invalidating §2.6. **[Rev.3]** The `kNextPowerOfTwo` assertion moves here
    with F1; the budget assertion did not wait, because F4 already depends on the number.
+
+   **[Rev.4] F1 split this into two more tests, and one of them is the most important assertion
+   in the file:**
+
+   - **`test_the_arena_cap_stays_inside_the_band_where_it_actually_does_something`** — pins
+     **both** edges of [6144, 10240] MiB. The lower edge is a convenience: below it the cutout
+     raises on the first frame, loudly and immediately. The **upper** edge is the one that earns
+     its keep, because it guards the only way F1 can fail *silently* — past ~10 GiB the arena
+     resumes growing, the build is identical, the speed is identical, no test fails, and the fix
+     is simply gone. "The cap looks tight, let's raise it" is the natural move after any memory
+     scare and it lands exactly in that dead band, so the failure message explains the cliff
+     rather than printing two numbers.
+   - **`test_the_cap_and_the_requirement_are_separate_numbers`** — asserts the ceiling sits above
+     the requirement and that F4's watermark is still built from the requirement. This exists
+     because Rev.3's §6 explicitly instructed an implementer to alias them (§2.8), and either
+     resulting value is wrong in a different, quiet way.
 
 **[Rev.3] Added during implementation** — each pins something the code review of the diff would
 otherwise have to re-derive:
@@ -766,12 +905,16 @@ would have been the sharpest possible own goal.
    of F1**, which is what its independence bought: `_evict_comfy_models_for_cutout()` +
    `_comfy_vram_free()` replace the blind `sleep(1.5)`. Verified against the live instance, both
    paths (§5.4).
-5. ⬜ **F1** — arena cap. **[Rev.3] Deferred, and the reason changed.** Rev.2 called this "a
-   verification, not a search" because §2.6 fixed the constants — that part still holds. What
-   §2.7 adds is that the cap has no measurable payoff *today* (the arena is released at the end
-   of the build and nothing competes for it during the cutout), while it does introduce a hard
-   failure edge. Close §2.7's three items — above all "what is the cap for, today?" — before
-   shipping it. The constants are already in the tree, so the change itself stays ~10 lines.
+5. ✅ **F1** — arena cap. **[Rev.4] Landed last, exactly as the ordering intended.** Rev.2 called
+   it "a verification, not a search"; Rev.3 deferred it on §2.7. Both were right in sequence: the
+   deferral bought four more measurements (§2.6 rows 14–17) which found the cliff, retired two of
+   the three objections (§2.8), and changed the shipped cap from Rev.3's proposed 7 GiB to 8 GiB
+   for reasons that did not exist when Rev.3 was written. Shipping it first would have shipped a
+   worse number with a weaker guard test.
+
+   Landing it last also meant F2 was already in place to catch a too-tight cap loudly, which is
+   what §8's whole "not negotiable" ordering was for — and it stayed theoretical, because the cap
+   was calibrated before it ever ran in a build.
 
 6. ✅ **[Rev.3] F5** — visible logging (§5.5). Not in Rev.2's plan at all; found by reviewing the
    implementation and required before F4's report means anything. Landed with F4's two defect
@@ -886,20 +1029,28 @@ backend was started as a bare `uvicorn app:app`, whose stdout is a **tty** (`/de
 |---|---|---|---|---|
 | ✅ F2 loud cutout failure | `factory.py` — `CutoutFailed`, `prep(pose_name, frames)` | 6 in `test_cutout_hygiene.py` | §3.4 — **met** | **[Rev.3] Real build verified:** `black_bat`, 8 poses, **128/128 frames matted, 0 opaque fallbacks, 0 ERROR lines**. Zero tolerance did not break a working build — the risk §3.4 flagged. Builds that now fail but previously "succeeded": **0 of 1 so far**; needs more builds before the old defect's rate is known |
 | ✅ F3 arm GPU fail-fast | `pet_env.sh`, beside `LD_LIBRARY_PATH` | existing 3, unchanged | §4.4 — met | CPU fallback found? **N**, as §4.3 predicted. Flag set, real session still builds `['CUDAExecutionProvider', 'CPUExecutionProvider']`. No speedup, none expected |
-| ⬜ F1 arena cap | **deferred — §2.7** | — | §2.5 | Calibrated (§2.6) but not shipped: no payoff today, hard failure edge, floor bracketed not bisected |
+| ✅ F1 arena cap | `factory.py` — `_CUTOUT_GPU_MEM_LIMIT_BYTES` (8 GiB), `_CUTOUT_ARENA_STRATEGY`, `_CUTOUT_PROVIDER` + the options tuple in `_new_session` | 4 in `test_cutout_hygiene.py`, all red-green verified | §2.5 — **met** | **Peak 14618 → 6426 MiB (8 GiB reclaimed)**, measured through the shipped `factory._rembg()` path with ORT reading `gpu_mem_limit=8589934592` back. Alpha `(0, 255)` every frame; 0.27–0.28 s/frame, unchanged. `release()` still returns the arena (6426 → 264 MiB). **Surprises: (1)** peak-vs-cap is a cliff — ≥12 GiB silently buys nothing — which inverted the risk model and is now the upper-bound guard; **(2)** the cap and the requirement had to become separate constants, against Rev.3's §6 instruction; **(3)** the first `release()` reading looked broken and was the measurement holding a reference (§2.8) |
 | ✅ F4 verify eviction | `factory.py` — `_evict_comfy_models_for_cutout`, `_comfy_vram_free` | 7 in `test_cutout_hygiene.py` | §5.4 — met | **VRAM reclaimed: 5535 → 23874 MiB = ~18 GB, in 0.5 s.** Hit the 8192 MiB target: **Y**. Warm re-run: already free, 0.2 s, zero waits. The `sleep(1.5)` was 3× longer than needed *and* proved nothing. **[Rev.3] Review found the poll deadline could be fully consumed before the loop began — fixed (§5.2)** |
 | ✅ **F5 visible logging** | `webui/app.py` — `BACKEND_LOG_LEVEL` + `basicConfig` | 3 in `test_logging_visibility.py` | §5.5 — met | **[Rev.3] New in Rev.3, and F4 was inert without it:** INFO was being discarded process-wide, so a landed eviction logged *nothing* while a failed one warned. Root handlers after uvicorn configures itself: `[]`. Success line now appears |
 
 ### The one-line verdict
-**[Rev.3] Partially fillable — one real build in, F1 out.** **B5 is `(0, 255)` per-frame on
-128/128 frames of one real build, with no ERROR lines in the cutout band, and eviction confirmed
-reclaiming ~18 GB in 0.5 s.** Peak cutout VRAM is *not* bounded, because F1 is deferred by
-decision (§2.7), not by omission.
+**[Rev.4] Fillable at last.** **B5 is `(0, 255)` per-frame on 128/128 frames of a real 8-pose
+build, with no ERROR lines in the cutout band; peak cutout VRAM is bounded at 6426 MiB (from
+14618); and eviction is confirmed reclaiming ~18 GB in 0.5 s.** All five fixes are in the tree,
+478 tests green, and every number above was measured rather than estimated.
 
-Still open, and none of it is cosmetic: B5 on **three consecutive** builds rather than one; the
-B2 timing bands and B3 peak, which need a backend whose stdout goes to `logs/` (§11.9); and how
-many builds the old silent fallback was actually degrading — the one number that would say how
-much F2 was worth, and which one clean build cannot supply.
+Still open, and none of it is cosmetic. **B5 on three consecutive builds, not one** — a single
+clean build is evidence, not a rate. **B2's timing bands and B3 from a real build**, which need a
+backend started through `start_all.sh` so stdout reaches `logs/` (§11.9); B3 is currently proven
+only through the shipped code path in isolation, not against a contended card. **How many builds
+the old silent fallback was actually degrading** — the number that would say what F2 was worth,
+and which no amount of testing can supply. And **the pool nodes see none of this yet** (§11.8):
+the handler runs in its own subprocess with no logging configured, so on a pool node F1's and
+F4's reports are still discarded.
+
+The spec's own thesis is the thing to hold onto: none of these five was a performance fix. They
+exist so that the next round of work — the fan-out, the cutout pipeline, `_fill_holes_alpha` —
+can be measured instead of guessed at. That is now true, and it was not true this morning.
 
 ---
 
@@ -916,7 +1067,14 @@ performance promise.
   each self-contained build pays an expert swap per pose — 2× *throughput*, not a 2× faster single
   pet. **[Rev.2]** F1 helps more than Rev.1 assumed here: 8 GiB of reclaimed arena is a third of a
   card, and §2.6 row 11 shows the cap can be pulled to 6144 MiB at no cost in peak if a fan-out
-  build needs the room.
+  build needs the room. **[Rev.4] With F1 shipped, this dependency is now satisfied, and it was
+  the strongest argument for shipping F1 at all** (§2.8): `device_id` rides in the same provider
+  options tuple as `gpu_mem_limit`, and ORT's default is `device_id: 0` — measured. Without it
+  two concurrent self-contained builds would both put their cutout on cuda:0. The fan-out spec
+  therefore starts from a cutout that is already per-device pinned and bounded at a known
+  6426 MiB, rather than having to introduce device pinning, a memory bound, and concurrency in
+  one change. The remaining obstacle is unchanged: `COMFY_URL` / `COMFY_OUTPUT_DIR` are module
+  globals.
 - **Vectorizing `_fill_holes_alpha`** — an interpreted BFS over a 256² alpha, run once per frame,
   128 times in an 8-pose build. Possibly significant CPU cost, possibly noise. Measure it with
   F2/F3's trustworthy instrumentation before touching it.
@@ -971,16 +1129,22 @@ performance promise.
    *at the task level* up to `MAX_ATTEMPTS` (3), so the question is not only "should we retry
    in-process" but "should `CutoutFailed` dead-letter immediately", since a capped-arena failure is
    deterministic and the other two attempts are pure waste.
-5. **[Rev.2 — NEW] Is 6426 MiB still too much to hold across the whole cutout band?** F1 bounds the
-   arena but does not change *when* it is allocated: the session lives for the entire
-   cutout + pack phase. With the loops finished and Wan evicted that is fine today, but the
-   fan-out spec puts a second build's Wan load in exactly that window. Nothing to do now; flagged
-   so the fan-out spec does not assume the cutout's 6426 MiB is free real estate.
-6. **[Rev.3 — NEW] The §2.6 probe is not in the repo.** The sweep that produced every constant in
-   §6 was run from a scratch script that no longer exists, so §2.6 is currently a table nobody can
-   re-run. It needs to become `scripts/probe_cutout_arena.py` before F1 lands, since F1's whole
-   justification is that table and §2.7 asks for two of its rows to be re-measured from inside the
-   backend.
+5. **[Rev.2 — NEW; Rev.4 — still open, now with F1 shipped] Is 6426 MiB still too much to hold
+   across the whole cutout band?** F1 bounds the arena but does not change *when* it is
+   allocated: the session lives for the entire cutout + pack phase. With the loops finished and
+   Wan evicted that is fine today, but the fan-out spec puts a second build's Wan load in exactly
+   that window. Nothing to do now; flagged so the fan-out spec does not assume the cutout's
+   6426 MiB is free real estate. **[Rev.4]** §2.6 row 11 is the lever if it ever is: the cap can
+   drop to 6144 MiB at no cost in peak — but that spends the entire lower margin, so it is a
+   deliberate trade for the fan-out to make with numbers, not a default.
+6. **[Rev.4 — CLOSED] The §2.6 probe is now in the repo** as `scripts/probe_cutout_arena.py`,
+   with two modes: `--sweep` re-runs the full cap/strategy table, `--shipped` measures today's
+   constants through the real `factory._rembg()` path (that mode *is* row 17, and it reproduces
+   6426 MiB and the 264 MiB release). Raised in Rev.3 as "needed before F1 lands" and honoured
+   rather than waived, because §2.6 is the entire justification for two shipped constants and a
+   table nobody can re-run is the unfalsifiable claim this spec exists to refuse. The two probe
+   mistakes that cost real time — one frame instead of three, device-level instead of
+   per-process VRAM — are documented in its module docstring so a re-run cannot repeat them.
 7. **[Rev.3 — PARTLY CLOSED] F2's real-build half.** The `black_bat` build (§9) closed the half
    that mattered most: **128/128 frames matted, 0 fallbacks, 0 ERROR lines** — zero tolerance did
    not break a working build. What one build cannot give is the other number §3.4 asks for: how
@@ -995,6 +1159,15 @@ performance promise.
    Logging config is per-process, so the worker's `basicConfig` cannot reach it, and
    `run_handler.py` sets up none of its own (verified: zero `basicConfig`). Hence INFO is
    discarded there exactly as it was everywhere before F5.
+
+   **[Rev.4] Independently re-verified**, because the item's first draft (mine) asserted the
+   conclusion from the wrong mechanism — "the pool worker configures no logging", which is false:
+   `loop.py`'s `main()` does call `basicConfig(level=INFO)`. Confirmed the corrected version at
+   source: `spawn.py:23-25` runs `subprocess.Popen([sys.executable, "-m",
+   "pool_worker.run_handler", handler_path], …)`, and `run_handler.py` contains **zero**
+   `basicConfig` calls. Right conclusion, wrong reason, and the wrong reason would have sent the
+   fix to the wrong file — worth noting that a correct conclusion is not evidence of a correct
+   model.
 
    The fix must therefore be `logging.basicConfig(level=INFO, stream=sys.stderr)` **in
    `pool_handler/pet_factory_handler.py`** — ours, and the first of our code to run in that
