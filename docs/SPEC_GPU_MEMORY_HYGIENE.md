@@ -158,12 +158,25 @@ curl -s localhost:19953/system_stats | python3 -c \
   "import json,sys;print([d['vram_free'] for d in json.load(sys.stdin)['devices'] if d['index']==0])"
 
 # B5 — THE OUTPUT CHECK: does the produced sprite actually have transparency?
-#      (0, 255) = has alpha, correct.  (255, 255) = fully opaque = the white-bg bug.
-python3 -c "
-import io,sys,zipfile
+#      [Rev.3] MUST be PER FRAME, not per sheet. Rev.1/Rev.2 read the whole sheet's alpha
+#      extrema, which is too coarse to detect the exact defect F2 exists for: the fallback is
+#      PER FRAME, so a sheet with 127 matted frames and one white rectangle still reads
+#      (0, 255) and passes. Walk the manifest's cells and count the fully-opaque ones.
+python3 - out.zip <<'PY'
+import io, json, sys, zipfile
 from PIL import Image
-z=zipfile.ZipFile(sys.argv[1]); n=[x for x in z.namelist() if x.endswith('_sprite.png')][0]
-print(n, Image.open(io.BytesIO(z.read(n))).getchannel('A').getextrema())" out.zip
+z = zipfile.ZipFile(sys.argv[1]); m = json.loads(z.read("manifest.json"))
+sheet = Image.open(io.BytesIO(z.read([n for n in z.namelist() if n.endswith("_sprite.png")][0])))
+fs = m["frame_width"]; cols = m["columns"]
+def cell(i):
+    r, c = divmod(i, cols); return sheet.crop((c*fs, r*fs, (c+1)*fs, (r+1)*fs))
+bad = {name: [i for i in a["frames"] if cell(i).getchannel("A").getextrema()[0] == 255]
+       for name, a in m["animations"].items()}
+total = sum(len(a["frames"]) for a in m["animations"].values())
+n_bad = sum(len(v) for v in bad.values())
+print(f"frames={total} opaque-fallback={n_bad}",
+      "PASS" if n_bad == 0 else f"FAIL {[k for k,v in bad.items() if v]}")
+PY
 ```
 
 **B5 is the acceptance test for this whole spec.** It is the one check that distinguishes a real
@@ -796,16 +809,28 @@ source **mtime + size only**, so they were being reused. Cleared; `find . -name 
 | B4 | `cuda:0 vram_free` before cutout (bytes) — **a sample, not a constant** (§0.5): 6638 / 5535 / 1958 MiB seen on 2026-07-26. Record the timestamp and what else held the card | | | | |
 | B5 | **sprite alpha extrema — must be `(0, 255)`** | | | | |
 
-**[Rev.3] Table A is still empty on purpose.** Every row needs a full 8-pose build through the
-local stack, and none has been run since F2/F3/F4 landed (§8 step 3). The measurements that *have*
-been taken are §2.6 (the arena sweep, standalone) and Table B's F4 row (the live eviction) — both
-narrower than a build, and neither is a substitute for one.
+**[Rev.3] The first real build has now been run** — `black_bat`, 8 poses, 2026-07-26 11:07,
+`winged_flyer`. **B5 passes outright and is the strongest evidence in this spec:**
+
+| | result |
+|---|---|
+| sheet alpha extrema | `(0, 255)` — PASS |
+| **per-frame** (the check that matters, §1) | **128 frames, 0 opaque fallbacks, 0 empty** |
+| poses emitted | walk, idle, run, sleep, sit, eat, jump, fly — 16 frames each, 8×16 grid |
+| bundle metadata | `movement_class=winged_flyer`; `jump` `loop:false`; `sleep` `timed_buffer_ms:6000`; view `side/right/flip` — the content→bundle contract round-trips |
+| F2 ERROR lines | none |
+
+So the cutout is genuinely matting every frame, and F2's zero-tolerance did not turn a working
+build into a failure. **B1–B4 are still empty, and for a reason worth fixing** (§11.9): this
+backend was started as a bare `uvicorn app:app`, whose stdout is a **tty** (`/dev/pts/12`), not
+`logs/backend.log`. The provider line and the eviction report were both printed and both lost.
+`start_all.sh` redirects to `logs/<name>.log`; a hand-started backend does not.
 
 ### Table B — sign-off
 
 | fix | landed | guard tests | acceptance (§) | notes / surprises |
 |---|---|---|---|---|
-| ✅ F2 loud cutout failure | `factory.py` — `CutoutFailed`, `prep(pose_name, frames)` | 4 in `test_cutout_hygiene.py` | §3.4 — partial | Guard tests green; the **real-build** half (zero ERROR lines, B5 `(0, 255)`) is unrun. Builds that now fail but previously "succeeded": **unknown until a build runs** |
+| ✅ F2 loud cutout failure | `factory.py` — `CutoutFailed`, `prep(pose_name, frames)` | 6 in `test_cutout_hygiene.py` | §3.4 — **met** | **[Rev.3] Real build verified:** `black_bat`, 8 poses, **128/128 frames matted, 0 opaque fallbacks, 0 ERROR lines**. Zero tolerance did not break a working build — the risk §3.4 flagged. Builds that now fail but previously "succeeded": **0 of 1 so far**; needs more builds before the old defect's rate is known |
 | ✅ F3 arm GPU fail-fast | `pet_env.sh`, beside `LD_LIBRARY_PATH` | existing 3, unchanged | §4.4 — met | CPU fallback found? **N**, as §4.3 predicted. Flag set, real session still builds `['CUDAExecutionProvider', 'CPUExecutionProvider']`. No speedup, none expected |
 | ⬜ F1 arena cap | **deferred — §2.7** | — | §2.5 | Calibrated (§2.6) but not shipped: no payoff today, hard failure edge, floor bracketed not bisected |
 | ✅ F4 verify eviction | `factory.py` — `_evict_comfy_models_for_cutout`, `_comfy_vram_free` | 7 in `test_cutout_hygiene.py` | §5.4 — met | **VRAM reclaimed: 5535 → 23874 MiB = ~18 GB, in 0.5 s.** Hit the 8192 MiB target: **Y**. Warm re-run: already free, 0.2 s, zero waits. The `sleep(1.5)` was 3× longer than needed *and* proved nothing. **[Rev.3] Review found the poll deadline could be fully consumed before the loop began — fixed (§5.2)** |
@@ -881,11 +906,11 @@ performance promise.
    re-run. It needs to become `scripts/probe_cutout_arena.py` before F1 lands, since F1's whole
    justification is that table and §2.7 asks for two of its rows to be re-measured from inside the
    backend.
-7. **[Rev.3 — NEW] F2's real-build half is unverified.** The guard tests pin that a raising
-   `_remove_bg` produces `CutoutFailed` and no bytes, and that the session is still released. What
-   no test can tell us is the thing §3.4 actually asks for: whether real builds now fail that
-   previously "succeeded", and how many. That number is the measurement of how bad the old
-   behavior was, and it needs §8 step 3's build run.
+7. **[Rev.3 — PARTLY CLOSED] F2's real-build half.** The `black_bat` build (§9) closed the half
+   that mattered most: **128/128 frames matted, 0 fallbacks, 0 ERROR lines** — zero tolerance did
+   not break a working build. What one build cannot give is the other number §3.4 asks for: how
+   many builds the *old* silent fallback was degrading. That is a rate, so it needs a run of
+   builds, and it can only ever be estimated now that the fallback is gone.
 8. **[Rev.3 — NEW] F5 does not reach the pool nodes.** `basicConfig` lives in `webui/app.py`, but
    a pool worker runs `pool_handler/pet_factory_handler.py`, which imports `pet_factory` directly
    and never touches the web app — and it configures no logging of its own (verified: no
@@ -893,7 +918,16 @@ performance promise.
    discarded at INFO, exactly as it was everywhere before F5. The fix is the same one line in the
    handler, but it belongs to the handler rollout (§10) rather than here, and it should be decided
    together with §11.2's provider-line promotion — both are about what a pool node can actually see.
-9. **[Rev.3 — NEW] F5's format is not structured.** `basicConfig` with a text format is right for
+9. **[Rev.3 — NEW] A hand-started backend throws its logs away, which is why B1–B4 are still
+    empty after a real build ran.** The `black_bat` build went through a backend launched as a
+    bare `uvicorn app:app`, whose stdout/stderr are a **tty** (`/dev/pts/12` — confirmed via
+    `/proc/<pid>/fd/1`). `start_all.sh` redirects each service to `logs/<name>.log`; starting
+    uvicorn by hand does not, so the `rembg providers` line (B1) and F4's eviction report (B4)
+    were both emitted and both lost. F5 made those lines *exist*; this is the separate problem of
+    where they *go*. Worth a line in `start_petmaker_backend_only.sh`, or a note in `CLAUDE.md`
+    that a build whose evidence matters must be run via `start_all.sh`. Until then the paper
+    trail has a hole that no amount of logging code will close.
+10. **[Rev.3 — NEW] F5's format is not structured.** `basicConfig` with a text format is right for
    a dev box read by a human. If the pool ever ships these logs somewhere that parses them, it
    becomes the wrong choice and should move to JSON. Noted so the decision stays visible rather
    than inherited by default.
