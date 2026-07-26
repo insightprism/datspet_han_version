@@ -68,7 +68,18 @@ What Rev.4 *adds* is not a correction of the pool work but a hardening of the **
 prompted by a real regression hit and fixed in dev this session. The dev box's repo had been copied
 to a new directory (`…/datsme-pet-factory` → `…/datsme-pet-factory_wu`), and a chain of stale
 absolute-path artifacts (a baked Next.js build, an editable-install finder pointing at the old dir,
-venv script shebangs) masked the real issues. While chasing them, the frontend's API base was
+venv script shebangs) masked the real issues.
+
+> **[2026-07-26] A FOURTH artifact class, missing from that list, bit again — and this list being
+> incomplete is why.** `__pycache__` bytecode bakes the source path in as `co_filename`, and CPython
+> and pytest validate a cache entry on source **mtime + size only** — both of which survive a
+> directory rename. So the stale bytecode is *reused*, and tracebacks point at the old directory
+> while the correct code runs. Three files under `webui/tests/__pycache__/` sent a test-failure
+> diagnosis to a long-empty `…/datsme-pet-factory/` before the cause was found; the venv held
+> 7,236 more (cosmetic — third-party frames only). The first three classes were all clean by then,
+> which made the fourth *more* confusing, not less. **After any repo move, add
+> `find . -name __pycache__ -prune -exec rm -rf {} +` to the same cleanup as the other three.**
+> Cost is one slow first run (12 s → 60 s here) and nothing else. While chasing them, the frontend's API base was
 briefly split (`localhost` page origin vs a `127.0.0.1` API origin) — which **silently dropped the
 DPP launch cookie and made the "Accept — send to my DatsMe" button never appear.** The pet built
 fine; it just couldn't be sent home. That failure mode is *exactly* what §C.2/§C.3 must prevent in
