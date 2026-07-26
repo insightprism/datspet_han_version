@@ -6,9 +6,9 @@ failures. Grounded against the working tree (`pet_factory/factory.py`, `pet_env.
 `webui/app.py`).
 
 **Where this stands.** F2 (loud cutout failure), F3 (armed GPU fail-fast), F4 (verified
-eviction) and **[Rev.3] F5 (visible logging, §5.5)** are in the tree with 15 guard tests in
+eviction) and **[Rev.3] F5 (visible logging, §5.5)** are in the tree with 16 guard tests in
 `pet_factory/tests/test_cutout_hygiene.py` and 3 in `webui/tests/test_logging_visibility.py`; the
-gate is **470 green**. **F1 — the ORT arena cap — is NOT implemented and still needs work**: §2.6
+gate is **474 green**. **F1 — the ORT arena cap — is NOT implemented and still needs work**: §2.6
 proved the mechanism and produced a calibration, but the open questions in §2.7 have to be closed
 before a cap is put in front of real builds. F1's measured budget already lives in the tree as
 `_CUTOUT_WORKING_SET_BYTES`, because F4's watermark is derived from it (§5.2) — so landing F1 is
@@ -797,25 +797,79 @@ source **mtime + size only**, so they were being reused. Cleared; `find . -name 
 
 ### Table A — measurements
 
-| # | measurement | baseline (§1) | after F2+F3 | after F1 | after F4 |
-|---|---|---|---|---|---|
-| B1 | `rembg providers` literal line | | | | |
-| B2a | base + anchors band (s) | | | | |
-| B2b | loops band (s) | | | | |
-| B2c | cutout + pack band (s) | | | | |
-| B2d | total wall time (s) | | | | |
-| B2e | total, 2nd consecutive build (s) — §5.3 | | | | |
-| B3 | peak VRAM during cutout, **backend process only** (MiB) — §1 | | | expect ~6426 | |
-| B4 | `cuda:0 vram_free` before cutout (bytes) — **a sample, not a constant** (§0.5): 6638 / 5535 / 1958 MiB seen on 2026-07-26. Record the timestamp and what else held the card | | | | |
-| B5 | **sprite alpha extrema — must be `(0, 255)`** | | | | |
+**[Rev.3] MEASURED** — `black bat`, 8 poses (`winged_flyer`), 2026-07-26 11:35, F2–F5 in the tree,
+F1 not. Instrumented runner calling `make_pet_zip` directly — the same call `webui/app.py`'s local
+branch makes under `GPU_LOCK`; only the HTTP/job wrapper differs. It replicates F5's `basicConfig`,
+which is the only reason B1 and B4 exist as records at all (§11.9).
 
-**[Rev.3] The first real build has now been run** — `black_bat`, 8 poses, 2026-07-26 11:07,
-`winged_flyer`. **B5 passes outright and is the strongest evidence in this spec:**
+| # | measurement | **measured (F2–F5, no F1)** | with F1, projected |
+|---|---|---|---|
+| B1 | `rembg providers` | `['CUDAExecutionProvider', 'CPUExecutionProvider']` — CUDA, as §4.3 predicted | unchanged |
+| B2a | base + anchors band | **97.5 s** (20.7%) | unchanged |
+| B2b | loops band | **326.7 s** (69.4%) | unchanged |
+| B2c | cutout + pack band | **46.7 s** (9.9%) — 128 frames ⇒ **0.365 s/frame** | unchanged |
+| B2d | total wall time | **470.9 s** (7.9 min) | unchanged |
+| B2e | total, 2nd consecutive build — §5.3 | not run | — |
+| B3 | peak VRAM, **this process** | **14618 MiB** | ~6426 MiB (§2.6 row 10) |
+| B4 | eviction, before → after | **5631 → 23875 MiB, ~18 GB, in 0.7 s** — target met | unchanged |
+| B5 | **per-frame alpha (§1)** | **128 frames, 0 opaque fallbacks — PASS** | unchanged |
+
+**B3 = 14618 MiB is the finding, and it closes the biggest open question in this spec.** That is
+§2.6 row 1's uncapped arena figure **to the MiB**, reproduced inside a real 8-pose build rather
+than a standalone probe. Three things follow:
+
+1. **The §2.6 sweep transfers.** A scratch probe on an idle card and a real build agree exactly, so
+   the calibration in §6 can be trusted for F1.
+2. **F1's payoff in the real pipeline is now proven, not projected: ~14618 → ~6426 MiB, ~8 GB.**
+   Review had argued the 2.3× might be an artifact of measuring on an idle card — that on the real
+   `cuda:0`, with ComfyUI resident and only ~6.6 GB free, the arena could never reach 14.6 GB and
+   F1 would reclaim nothing. **The build settles it, and the mechanism is the coupling that
+   objection missed:** F4's eviction frees ~18 GB *immediately before* the cutout, so by the time
+   birefnet allocates, the card is nearly empty and the unbounded arena grows to fill it. The
+   `black bat` build spent 14.6 GB on a 214 MB model because there was 23.8 GB free to take.
+3. **So F4 working is exactly what makes F1 worth doing.** §0.5 has these coupled in one direction
+   (F1 frees F4 from gating the build); this is the other direction, and it is the stronger one.
+
+Two smaller results:
+
+- **`_fill_holes_alpha` does not need vectorizing** (§10 non-goal, previously "measure it").
+  Cutout + pack is 0.365 s/frame end-to-end, against 0.27–0.36 s/frame for birefnet inference alone
+  in the §2.6 probe. Inference dominates; the interpreted flood fill is inside the noise. Closed on
+  data rather than left open.
+- **The assumed band proportions were off.** §1 documents 10/12/63/15; measured is 20.7 / 69.4 /
+  9.9. Anchors cost about twice the assumed share and the cutout tail about a third less — worth
+  correcting before anyone sizes the fan-out work against the old split.
+
+**A prediction that was wrong, recorded because the reasoning error is reusable.** Before the run
+this was expected to take F4's *fast* path — `cuda:0` read 23978 MiB free beforehand, far above the
+8192 MiB target, so the poll should have found the target already met and slept zero times. It
+did not: it started at **5631 MiB**. The pre-build reading was irrelevant because *the build itself*
+loads the Wan stack into that space. B4 must be read immediately before the cutout, which is
+precisely where F4 reads it — and precisely why a watermark derived from an observation (§5.2's
+corrected circularity) would have been meaningless.
+
+**[Rev.3] Two real builds have now been run.** The table above is the **second** (11:35,
+instrumented, F2–F5 live). The **first** was through the UI — `black_bat`, 8 poses, 11:07,
+`winged_flyer` — and is what closed §3.4's real-build half; its numbers were limited to B5 because
+its backend logged to a tty (§11.9). Both agree where they overlap: **128 frames, 0 opaque
+fallbacks, 0 ERROR lines.**
+
+**First, the check that makes the rest of this row mean anything: did the build actually run the
+new code?** This repo's backend has no `--reload`, so a build submitted to a backend started
+before the edits would exercise a stale snapshot and "prove" nothing. Verified, not assumed:
+`factory.py` last written **10:51:04**, backend process 2028540 started **10:56:45**, bundle
+written **11:07:39** — the process postdates the edit. And `/proc/2028540/environ` carries
+`PET_FACTORY_REQUIRE_GPU=1`, so F3 was armed *in the process that did the build*; since the build
+succeeded, the fail-fast necessarily saw CUDA. Record this ordering for every future Table A row —
+without it, a green build is not evidence.
+
+**B5 passes outright and is the strongest evidence in this spec:**
 
 | | result |
 |---|---|
 | sheet alpha extrema | `(0, 255)` — PASS |
 | **per-frame** (the check that matters, §1) | **128 frames, 0 opaque fallbacks, 0 empty** |
+| per-frame transparent-pixel fraction | **0.600–0.796**, and tight *within* each pose (walk 0.644–0.662, sleep 0.621–0.622, fly 0.698–0.796). Stronger than "not opaque": a near-degenerate matte — a frame the model barely cut — would show up as an outlier low fraction, and none does. The spread across poses tracks silhouette size, which is what it should track |
 | poses emitted | walk, idle, run, sleep, sit, eat, jump, fly — 16 frames each, 8×16 grid |
 | bundle metadata | `movement_class=winged_flyer`; `jump` `loop:false`; `sleep` `timed_buffer_ms:6000`; view `side/right/flip` — the content→bundle contract round-trips |
 | F2 ERROR lines | none |
@@ -837,11 +891,15 @@ backend was started as a bare `uvicorn app:app`, whose stdout is a **tty** (`/de
 | ✅ **F5 visible logging** | `webui/app.py` — `BACKEND_LOG_LEVEL` + `basicConfig` | 3 in `test_logging_visibility.py` | §5.5 — met | **[Rev.3] New in Rev.3, and F4 was inert without it:** INFO was being discarded process-wide, so a landed eviction logged *nothing* while a failed one warned. Root handlers after uvicorn configures itself: `[]`. Success line now appears |
 
 ### The one-line verdict
-**[Rev.3] Not fillable yet — it needs F1 and a real build.** What is known: the eviction reclaims
-~18 GB in 0.5 s and is now visible; a failed matte now fails the build instead of shipping a white
-pet; the GPU fail-fast is armed and finds nothing to complain about. What is not known: B5 on
-three consecutive real builds, the cutout band's timing, and how many builds the old silent
-fallback was degrading.
+**[Rev.3] Partially fillable — one real build in, F1 out.** **B5 is `(0, 255)` per-frame on
+128/128 frames of one real build, with no ERROR lines in the cutout band, and eviction confirmed
+reclaiming ~18 GB in 0.5 s.** Peak cutout VRAM is *not* bounded, because F1 is deferred by
+decision (§2.7), not by omission.
+
+Still open, and none of it is cosmetic: B5 on **three consecutive** builds rather than one; the
+B2 timing bands and B3 peak, which need a backend whose stdout goes to `logs/` (§11.9); and how
+many builds the old silent fallback was actually degrading — the one number that would say how
+much F2 was worth, and which one clean build cannot supply.
 
 ---
 
@@ -885,6 +943,23 @@ performance promise.
    the sequencing is the lesson: an "improve the logging" item can be a regression if nothing has
    checked that the logging works. B1 still cannot be answered from history —
    `logs/backend.log` contains zero `rembg providers` lines.
+
+   **[Rev.3 — REOPENED, and now the promotion is required, not optional.]** On a pool node the
+   handler's **stdout is a strict JSON-lines protocol** (`pool_worker/run_handler.py`: progress
+   beats then exactly one result; the worker drops non-JSON stdout and logs
+   `non-JSON handler stdout dropped`). So this `print` is not merely "easy to lose" there — it
+   writes a junk line into a protocol channel on **every pool build**, today. It is non-fatal
+   because the worker is tolerant, but it is the wrong stream by design. `logging` writes to
+   **stderr**, which is exactly what the worker captures as its stall-visibility tail. So the
+   promotion to `log.info` is the correct fix for a reason Rev.2 never had, and it must not be
+   reverted to `print` for pool visibility — that would be backwards. This also retires the idea,
+   briefly held during F4's implementation, that `print` is the robust channel for this module:
+   it is the robust channel in a *terminal*, and the wrong one everywhere that matters.
+
+   **There are two of these, not one** — `_new_session`'s provider line and
+   `_prep_reference_image`'s "subject isolation failed, using the raw photo". Both write to
+   stdout; both are on the pool path. Per the repo's sweep rule, promote them in the same change
+   rather than fixing the one this spec happened to notice.
 3. **Expert-swap cost during Phase B is unmeasured.** The ComfyUI log records
    `Requested to load WAN21` twice per generation and an `N models unloaded` count; on
    `comfyui_32g.log` that count is `0` throughout, but that is a VRAM-experiment config and may
@@ -911,13 +986,25 @@ performance promise.
    not break a working build. What one build cannot give is the other number §3.4 asks for: how
    many builds the *old* silent fallback was degrading. That is a rate, so it needs a run of
    builds, and it can only ever be estimated now that the fallback is gone.
-8. **[Rev.3 — NEW] F5 does not reach the pool nodes.** `basicConfig` lives in `webui/app.py`, but
-   a pool worker runs `pool_handler/pet_factory_handler.py`, which imports `pet_factory` directly
-   and never touches the web app — and it configures no logging of its own (verified: no
-   `basicConfig`, no `logging` import at all). So on a pool node F4's eviction report is still
-   discarded at INFO, exactly as it was everywhere before F5. The fix is the same one line in the
-   handler, but it belongs to the handler rollout (§10) rather than here, and it should be decided
-   together with §11.2's provider-line promotion — both are about what a pool node can actually see.
+8. **[Rev.3 — NEW] F5 does not reach the pool nodes.** Conclusion confirmed; the mechanism is
+   more specific than first written, and it changes the fix. It is **not** that the worker
+   forgets to configure logging — `pool_worker/loop.py`'s `main()` *does* call
+   `basicConfig(level=INFO)`. It is that the handler does not run in the worker process at all:
+   the worker **spawns a subprocess**, `python -m pool_worker.run_handler <handler_file>`
+   (`pool_worker/spawn.py`, contract §4.3, so a runaway handler can be process-group killed).
+   Logging config is per-process, so the worker's `basicConfig` cannot reach it, and
+   `run_handler.py` sets up none of its own (verified: zero `basicConfig`). Hence INFO is
+   discarded there exactly as it was everywhere before F5.
+
+   The fix must therefore be `logging.basicConfig(level=INFO, stream=sys.stderr)` **in
+   `pool_handler/pet_factory_handler.py`** — ours, and the first of our code to run in that
+   process. Two constraints make the stream explicit rather than incidental: the handler's
+   **stdout is the JSON result protocol** and must carry nothing else, while its **stderr is
+   captured by the worker** as the stall/error tail. `basicConfig` already defaults to stderr,
+   but on a channel this load-bearing the default should be written down, not relied on.
+   Belongs to the handler rollout (§10), and should land together with §11.2 — both are about
+   what a pool node can actually see, and §11.2's `print` is currently polluting the very
+   stdout this item has to keep clean.
 9. **[Rev.3 — NEW] A hand-started backend throws its logs away, which is why B1–B4 are still
     empty after a real build ran.** The `black_bat` build went through a backend launched as a
     bare `uvicorn app:app`, whose stdout/stderr are a **tty** (`/dev/pts/12` — confirmed via
