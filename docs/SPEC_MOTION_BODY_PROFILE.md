@@ -1,12 +1,51 @@
 # SPEC — Body profile: composing movement prompts from what an animal *is*
 
-**Status:** Design — **NOT IMPLEMENTED**. **Rev.3** (2026-07-26), for review. Nothing in §7
+**Status:** **PARKED — do not implement** (decided 2026-07-26). **Rev.3**, and nothing in §7
 has shipped: there is no `pet_factory/body_profile/`, no `default_body_profile` on any motion
 profile, no `body_profile_classify` purpose, and the string `clade` appears in no code file.
 Rev.1/Rev.2's three commits (`0e9ac3e`, `497967d`, `2064ae7`) touched this document and
 nothing else. Rev.3 re-grounds the spec against the working tree after the motion-profile
 work that landed *after* Rev.2, corrects what that made stale, adds §0.0 (what this delivers
-and what it is worth) and §2.4 (the silence, measured).
+and what it is worth) and §2.4 (the silence, measured) — and then, on that evidence, parks it.
+
+### Why it is parked (read before reviving it)
+
+Rev.3's own measurements are the argument against building it now. Recorded here so the next
+reader gets the ledger rather than the pitch:
+
+- **The defect class has fired once.** One prompt-content defect has shipped in this repo's
+  history (the hovering dragon, §0.1). The repo-wide sweep that fixed it — `908e855`, every
+  `sleep` prompt in every profile — was **19 lines across 5 files**. That is the observed cost
+  of the failure mode this spec eliminates, and it is small.
+- **Three instances before consolidating** (repo `CLAUDE.md`). One instance, not three. A
+  registry + composer + classifier built against a single observed example is exactly the
+  single-element abstraction that rule exists to prevent.
+- **§2.4 measures silence, not badness.** 37 of 57 poses are silent about a limb; **no
+  generated output was reviewed**, so none of the 37 is a confirmed defect. The pose-anchor
+  work was validated against real clips on 2026-07-24 and the motion system is currently
+  working — that is the baseline any migration has to beat.
+- **The dominant cost is review, not code.** Steps 1–2 are days of data files. Step 3 retires
+  114 overrides one at a time, each gated on a human watching a ~3-minute GPU build, to change
+  output that presently looks right. Worst ratio in the plan.
+- **`humanoid` is the counter-example that holds.** Authored by hand in `b8a8d56`, nearly
+  clean on both surfaces (§2.4). Careful authoring works at this scale. The spec's real claim
+  is that it does not work *durably* — and durability is a bet on growth that has not happened
+  yet.
+
+**The cheaper thing to build first, when something does bite.** Declare each profile's limb
+groups as one field — `body_parts: ["legs","wings","tail"]` — and add one guard test asserting
+that every enabled pose either names each declared group or records an explicit
+`{"tail": null}` ("considered, contributes nothing"). Seven small data edits and one test
+file. The hovering dragon fails it. This is **not** a lesser version of this spec — it is a
+strict subset: `body_parts` *is* §1.2's `limbs`, and the explicit `null` *is* §3's rule. The
+full spec builds on that field rather than replacing it, so nothing is thrown away and no
+transition layer is needed. (Deliberately not built on 2026-07-26 either — recorded, not
+queued.)
+
+**What would unpark this:** body types growing past ~10 (five → seven happened in one day, so
+this is plausible); a **second** prompt-content defect shipping; or a review of real generated
+output finding that the §2.4 silence actually shows on screen. Any one of those turns the
+three-instances objection into evidence, and the spec below is then ready to build as written.
 
 Replaces per-body-type hand-written motion prompts with prompts **composed** from a small
 structured description of the animal: its clade, limbs, surface, size, habitat and primary
@@ -666,6 +705,9 @@ field. The default is the coarse-but-correct floor, never the answer.
 ---
 
 ## 7. Implementation order
+
+**Not started, and not to be started** — this spec is PARKED (see the status block). The order
+below is what to follow *if* one of the unpark triggers fires; it is not a queue.
 
 1. **Registries + composer, no wiring.** `body_profile/` files, `compose()`, §5.1 guard
    tests. Nothing calls it; the build gate proves the data is complete.
