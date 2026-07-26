@@ -62,12 +62,19 @@ interface Props {
   maxPoses: number;
   entitlement: Entitlement | null;
   notice: string | null;
+  /** The motion profile this pet will actually be built with — the key resolved at
+   *  reference-fill time and pinned on the record, which the build loads verbatim. It
+   *  decides which poses exist here AND how every limb moves, so a wrong one explains a
+   *  wrong pet. It was already in state and never shown; a Komodo dragon silently
+   *  resolving to `winged_flyer` cost an investigation that this line answers at a
+   *  glance. Null only if the reference somehow carries no key. */
+  motionProfile: string | null;
   onToggle: (pose: string) => void;
   onDismissNotice: () => void;
 }
 
 export default function PoseStep({
-  menu, selected, maxPoses, entitlement, notice, onToggle, onDismissNotice,
+  menu, selected, maxPoses, entitlement, notice, motionProfile, onToggle, onDismissNotice,
 }: Props) {
   const total = selected.length + BASE_MAX_POSES;
   const atCap = total >= maxPoses;
@@ -82,6 +89,13 @@ export default function PoseStep({
              style={{ color: "var(--faint)" }}>
           <span>{notice}</span>
           <button type="button" className="btn-ghost text-xs" onClick={onDismissNotice}>ok</button>
+        </div>
+      )}
+
+      {motionProfile && (
+        <div className="mono text-xs" style={{ color: "var(--faint)" }}>
+          moves like: <span style={{ color: "var(--muted)" }}>{motionProfile.replace(/_/g, " ")}</span>
+          {" — this body type decides the poses below and how the limbs move"}
         </div>
       )}
 

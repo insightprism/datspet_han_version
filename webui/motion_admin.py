@@ -168,6 +168,24 @@ def prompt_templates():
     }
 
 
+# Registered BEFORE `/{key}`, same reason as prompt-templates.
+@router.get("/classify")
+def classify_animal(animal: str = ""):
+    """What a REAL BUILD would resolve `animal` to, and which path decided it.
+
+    The Lab auto-matches through `/api/motions?animal=` (keyword only), but a build
+    resolves through the AI classifier and pins that key on the record. The two can
+    disagree, and when they do the Lab silently previews the wrong body: a Komodo dragon
+    matched winged_flyer's `dragon` keyword and drew with wings folded against its back.
+    This is the build's own resolver, so the Lab can show the truth beside its guess.
+
+    Admin-gated on purpose. The public pose menu must NOT call this — the designer
+    already carries the pinned key, so adding an AI round trip there would buy nothing
+    and cost latency on a user-facing path."""
+    key, source = motion_resolver.classify(animal)
+    return {"animal": animal, "profile_key": key, "source": source}
+
+
 @router.get("/{key}")
 def get_profile(key: str):
     """One profile's full JSON (the edit form's source)."""

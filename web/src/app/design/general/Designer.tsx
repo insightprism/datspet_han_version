@@ -681,6 +681,9 @@ export default function Designer() {
             maxPoses={maxPoses}
             entitlement={entitlement}
             notice={state.poseNotice}
+            // The same resolved key useDesignFlow already reads to fetch the pose menu —
+            // preview wins over reference, since a preview re-resolves after a redraw.
+            motionProfile={state.preview?.motion_profile ?? state.reference?.motion_profile ?? null}
             onToggle={(pose) => dispatch({ type: "poseToggled", pose, maxPoses })}
             onDismissNotice={() => dispatch({ type: "poseNoticeDismissed" })}
           />

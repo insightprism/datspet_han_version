@@ -177,6 +177,41 @@ def test_prompt_templates_route_is_not_shadowed_by_the_key_route(admin_client):
     assert "profile" not in r.json()
 
 
+# --- classify: what a real BUILD would resolve to ---------------------------
+def test_classify_reports_the_key_and_which_resolver_answered(admin_client, monkeypatch):
+    """The Lab shows this beside its own keyword auto-match, so `source` is load-bearing:
+    "ai" means a build agrees, "keyword" means the engine was down and a build might not."""
+    import motion_resolver
+    monkeypatch.setattr(motion_resolver, "classify", lambda a: ("aquatic", "ai"))
+
+    r = admin_client.get("/api/admin/motions/classify", params={"animal": "shark"})
+    assert r.status_code == 200, r.text
+    assert r.json() == {"animal": "shark", "profile_key": "aquatic", "source": "ai"}
+
+
+def test_classify_falls_back_to_keyword_when_the_engine_is_down(admin_client, monkeypatch):
+    """resolve never raises — an AI outage degrades to the keyword map, and the response
+    says so rather than passing a fallback off as the build's real answer."""
+    import ai_engine
+    import motion_resolver
+
+    motion_resolver._cache.clear()
+    def _down(*a, **k):
+        raise ai_engine.AIUnavailable("no key")
+    monkeypatch.setattr(motion_resolver.ai_engine, "call_purpose", _down)
+
+    body = admin_client.get("/api/admin/motions/classify", params={"animal": "shark"}).json()
+    assert body["profile_key"] == "aquatic"     # keyword map still knows a shark
+    assert body["source"] == "keyword"
+
+
+def test_classify_route_is_not_shadowed_by_the_key_route(admin_client):
+    """Same prefix as /{key}: the literal route must stay declared first."""
+    r = admin_client.get("/api/admin/motions/classify", params={"animal": "dog"})
+    assert r.status_code == 200
+    assert "profile" not in r.json()
+
+
 # --- label = the AI classifier's description --------------------------------
 def test_saving_a_profile_flushes_the_ai_classifier_cache(admin_client):
     """A profile's `label` IS the body-type description the AI classifier is shown

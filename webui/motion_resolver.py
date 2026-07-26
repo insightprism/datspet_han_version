@@ -43,16 +43,24 @@ def _profiles_block() -> str:
     )
 
 
-def resolve_motion_key(animal: str) -> str:
-    """The motion-profile key for `animal`: AI classifier → keyword → default.
-    Never raises; safe to call at reference-fill time (the pinned key travels on
-    the record and is loaded verbatim at build, §5.2)."""
+def classify(animal: str) -> tuple[str, str]:
+    """`(profile_key, source)` — the resolution AND which path produced it.
+
+    `source` is "ai" or "keyword". The Motion Lab shows it: an author needs to know
+    whether the answer came from the classifier (what a build will use) or from the
+    keyword fallback (what a build uses only when the engine is down), because the two
+    can disagree — "komodo dragon" matched winged_flyer's `dragon` keyword for weeks
+    while the classifier said quadruped. Cached AI answers still report "ai": the source
+    describes what decided the key, not whether this call paid for it.
+
+    Never raises. Safe at reference-fill time (the pinned key travels on the record and
+    is loaded verbatim at build, §5.2)."""
     name = (animal or "").strip()
     if not name:
-        return mp.resolve_motion_profile(name).key       # → registry default
+        return mp.resolve_motion_profile(name).key, "keyword"   # → registry default
     cached = _cache.get(name.lower())
     if cached:
-        return cached
+        return cached, "ai"
     valid = {p["key"] for p in mp.list_profiles()}
     try:
         result, _usage = ai_engine.call_purpose(
@@ -62,7 +70,13 @@ def resolve_motion_key(animal: str) -> str:
         chosen = (result.get("profile_key") or "").strip()
         if chosen in valid:
             _cache[name.lower()] = chosen                 # cache CONFIRMED AI results only
-            return chosen
+            return chosen, "ai"
     except (ai_engine.AIUnavailable, ai_engine.AIError):
         pass                                             # engine inert / errored → keyword
-    return mp.resolve_motion_profile(name).key           # keyword fallback (not cached)
+    return mp.resolve_motion_profile(name).key, "keyword"  # keyword fallback (not cached)
+
+
+def resolve_motion_key(animal: str) -> str:
+    """The motion-profile key for `animal`: AI classifier → keyword → default. The
+    caller that only needs the key; `classify` is the same resolution with its source."""
+    return classify(animal)[0]

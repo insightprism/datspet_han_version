@@ -322,6 +322,14 @@ export interface MotionPromptTemplates {
   still: { base: string; remix: string; default_pose: string };
   motion: { template: string };
 }
+// What a real BUILD would resolve an animal to, and which resolver decided it. The Lab
+// auto-matches by keyword (instant, free); this is the build's own AI-first answer, so
+// the Lab can flag a disagreement instead of previewing the wrong body silently.
+export interface MotionClassification {
+  animal: string;
+  profile_key: string;
+  source: "ai" | "keyword";
+}
 export interface MotionProfileDetail {
   profile: MotionProfileFile;
   label: string;
@@ -366,6 +374,8 @@ export const motionAdmin = {
   list: (): Promise<MotionAdminList> => motionFetch(""),
   get: (key: string): Promise<MotionProfileDetail> => motionFetch(`/${encodeURIComponent(key)}`),
   promptTemplates: (): Promise<MotionPromptTemplates> => motionFetch("/prompt-templates"),
+  classify: (animal: string): Promise<MotionClassification> =>
+    motionFetch(`/classify?animal=${encodeURIComponent(animal)}`),
   create: (profile: MotionProfileFile, label: string) =>
     motionFetch("", { method: "POST", body: JSON.stringify({ profile, label }) }),
   update: (key: string, profile: MotionProfileFile, label: string) =>

@@ -14,7 +14,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   motionAdmin, motionLab, getDatsmeSession, AdminApiError, CANONICAL_POSES, fetchMotions,
-  type MotionAdminList, type MotionProfileDetail, type MotionProfileFile, type LabAsset, type LabJob, type LabEndpoint,
+  type MotionAdminList, type MotionClassification, type MotionProfileDetail, type MotionProfileFile,
+  type LabAsset, type LabJob, type LabEndpoint,
 } from "@/lib/api";
 import { ProfileEditor, type Draft } from "../ProfileEditor";
 import ModalOverlay from "@/components/ModalOverlay";
@@ -69,6 +70,7 @@ export default function MotionLabPage() {
   const [detail, setDetail] = useState<MotionProfileDetail | null>(null);
   const [animal, setAnimal] = useState("robin");
   const [matchedProfileFor, setMatchedProfileFor] = useState("");   // the animal the profile was auto-matched from
+  const [buildMatch, setBuildMatch] = useState<MotionClassification | null>(null);  // what a real build would resolve to
   const [seed, setSeed] = useState(DEFAULT_SEED);
   const [base, setBase] = useState<LabAsset | null>(null);
   const [basePose, setBasePose] = useState("standing");   // the posture the base still is drawn in (profile.base_pose)
@@ -156,6 +158,23 @@ export default function MotionLabPage() {
     }, 500);
     return () => clearTimeout(t);
   }, [animal, list]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Second opinion: what a real BUILD would resolve this animal to. The match above is
+  // the keyword path — instant and free, but NOT what a build uses; a build asks the AI
+  // classifier and pins that key on the record. Longer debounce than the keyword match so
+  // typing doesn't spend an AI call per keystroke, and the answer is displayed rather than
+  // applied. Cleared on every edit so a stale verdict can't sit under a new animal.
+  useEffect(() => {
+    const a = animal.trim();
+    setBuildMatch(null);
+    if (!a) return;
+    const t = setTimeout(() => {
+      motionAdmin.classify(a)
+        .then((c) => { if (c.animal.trim() === a) setBuildMatch(c); })
+        .catch(() => { /* best-effort — the keyword match still stands */ });
+    }, 900);
+    return () => clearTimeout(t);
+  }, [animal]);
 
   function clearRenders() {
     setBase(null);
@@ -431,7 +450,27 @@ export default function MotionLabPage() {
             </select>
           </div>
           {matchedProfileFor && matchedProfileFor === animal.trim() && (
-            <span className="mono pb-2 text-xs" style={{ color: "var(--green)" }}>↳ auto-matched from “{matchedProfileFor}”</span>
+            <span className="mono pb-2 text-xs" style={{ color: "var(--faint)" }}>↳ auto-matched from “{matchedProfileFor}” (keyword)</span>
+          )}
+          {/* What a real BUILD would pick. Shown, never applied: the Lab's job is to try
+              pairings that shouldn't work, so it must not overrule a deliberate choice —
+              it just refuses to let a mismatch be invisible. */}
+          {buildMatch && buildMatch.animal.trim() === animal.trim() && (
+            buildMatch.profile_key === profileKey ? (
+              <span className="mono pb-2 text-xs" style={{ color: "var(--green)" }}>
+                ✓ a real build would use this too ({buildMatch.source})
+              </span>
+            ) : (
+              <span className="mono flex items-center gap-2 pb-2 text-xs" style={{ color: "var(--orange)" }}>
+                ⚠ a real build would use {buildMatch.profile_key} ({buildMatch.source})
+                <button type="button"
+                  onClick={() => { setProfileKey(buildMatch.profile_key); setMatchedProfileFor(""); }}
+                  className="mono rounded border px-2 py-0.5 text-xs"
+                  style={{ color: "var(--orange)", borderColor: "rgba(251,146,60,0.5)" }}>
+                  use it
+                </button>
+              </span>
+            )
           )}
           <div className="flex items-center gap-2 pb-0.5">
             <button onClick={openEditProfile} disabled={!profileKey}
