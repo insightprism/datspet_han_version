@@ -98,6 +98,23 @@ See **A5**. This is the sharpest edge in the whole procedure.
       Each node imports `pet_factory` from its **own clone**, so shipping the handler
       alone leaves nodes on the old signature.
 
+      **Use `scripts/roll_pet_fleet.sh --stash --verify-build`.** It discovers the node set
+      from the dispatcher (so it cannot miss one), refuses to finish version-mixed, and
+      `--verify-build` runs a **real `make_pet_zip` per node** and checks the sprite's alpha.
+      Prefer it over `--verify-url`: that one posts to `/api/reference`, which is the *preview*
+      path and never touches the cutout, so it cannot see a broken arena cap or a fatal matte.
+      *(2026-07-26: `--verify-build`'s first run caught `dual-nvidia-pet` failing a real build —
+      it shares GPU 1 with the Motion Lab's separate ComfyUI `:19963`, which was holding 18 GB.
+      F4 evicts only the pool's instance `:19956`, so **a card can be full while the eviction
+      correctly reports "landed"**. Check `nvidia-smi` on a pet node's GPU, not just the
+      eviction log.)*
+
+      ⚠️ **ORDER: commit → push/bundle → deliver to EVERY node → then roll.** The script does
+      `merge --ff-only <target>` against objects the node already has; it deliberately does not
+      fetch, because nodes differ (omen-pet pulls from GitHub, the Hetzner box pulls from
+      `/tmp/datspet.bundle`). Rolling before the commit is reachable everywhere just fails with
+      *"target … is not present"* — harmless, but it cost three re-runs on 2026-07-26.
+
       ⚠️ **ARMED for the first deploy carrying `ca46e38` (design axes).** Both handlers'
       param schema widened (`animal`/`description` maxLength 250 → **600**) because axis
       picks make composed prompts longer than 250. A node still on the old handler will
