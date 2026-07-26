@@ -1,7 +1,8 @@
 # SPEC — Body profile: composing movement prompts from what an animal *is*
 
 **Status:** Design — **Rev.2** (2026-07-26), for review. Rev.2 makes `habitat` a SET (a
-duck walks, flies and swims — §1.5) and adds the confusion-driven axis-growth loop (§5.2.1). Replaces per-body-type hand-written
+duck walks, flies and swims — §1.5), adds the confusion-driven axis-growth loop (§5.2.1), and
+surveys the public trait databases worth seeding from (§5.4). Replaces per-body-type hand-written
 motion prompts with prompts **composed** from a small structured description of the animal:
 its clade, limbs, surface, size, habitat and primary motion. The goal is that the engine can
 write an accurate `walk` prompt for a turtle, a dog, a human and a dragon *without anyone
@@ -376,6 +377,52 @@ its axis**, the composed result, and whether an override is pinned. An author wh
 with the output can then see *which axis* produced the wording and fix the clause for every
 animal that shares it, rather than hand-patching one profile.
 
+### 5.4 Seeding from public trait databases — references, not a dependency
+
+Open animal-trait databases exist and are worth harvesting **once, offline, to seed §2.3's
+named-vector table**. They are deliberately not a runtime dependency (see the boundary at the
+end of this section). Surveyed 2026-07-26:
+
+| source | what it gives us | usable for |
+|---|---|---|
+| [EOL TraitBank](https://media.eol.org/traitbank) — ~1.7M taxa, 11M+ trait records from 50+ sources, Darwin Core / semantic-web terms ([registry](https://kghub.org/kg-registry/resource/eol-traitbank/eol-traitbank.html)) | habitat, life history, some body attributes | `habitat`, partial |
+| [AnimalTraits](https://www.nature.com/articles/s41597-022-01364-9) — curated body mass, metabolic rate, brain size, hand-extracted from peer-reviewed papers, plain CSV ([repo](https://github.com/animaltraits/animaltraits.github.io)) | **real body-mass numbers** | `size` bucket thresholds |
+| [Wikidata](https://www.wikidata.org/wiki/Q729) (public SPARQL) / GBIF | taxonomy, complete and free | `clade` |
+| [Animal locomotion](https://en.wikipedia.org/wiki/Animal_locomotion) (survey article) | the locomotion-mode vocabulary itself | sanity-checking `primary_motion` |
+
+**The useful finding is what is missing.** No database records limb counts or integument as
+traits, because in biology they are *implied by taxonomy* — nobody writes a row saying "bird:
+2 legs, 2 wings, feathers." Our axes look unusual to a biologist precisely because they make
+explicit what biology encodes in the clade.
+
+That inverts into the seeding strategy: **clade largely implies the rest of the vector.**
+
+```
+Wikidata taxon → bird → 2 legs, 2 wings, feathers, plain tail, [ground, air]
+```
+
+A taxonomy join populates most of a body profile mechanically, and the classifier (§5.2)
+earns its keep on the **exceptions** — penguins and ostriches that cannot fly, snakes as
+legless reptiles, whales as legless mammals, bats as flying mammals. That is a short
+enumerable list, not an open problem. It is also why each motion profile carries a
+`default_body_profile` (§6): that field is the join point where taxonomy lands.
+
+**The boundary — why none of these is the source of truth:**
+
+1. **No mythic creatures.** Dragons, gargoyles, mermaids and phoenixes are a real fraction of
+   this factory's output, and no biological database will ever carry them. Any external
+   source is structurally incapable of covering the catalog.
+2. **Wrong granularity, on purpose.** These are taxonomic and fine-grained; §1's axes are
+   coarse by design. Collapsing 1.7M taxa onto 9 clades is lossy deliberately — the question
+   is *how does it move*, not *what is it*.
+3. **Patchy exactly where we need it.** Locomotion and body covering are among the least
+   consistently populated fields, because they are the least useful for ecology research.
+
+So: harvest once into the named-vector table, use AnimalTraits' mass figures to set defensible
+`tiny`…`huge` cutoffs rather than guessing, and keep resolution entirely in-repo. Recorded
+here so the next person does not spend a week evaluating trait databases to reach the same
+conclusion.
+
 ---
 
 ## 6. What this changes in `motion_profiles/`
@@ -403,8 +450,11 @@ unavailable, which is also what makes the five current profiles work unchanged o
    authored side by side.
 3. **Retire overrides pose by pose**, reviewing in the Lab. `winged_flyer`'s `walk` and `run`
    first: they are the ones known to have been wrong.
-4. **Classifier** (§5.2) + round-trip check.
-5. **Point `SPEC_BUNDLE_MOTION_CONTRACT` §3.4's `signature_pose` at `primary_motion`** so the
+4. **Seed the named-vector table** (§5.4) — one offline taxonomy join plus AnimalTraits mass
+   figures for the `size` cutoffs. Cheap, and it means the classifier is only ever consulted
+   for animals the table misses.
+5. **Classifier** (§5.2) + round-trip check, and the confusion queue (§5.2.1).
+6. **Point `SPEC_BUNDLE_MOTION_CONTRACT` §3.4's `signature_pose` at `primary_motion`** so the
    tier cap and the composer read one field.
 
 Steps 1–2 are inert by construction. Step 3 is where generated output changes, one pose at a
