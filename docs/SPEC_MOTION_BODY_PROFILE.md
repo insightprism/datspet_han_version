@@ -1,12 +1,30 @@
 # SPEC — Body profile: composing movement prompts from what an animal *is*
 
-**Status:** Design — **Rev.2** (2026-07-26), for review. Rev.2 makes `habitat` a SET (a
-duck walks, flies and swims — §1.5), adds the confusion-driven axis-growth loop (§5.2.1), and
-surveys the public trait databases worth seeding from (§5.4). Replaces per-body-type hand-written
-motion prompts with prompts **composed** from a small structured description of the animal:
-its clade, limbs, surface, size, habitat and primary motion. The goal is that the engine can
-write an accurate `walk` prompt for a turtle, a dog, a human and a dragon *without anyone
-having authored four walk prompts* — because the data says how each of those bodies walks.
+**Status:** Design — **NOT IMPLEMENTED**. **Rev.3** (2026-07-26), for review. Nothing in §7
+has shipped: there is no `pet_factory/body_profile/`, no `default_body_profile` on any motion
+profile, no `body_profile_classify` purpose, and the string `clade` appears in no code file.
+Rev.1/Rev.2's three commits (`0e9ac3e`, `497967d`, `2064ae7`) touched this document and
+nothing else. Rev.3 re-grounds the spec against the working tree after the motion-profile
+work that landed *after* Rev.2, corrects what that made stale, adds §0.0 (what this delivers
+and what it is worth) and §2.4 (the silence, measured).
+
+Replaces per-body-type hand-written motion prompts with prompts **composed** from a small
+structured description of the animal: its clade, limbs, surface, size, habitat and primary
+motion. The goal is that the engine can write an accurate `walk` prompt for a turtle, a dog, a
+human and a dragon *without anyone having authored four walk prompts* — because the data says
+how each of those bodies walks.
+
+**What Rev.3 corrects (all of it stale-since-Rev.2):**
+
+| was | is, as of 2026-07-26 |
+|---|---|
+| "today's five profiles" (§4.3, §6) | **seven** — `primate` and `humanoid` landed in `b8a8d56` |
+| `winged_flyer.walk` reads *"hovering forward with steady wing beats"* (§0.1) | hand-fixed in `908e855`, one commit **after** Rev.2. It now names the wings explicitly. The origin story is now history, not a live defect — and the way it was fixed is itself the argument (§0.1) |
+| per-pose free text = `action` + `suffix` (§0.1, §6) | **two** free-text surfaces per pose. Every one of the 57 enabled poses also carries a `pose_prompt` anchor clause (`control.pose`, `SPEC_MOTION_PROFILES` §3.9.1) with its own AI drafter (`ai_purposes/pose_clause.json`). 114 hand-authored fields, not 57 — §4.4 |
+| `compose_pose_prompt` at `motion_profiles/__init__.py:215` (§4.1) | `:241` |
+| "surface is already resolved per animal today" (§1.3) | three of the six values exist (`fur`/`feathers`/`scales`); `skin`/`chitin`/`slime` are **new** and not free to add (§1.3) |
+| §7 step 3 starts with `winged_flyer`'s `walk`/`run` | those two are exactly the ones already hand-fixed. Step 3 is re-pointed on measured evidence (§2.4, §7) |
+| §7 step 6 reconciles `primary_motion` with `signature_pose` | `signature_pose` **does not exist either** — `SPEC_BUNDLE_MOTION_CONTRACT` §3.4 is unimplemented. There is nothing to reconcile; there is one field to define once (§7) |
 
 Builds on **`docs/archive/SPEC_MOTION_PROFILES.md`** (the body-type registry that resolves
 which poses exist) and **`docs/SPEC_MOTION_PROFILE_ADMIN.md`** (the Motion Lab that authors
@@ -20,15 +38,75 @@ current prompts until each is migrated.
 
 ---
 
+## 0.0 What this delivers, and what it is worth
+
+**The problem, stated as it actually is today.** A pet's motion comes from free text a human
+typed into a JSON file. Seven body-type profiles × 7–9 enabled poses = 57 poses, each with a
+motion prompt *and* an anchor clause: **114 hand-authored prompt fields** (§2.4). Nothing
+checks any of them. A string can describe the
+wrong gait, name the wrong limb, or — the failure that actually shipped — say nothing at all
+about a limb the animal has, and the pipeline will render exactly what it was told at ~3
+minutes of GPU per pet, pack it into a bundle, and hand it to the DatsMe host to drive.
+
+**The deliverable.** Three things, and only the first is new machinery:
+
+1. **A body profile** (§2) — six axes describing what an animal *is* physically:
+   `clade · limbs · surface · size · habitat · primary_motion`. Six values, no prose.
+2. **Clause registries** (§3) — one data file per axis value, mapping canonical pose → the
+   clause that axis contributes to that pose. `wings.json` knows what wings do during `walk`
+   (*folded at its sides, not beating*) once, for every winged animal that will ever exist.
+3. **A composer** (§4) — concatenates the clauses the body profile selects. It names no
+   animal, no clade and no limb; it walks the vector and joins what the registries hold.
+
+**The value, in the order it pays out:**
+
+- **It deletes a defect class rather than a defect.** "Every limb the animal has gets a clause
+  in every pose" (§0.2) is enforceable because the body profile *declares* the limbs — a
+  missing clause fails the build (§5.1) instead of shipping. The hovering dragon could not be
+  expressed, not merely could not recur. Today's equivalent guarantee is that somebody
+  remembered.
+- **New body types stop costing prompts.** Adding an eighth body type today means authoring
+  ~20 more strings and reviewing them by eye; `primate` and `humanoid` (`b8a8d56`) cost
+  exactly that. Under composition it costs **one six-value vector** — and a body plan nobody
+  has anticipated (a six-legged mythic thing with a fluke) composes without an author,
+  because the axes are additive rather than a matrix (§0.3).
+- **The long tail collapses.** Wolf, coyote and husky share one vector (§2.3), so they share
+  one reviewed set of prompts. The unit of quality control becomes ~12 real body plans instead
+  of an open-ended list of animals.
+- **A wrong prompt becomes attributable and fixable once.** The Lab shows which axis produced
+  which clause (§5.3); fixing the clause fixes every animal that shares it. Free text can only
+  be fixed one profile at a time, which is why `908e855` had to touch every `sleep` prompt in
+  the repo by hand.
+- **It is checkable without a GPU.** A vector that cannot name its animal is under-described
+  (§2.2), and that is a round-trip a fast model can run in a second (§5.2) against a build
+  that costs three minutes of RTX 3090 — and against a defect that otherwise surfaces only
+  when a user watches their pet skate along the floor.
+
+**What it does not do.** It does not add poses (`CANONICAL_POSES` is frozen, §0.5), does not
+change the bundle contract or touch the host, and does not change a single generated frame
+until a human retires an override pose by pose (§4.3, §7 step 3). Steps 1–2 are inert by
+construction.
+
+---
+
 ## 0. The core decisions (read this first)
 
 1. **A prompt is composed, not authored.** Today each profile carries a free-text `action` +
-   `suffix` per pose. Free text has no structure to check, which is how
-   `winged_flyer`'s `walk` came to read *"hovering forward with steady wing beats"* — a
-   hover prompt wearing the name `walk`, describing wings and never mentioning legs. It
-   generated exactly what it said, and the DatsMe host then translated that pet along the
-   floor as a ground gait: a dragon skating on its belly, flapping. Composition makes the
-   omission impossible to express.
+   `suffix` per pose, **plus** a free-text anchor clause (§4.4). Free text has no structure to
+   check, which is how `winged_flyer`'s `walk` came to read *"hovering forward with steady
+   wing beats"* — a hover prompt wearing the name `walk`, describing wings and never
+   mentioning legs. It generated exactly what it said, and the DatsMe host then translated
+   that pet along the floor as a ground gait: a dragon skating on its belly, flapping.
+
+   **That prompt is fixed** (`908e855`, one commit after Rev.2): it now reads *"walking on its
+   legs … legs and feet cycling through one complete stride, wings kept folded at its sides …
+   no wing flapping, no hovering"*. **How it was fixed is the argument for this spec, not
+   against it.** A human noticed, hand-edited one string in one file, and the same sweep had
+   to hand-edit every `sleep` prompt in the repo to name the limb that moves. Nothing about
+   that fix is checkable, transferable to the eighth body type, or able to tell a considered
+   wording from an oversight — and §2.4 measures how many of the other 113 strings are still
+   silent about a limb. Composition makes the omission impossible to *express*; a hand-fix
+   only makes one instance of it absent.
 
 2. **Every limb the animal has gets a clause in every pose.** This is the single rule that
    kills that entire defect class. Silence about a limb is the bug.
@@ -51,6 +129,14 @@ current prompts until each is migrated.
    produced for every pose. An authored override pins one pose for one body profile when a
    human sees something the model cannot (§4.3). The override is explicit and visible, so
    drift is detectable rather than silent — which is exactly what free text was not.
+
+7. **Both prompt surfaces are composed, or the guarantee is a half-guarantee.** Since the
+   pose-anchor work landed, each pose carries a motion prompt *and* a static anchor clause,
+   and the anchor is silent about a limb just as often as the prompt is (§2.4: 33 of 57 each).
+   Composing only the motion prompt would leave §0.2's rule true of one surface and false of
+   the other — the same body plan, described twice, checked once. The clause files answer both
+   because a limb clause has a moving form and a still form; §4.4 states the shape and §7
+   sequences it after the motion prompt lands.
 
 ---
 
@@ -89,10 +175,24 @@ The axis that limb counts cannot express: a lizard and a dog have identical inve
 
 ### 1.3 `surface` — secondary motion (6)
 
-**Already resolved per animal today** — `animal_catalog` tags `surface`,
-`design_axes/surface_keywords.json` classifies it, and `coat`/`plumage`/`scales` axes gate on
-it. This spec adds a *second consumer*; no new classification, no new vocabulary for the
-first three.
+**Half of this axis already exists** — `animal_catalog` tags `surface`,
+`design_axes/surface_keywords.json` classifies a typed name, and the `coat`/`plumage`/`scales`
+design axes gate on it. This spec adds a *second consumer* of that resolution. Rev.3 states
+the boundary precisely, because Rev.2 implied the whole axis was free:
+
+- **`fur`, `feathers`, `scales` are live** — those are the only three surfaces
+  `surface_keywords.json` knows, and the only three with a design axis behind them.
+- **`skin`, `chitin`, `slime` are new**, and adding one is **not** a one-line edit on the
+  design-axes side: a surface value with no matching surface axis changes which axes a user
+  sees at step 2 (`SPEC_PET_DESIGN_AXES` §3.3). Either the value ships motion-only — resolved
+  for prompting, absent from `surface_keywords.json` — or it ships with an axis. **Recommended:
+  motion-only.** The two consumers ask different questions (*how does the covering move* vs.
+  *what can the user restyle*), and forcing one vocabulary to serve both is what makes a
+  clockwork octopus need a coat dropdown.
+- **`null` is a real answer.** `surface_keywords.json` has no fallback by design — an unmatched
+  name resolves to `null` and gets universal axes only. The composer must therefore treat a
+  missing surface as *contributes no clause*, exactly like a `null` limb group (§3), never as
+  an error and never as an implied `fur`.
 
 | value | what it does when the body moves |
 |---|---|
@@ -203,6 +303,54 @@ Wolf, coyote and husky all resolve to `mammal · fur · 4 legs · plain tail · 
 combinations. §2.2's twelve rows exist as *named* plans so common animals resolve with no
 model call; an unnamed vector still composes, so the table never gates.
 
+### 2.4 The silence, measured (Rev.3)
+
+Rev.1 argued from one anecdote. Here is the whole repo, surveyed 2026-07-26 against the
+working tree. **Method:** for each of the 7 registered profiles, take the limb groups its body
+plan implies (`quadruped` → legs + tail; `winged_flyer` → legs + wings + tail; `serpentine` →
+body; and so on), and for each *enabled* pose ask whether the motion prompt (`action` +
+`suffix`) and the anchor clause (`control.pose`) mention that group at all — a
+case-insensitive word match on the group's obvious vocabulary (`leg|paw|foot|feet|stride`,
+`wing`, `tail|fluke`, `fin|flipper`, `arm|hand|knuckle`).
+
+| profile | limb groups | enabled poses | motion prompt silent | anchor silent | either |
+|---|---|---|---|---|---|
+| `aquatic` | 2 | 7 | 3 | 5 | 5 |
+| `avian` | 2 | 9 | 7 | 6 | 7 |
+| `humanoid` | 2 | 9 | 2 | 0 | 2 |
+| `primate` | 2 | 8 | 4 | 5 | 5 |
+| `quadruped` | 2 | 8 | **8** | 7 | **8** |
+| `serpentine` | 1 | 7 | 1 | 2 | 2 |
+| `winged_flyer` | 3 | 9 | **8** | **8** | **8** |
+| **total** | | **57** | **33** | **33** | **37** |
+
+**37 of 57 poses (65%) are silent about at least one limb the body has, on at least one
+surface.** Both surfaces fail at the same rate, independently — which is why §0.7 scopes both.
+
+Three readings that matter more than the headline number:
+
+- **The default profile is the worst.** `quadruped` — what every unmatched animal resolves to
+  (`registry.default`) — never mentions the tail in *any* of its eight poses, including `walk`
+  and `run`. The most-used body type in the factory animates a tail nobody described.
+- **`winged_flyer` is still the worst-off overall despite the hand-fix.** `908e855` corrected
+  `walk` and `run`; the other seven poses remain silent about legs, tail, or both. Fixing the
+  two poses somebody had *noticed* left 78% of that profile untouched — the precise reason
+  §7's step 3 no longer starts there (§7).
+- **`humanoid` is nearly clean** (2 silent, 0 anchors) **because it is the newest**, authored
+  in `b8a8d56` by someone with this defect fresh in mind. That is the honest counter-argument
+  and it is worth stating: a careful author *can* get this right. They cannot get it right
+  *durably* — `humanoid` is one profile, authored once, with no mechanism holding it there
+  when the tenth pose or the eighth body type arrives.
+
+**The caveat, stated so the number is not oversold.** A keyword miss is not automatically a
+defect: a sleeping bird's legs are folded under it and arguably contribute nothing, and a
+regex cannot tell a considered omission from an oversight. **That is exactly the finding.**
+Free text cannot distinguish those two either — the reader cannot, the guard test cannot, and
+the model certainly cannot. Under §3 the same case is an explicit `null`: *considered, and it
+contributes nothing.* The survey does not claim 37 bugs; it claims **37 unanswered questions**,
+and the deliverable is that the answer becomes a value in a file rather than an inference from
+silence.
+
 ---
 
 ## 3. Clause registries — one file per axis value
@@ -262,8 +410,10 @@ prompt(pose) = base(animal)
              + shared suffix (in place, no camera movement, no panning)
 ```
 
-`compose_pose_prompt` (`motion_profiles/__init__.py:215`) keeps its signature and its
-byte-identical output for any profile not yet migrated (§4.3).
+`compose_pose_prompt` (`motion_profiles/__init__.py:241`) keeps its signature and its
+byte-identical output for any profile not yet migrated (§4.3). Today that function is a
+one-line `MOTION_PROMPT_TEMPLATE.format(animal, pose.action, pose.suffix)` — the whole
+composition step is the concatenation this spec replaces it with.
 
 ### 4.2 Worked — the four walks
 
@@ -283,9 +433,12 @@ Same rules, four bodies, four correct prompts:
   counter to the body · scale plates shifting · slow, ponderous, each footfall carrying
   visible weight*
 
-The bolded clause is the one whose absence produced the bug. Under composition it cannot be
-absent, because the body profile declares wings and §5.1 fails the build if `wings.json`
-has no `walk` entry.
+The bolded clause is the one whose absence produced the bug — and which a human has since
+typed into `winged_flyer.json` by hand (`908e855`). Under composition it cannot be absent for
+*any* winged body, because the body profile declares wings and §5.1 fails the build if
+`wings.json` has no `walk` entry. The difference between the two is not the wording; it is
+that one of them holds for the next winged animal and the next pose without anyone
+remembering.
 
 ### 4.3 Override — the Motion Lab keeps its job
 
@@ -298,8 +451,57 @@ A pose may pin an authored prompt for a given body profile:
 Composition runs for everything else. An override is explicit, listed in the Lab, and
 covered by §5.3's report — the opposite of free text, where every prompt was silently
 hand-made and nothing could tell a considered wording from an oversight. Migration is
-therefore incremental: today's five profiles start fully overridden and lose overrides pose
-by pose as composed output is reviewed in the Lab.
+therefore incremental: **today's seven profiles** (`aquatic`, `avian`, `humanoid`, `primate`,
+`quadruped`, `serpentine`, `winged_flyer`) start fully overridden — 57 poses, every one
+pinned — and lose overrides pose by pose as composed output is reviewed in the Lab. Day one
+is therefore provably a no-op: every prompt is an override, so every prompt is today's.
+
+### 4.4 The second surface — the anchor clause (Rev.3)
+
+Since the pose-anchor work landed, a pose carries **two** prompts, not one, and both come from
+the same body plan:
+
+| surface | field | consumed by | drafted by |
+|---|---|---|---|
+| motion prompt | `action` + `suffix` | Wan I2V loop (`compose_pose_prompt`) | a human |
+| anchor clause | `control.pose` | the Z-Image anchor still, swapped in for `base_pose` (`anchor_clause`, `SPEC_MOTION_PROFILES` §3.9.1) | a human, optionally drafted by `ai_purposes/pose_clause.json` |
+
+All 57 enabled poses across all 7 profiles carry an anchor clause today, and §2.4 measures 33
+of them silent about a limb — the same rate as the motion prompts, failing independently.
+Rev.2 did not mention this surface at all, which made §0.2's rule quietly half-true.
+
+**They are one composition with two projections, not two systems.** A limb clause has a
+**moving** form (*"four legs cycling in a diagonal-pair gait, paws placing and pushing off"*)
+and a **still** form (*"legs mid-stride, one forward and one back"*) — the same fact about the
+same limb, phrased for a video prompt or for a single anchor frame. So each clause file gains
+a parallel key rather than a parallel file:
+
+```json
+// limbs/legs.json
+{ "walk": { "4": { "motion": "four legs cycling in a diagonal-pair gait, paws placing and pushing off",
+                   "static": "legs mid-stride, one forward and one back, side profile" },
+            "0": null } }
+```
+
+Three consequences worth pinning:
+
+- **`pose_clause.json` keeps its job and gets a better input.** It drafts for a *human* who
+  edits before saving (that is its stated contract). Under composition it drafts a
+  **clause-file entry** — reviewed once, reused by every animal sharing that axis value —
+  instead of one profile's one pose. Its `movement_class` + example-animal input becomes the
+  vector, which is strictly more information.
+- **The anchor is not a shorter motion prompt.** It is static posture, no camera or lighting
+  directions, no species name — the discipline `pose_clause.json` already enforces. A composer
+  that emitted the motion clause into the anchor would regress the anchor work, so `static` is
+  authored, never derived.
+- **§5.1's completeness test covers both keys.** A clause file with `motion` and no `static`
+  fails the build, for the same reason a missing pose entry does.
+
+**Sequencing:** the motion prompt migrates first (§7 steps 1–3) because that is where the
+known defect shipped and where the Lab preview already shows the result. The anchor follows as
+step 3b against clause files that already exist. Composing the anchor is **not** optional work
+to be dropped for scope: leaving it hand-authored keeps 33 silent strings and half the
+guarantee (§0.7).
 
 ---
 
@@ -308,13 +510,16 @@ by pose as composed output is reviewed in the Lab.
 ### 5.1 Guard tests
 
 - **Completeness.** For every body profile in §2.2's named table, and for every *enabled*
-  pose, **every limb group present resolves to a clause or an explicit `null`.** A missing
-  entry fails the build. This is the hovering-dragon test.
+  pose, **every limb group present resolves to a clause or an explicit `null`** — in **both**
+  the `motion` and `static` forms (§4.4). A missing entry fails the build. This is the
+  hovering-dragon test, and it is the mechanized form of §2.4's survey: the same question,
+  asked by the build instead of by a regex after the fact.
 - **Closed vocabularies.** Every axis value in a body profile exists in its registry; every
   registry file covers every canonical pose.
 - **Clade completeness.** Every clade declares `_stance`, `_spine`, `_cadence`.
-- **Primary-motion agreement.** A profile's `primary_motion` is an enabled pose, and matches
-  the `signature_pose` that `SPEC_BUNDLE_MOTION_CONTRACT` §3.4 seeds into the tier cap.
+- **Primary-motion agreement.** A profile's `primary_motion` is an enabled pose. It is the
+  same field the tier cap must never clip; see §7 step 6 for why there is one field to define
+  rather than two to reconcile.
 - **No pose invention.** The union of all clause files' keys is a subset of
   `CANONICAL_POSES` (§0.5).
 
@@ -431,13 +636,32 @@ Responsibilities split; nothing is deleted until its overrides are retired (§4.
 
 | owns | before | after |
 |---|---|---|
-| `movement_class`, `level`, `keywords`, enabled poses | motion_profile | **unchanged** |
+| `movement_class`, `level`, `keywords`, `view`, `base_pose`, enabled poses | motion_profile | **unchanged** |
 | per-pose `action` / `suffix` | motion_profile (free text) | composed; profile keeps only overrides |
+| per-pose anchor clause (`control.pose`) | motion_profile (free text, §4.4) | composed `static` form; profile keeps only overrides |
 | body plan | *nowhere* | body profile (§2) |
 | how a limb behaves per pose | *nowhere* | clause registry (§3) |
 
 Each motion profile gains a `default_body_profile` — the vector to use when classification is
-unavailable, which is also what makes the five current profiles work unchanged on day one.
+unavailable, which is also what makes the **seven** current profiles work unchanged on day
+one. The seeding is mechanical, and stating it here is what makes step 2 a half-day rather
+than a design exercise:
+
+| profile | `default_body_profile` |
+|---|---|
+| `quadruped` (registry default) | `mammal · fur · 4 legs · plain tail · medium · [ground] · walk` |
+| `avian` | `bird · feathers · 2 legs · 2 wings · small · [ground, air] · fly` |
+| `winged_flyer` | `mythic · scales · 4 legs · 2 wings · plain tail · large · [ground, air] · fly` |
+| `aquatic` | `fish · scales · 0 legs · fluke · 4+ fins · medium · [water] · swim` |
+| `serpentine` | `reptile · scales · 0 limbs · medium · [ground] · slither` |
+| `primate` | `primate · fur · 2 legs · 2 arms · plain tail · medium · [ground] · climb` |
+| `humanoid` | `humanoid · skin · 2 legs · 2 arms · no tail · medium · [ground] · walk` |
+
+Two of these are lossy on purpose and the classifier (§5.2) exists to refine them:
+`winged_flyer` covers dragons (`scales`) and bats (`fur`) alike, and `aquatic` covers fish
+(`scales`) and dolphins (`skin`) — the mixed-surface classes
+`design_axes/surface_keywords.json` already documents as the reason surface is not a motion
+field. The default is the coarse-but-correct floor, never the answer.
 
 ---
 
@@ -445,20 +669,38 @@ unavailable, which is also what makes the five current profiles work unchanged o
 
 1. **Registries + composer, no wiring.** `body_profile/` files, `compose()`, §5.1 guard
    tests. Nothing calls it; the build gate proves the data is complete.
-2. **Default body profiles** on the five motion profiles, and the composer wired behind a
-   full override set — output is byte-identical to today, and the Lab can show composed vs.
-   authored side by side.
-3. **Retire overrides pose by pose**, reviewing in the Lab. `winged_flyer`'s `walk` and `run`
-   first: they are the ones known to have been wrong.
+2. **Default body profiles** on the **seven** motion profiles (§6's table), and the composer
+   wired behind a full override set — output is byte-identical to today, and the Lab can show
+   composed vs. authored side by side.
+3. **Retire motion-prompt overrides pose by pose**, reviewing in the Lab, **worst-first by
+   §2.4's measurement**:
+   1. **`quadruped`** — 8 of 8 poses silent, and it is `registry.default`, so it is what every
+      unmatched animal gets. Highest blast radius in the repo.
+   2. **`winged_flyer`** — 8 of 9 silent. Note the change from Rev.2, which named `walk` and
+      `run` first: those two are precisely the poses `908e855` already hand-fixed. Rev.2's
+      instinct was to start where somebody had *noticed* a bug; §2.4 says to start where the
+      unanswered questions actually are, and the seven other poses in that profile are where
+      they are.
+   3. **`avian`** (7 of 9), then `aquatic` and `primate` (5 each), `serpentine` (2),
+      `humanoid` (2, last — it is nearly clean).
+3b. **Retire anchor-clause overrides** (§4.4) on the same worst-first order, once each
+   profile's motion prompts are composed and reviewed.
 4. **Seed the named-vector table** (§5.4) — one offline taxonomy join plus AnimalTraits mass
    figures for the `size` cutoffs. Cheap, and it means the classifier is only ever consulted
    for animals the table misses.
 5. **Classifier** (§5.2) + round-trip check, and the confusion queue (§5.2.1).
-6. **Point `SPEC_BUNDLE_MOTION_CONTRACT` §3.4's `signature_pose` at `primary_motion`** so the
-   tier cap and the composer read one field.
+6. **Define the signature pose once.** Rev.2 wrote this step as "point
+   `SPEC_BUNDLE_MOTION_CONTRACT` §3.4's `signature_pose` at `primary_motion`." As of
+   2026-07-26 **that field does not exist** — §3.4 is the unimplemented part of an otherwise
+   shipped spec, and `signature_pose` appears in no code or data file. So there is nothing to
+   reconcile and no migration to write; there is one field, needed by two consumers, to be
+   added once. **Whichever spec ships first owns the name, and the other reads it** — if §3.4
+   lands first (it is marked highest-priority there), this spec's `primary_motion` **is**
+   `signature_pose` and §1.6 is its second consumer, not a second field. Coordinating this now
+   costs one sentence; discovering it later costs a dual-write.
 
-Steps 1–2 are inert by construction. Step 3 is where generated output changes, one pose at a
-time, each reviewable before it ships.
+Steps 1–2 are inert by construction — every prompt is an override, so every prompt is today's.
+Step 3 is where generated output changes, one pose at a time, each reviewable before it ships.
 
 ---
 
@@ -473,6 +715,16 @@ time, each reviewable before it ships.
 - **Adding an axis value is one file + one registry line**; adding a canonical pose is one
   line per clause file, and §5.1 fails until every file has it.
 - **Specs are cited by section from code comments**, per repo convention.
+- **The four test questions** (repo `CLAUDE.md`), answered:
+  *Does a new body type require an engine change?* No — one vector, and the composer never
+  learns its name. *Does a new feature touch unrelated files?* No — a new axis value is one
+  file plus one registry line; `legs.json` never learns about reptiles. *Does a third-party
+  integration modify owned paths?* Not applicable — §5.4's trait databases are harvested
+  offline into data and are never a runtime dependency. *Does a bug in one variant force
+  debugging shared code?* This is the one to watch: a clause file **is** shared across every
+  animal with that axis value, which is the whole payoff (fix once, fixes all) and also the
+  blast radius (break once, breaks all). The override (§4.3) is the escape hatch that keeps a
+  single bad animal from being a reason to edit shared data.
 
 ---
 
@@ -481,6 +733,15 @@ time, each reviewable before it ships.
 - **Multi-limb animals beyond the table** — tentacles (octopus) and claws (crab) are named in
   §2.2 but have no clause file in the v1 registry set. One file each when a real pet needs
   one; the composer needs no change.
+- **Where the new surface values live** (Rev.3). §1.3 recommends `skin`/`chitin`/`slime` ship
+  motion-only, resolved for prompting and absent from `design_axes/surface_keywords.json`, so
+  a new movement fact does not silently change which dropdowns a user sees at step 2. That
+  splits one word across two vocabularies and wants a decision, not a default —
+  `SPEC_PET_DESIGN_AXES`' owner should confirm before step 1 writes the files.
+- **The catalog is not yet a source of vectors** (Rev.3). `animal_catalog/catalog.json` holds
+  two entries, both `fur`/`quadruped`, so in practice §5.4's seeding lands in the named-vector
+  table and the keyword map, not the catalog. Worth revisiting if the catalog grows: two
+  places that resolve an animal's body facts is one more than the design allows.
 - **The host's habitat model is singular.** §1.5 makes habitat a set on the factory side,
   which is correct for prompting: a duck needs `walk`, `fly` and `swim` clauses. The DatsMe
   host still binds **one** habitat per pet and only two gait slots, so a duck that ships all
