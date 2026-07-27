@@ -642,3 +642,64 @@ def test_an_opaque_fallback_matte_is_a_no_op_for_the_repair():
     r = factory._repair_matte_holes(opaque)
     assert r.filled_px == 0 and r.hard_px == 0
     assert np.array_equal(np.array(r.alpha), np.array(opaque))
+
+
+# ── SPEC_MATTE_BACKDROP: the pet is never drawn on its own colour ────────────────────────
+#
+# `white background` in the still templates was the single biggest source of broken
+# sprites here: a pale pet on a white field is the one input birefnet cannot segment, and
+# on white a white snow leopard's matte came back a LINE DRAWING with the hole fill adding
+# more pixels than the matte returned. These pin the replacement, and in particular pin the
+# half that is easy to forget (test 3) — a prompt-only change leaves most pets broken.
+
+def test_neither_still_template_draws_on_white():
+    """§2 — the regression test. Both templates, because `_base_prompt` is the CLI's branch
+    and `_remix_prompt` is every web build's; fixing one would make them disagree about the
+    one thing this spec is about."""
+    from pet_factory import prompt_templates as pt
+    for template in (pt.BASE_STILL_TEMPLATE, pt.REMIX_STILL_TEMPLATE):
+        assert "white background" not in template
+        assert pt.STILL_BACKDROP in template
+    # …and the rendered sentences, not just the raw templates.
+    assert pt.STILL_BACKDROP in pt.base_still_prompt("robin")
+    assert pt.STILL_BACKDROP in pt.remix_still_prompt("robin", "mid-stride")
+
+
+def test_the_backdrop_is_a_named_constant_not_a_literal():
+    """§9 I1 — one definition. A literal in either template is how the two drift apart."""
+    from pet_factory import prompt_templates as pt
+    assert pt.STILL_BACKDROP and isinstance(pt.STILL_BACKDROP, str)
+    assert pt.BASE_STILL_TEMPLATE.count(pt.STILL_BACKDROP) == 1
+    assert pt.REMIX_STILL_TEMPLATE.count(pt.STILL_BACKDROP) == 1
+
+
+def test_a_reference_is_padded_onto_the_backdrop_never_white(tmp_path):
+    """§9 I3 — THE test that a prompt-only change would fail.
+
+    `_prep_reference_image` pads a non-square reference and flattens transparency, and
+    `_base_sprite`'s as-is branch runs it on EVERY web build. With white here, a designed
+    or uploaded pet lands back on a white field and the prompt change buys nothing."""
+    import numpy as np
+    src = tmp_path / "ref.png"
+    # Deliberately non-square AND part-transparent: both routes to the canvas colour.
+    img = Image.new("RGBA", (64, 32), (10, 20, 200, 255))
+    img.putalpha(Image.new("L", img.size, 0))          # fully transparent → canvas shows through
+    img.save(src)
+
+    out = np.array(Image.open(factory._prep_reference_image(src)).convert("RGB"))
+    corner = tuple(int(v) for v in out[0, 0])
+    assert corner != (255, 255, 255), "the reference was padded onto WHITE — §9 I3"
+    assert corner == factory.STILL_BACKDROP_RGB, f"padded onto {corner}, not the backdrop"
+
+
+def test_the_backdrop_phrase_and_pixel_agree():
+    """§9 I5 — the backdrop exists twice: as a SENTENCE for the model and as a PIXEL for
+    the padding. Nothing else can keep those in sync, so this asserts they describe the
+    same colour. If the phrase changes hue, this fails and the RGB must be re-measured
+    from what the model actually draws."""
+    from pet_factory import prompt_templates as pt
+    r, g, b = factory.STILL_BACKDROP_RGB
+    assert "cyan" in pt.STILL_BACKDROP, "the phrase moved off cyan — re-measure the RGB"
+    # cyan = green and blue high, red low. The one arithmetic claim a word can support.
+    assert g > 150 and b > 150 and r < g - 60 and r < b - 60, \
+        f"RGB{factory.STILL_BACKDROP_RGB} is not the cyan the phrase asks for"

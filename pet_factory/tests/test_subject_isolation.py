@@ -95,9 +95,14 @@ def test_cutout_raise_degrades_to_the_raw_photo(tmp_path, monkeypatch):
     assert degraded == baseline                             # caught, logged, fell back
 
 
-def test_isolate_crops_pads_and_whitens(tmp_path, monkeypatch):
-    """A successful cutout produces a square, white-backed image cropped to the
-    subject — strictly smaller than the un-isolated pad of the same wide photo."""
+def test_isolate_crops_pads_and_backdrops(tmp_path, monkeypatch):
+    """A successful cutout produces a square, BACKDROP-backed image cropped to the
+    subject — strictly smaller than the un-isolated pad of the same wide photo.
+
+    This used to assert a WHITE pad, and that assertion is why SPEC_MATTE_BACKDROP §9 I3
+    exists: the upload door cuts the subject out here and then composites it onto this
+    canvas, so white here re-created the unsegmentable white-on-white the backdrop change
+    removes — for every uploaded pet, no matter what the prompt said."""
     src = tmp_path / "photo.png"
     Image.new("RGBA", (1000, 600), (30, 60, 90, 255)).save(src)
 
@@ -113,4 +118,4 @@ def test_isolate_crops_pads_and_whitens(tmp_path, monkeypatch):
     iso = Image.open(isolated)
     assert iso.width == iso.height                          # padded to square
     assert iso.width < Image.open(plain).width             # cropped: smaller than the full pad
-    assert iso.getpixel((0, 0)) == (255, 255, 255)         # background composited to white
+    assert iso.getpixel((0, 0)) == factory.STILL_BACKDROP_RGB   # composited onto the backdrop

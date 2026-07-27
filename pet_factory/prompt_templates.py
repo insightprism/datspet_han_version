@@ -1,7 +1,7 @@
 """prompt_templates — the still-prompt sentence templates, as pure data.
 
 The anchor/base still prompt is *template + content*: this module owns the template
-(the house style — cartoon, side profile, flat shading, white background), while the
+(the house style — cartoon, side profile, flat shading, the backdrop), while the
 motion profile owns the `{pose}` clause and the caller owns `{animal}`. Splitting them
 is the engine-vs-content line: the style is identical for every animal and every pose,
 the posture is per-body-type content that grows a file at a time.
@@ -24,12 +24,37 @@ from __future__ import annotations
 # `control.pose` anchor clause.
 DEFAULT_POSE = "standing"
 
+# THE BACKDROP the pet is drawn on (SPEC_MATTE_BACKDROP). It used to be "white
+# background", and that phrase was the single biggest source of broken sprites in this
+# pipeline: a pale pet on a white field is the one input birefnet cannot segment. Measured
+# on a white snow leopard through Wan to the matte — on white the matte came back a LINE
+# DRAWING (97k px of a ~160k body) and the hole fill added 103k, i.e. the repair was
+# drawing the animal. On cyan the same pet needs ZERO repair.
+#
+# Why cyan specifically, when the sprite-generation literature says magenta or green:
+#   - it is NOT a chroma key. Z-Image will not draw a flat key (measured backdrop
+#     std-dev: grey 4, green 38, cyan/magenta 58-65 — it paints a scene, not a screen), so
+#     birefnet still does the segmenting and the backdrop's job is only to make the subject
+#     separable. Flatness turned out to be irrelevant; cyan vignettes hard and mattes
+#     perfectly, because a segmentation model reads shape, not colour uniformity.
+#   - NO fixed backdrop survives a pet of its own colour — white breaks white pets, grey
+#     breaks grey pets (a flat grey corgi: fill+ 47,407). So the choice is about which
+#     colour is hardest to hit, and cyan is the only candidate absent from the designer's
+#     ten-colour palette. Reaching it takes typing "teal" into free text.
+#   - natural animals in the danger zone do NOT break it: a cyan parakeet, a peacock and a
+#     green parrot all matte cleanly on cyan, and each needs LESS repair than on white.
+#     Real animals carry barring, eyes and shading that a flat artificial recolour lacks.
+#
+# Changing this phrase re-draws every pet, so it is a content decision. Keep it in sync
+# with `factory.STILL_BACKDROP_RGB`, which is the same decision as a pixel (§9 I5).
+STILL_BACKDROP = "flat vivid cyan background"
+
 # From-scratch still (Z-Image txt2img). "facing right" is load-bearing: DatsMe
 # authors pets facing right and mirrors them for leftward movement, so the source
 # must face right.
 BASE_STILL_TEMPLATE = (
     "a cute cartoon {animal}, side profile view, facing right, {pose}, "
-    "soft pastel colors, muted palette, simple flat shading, white background, "
+    "soft pastel colors, muted palette, simple flat shading, " + STILL_BACKDROP + ", "
     "storybook style"
 )
 
@@ -41,7 +66,7 @@ BASE_STILL_TEMPLATE = (
 REMIX_STILL_TEMPLATE = (
     "a cute cartoon {animal}, exactly {animal}, side profile view, "
     "facing right, {pose}, rich saturated colors, simple flat shading, "
-    "white background, storybook style"
+    + STILL_BACKDROP + ", storybook style"
 )
 
 

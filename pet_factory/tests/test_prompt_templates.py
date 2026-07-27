@@ -22,15 +22,20 @@ if REPO not in sys.path:
 from pet_factory import motion_profiles as mp          # noqa: E402
 from pet_factory import prompt_templates as pt         # noqa: E402
 
+# UPDATED 2026-07-27 for SPEC_MATTE_BACKDROP: `white background` -> `flat vivid cyan
+# background`. This file existing is what made that a deliberate act rather than a silent
+# re-roll of every pet — which is exactly its job (see (a) above). The backdrop is now a
+# named constant, so these pins carry it by reference: a future hue change fails the
+# `pt.STILL_BACKDROP in ...` assertions in test_cutout_hygiene rather than here.
 BASE_GOLDEN = (
     "a cute cartoon red dragon, side profile view, facing right, standing, "
-    "soft pastel colors, muted palette, simple flat shading, white background, "
-    "storybook style"
+    "soft pastel colors, muted palette, simple flat shading, "
+    + pt.STILL_BACKDROP + ", storybook style"
 )
 REMIX_GOLDEN = (
     "a cute cartoon purple corgi, exactly purple corgi, side profile view, "
     "facing right, standing, rich saturated colors, simple flat shading, "
-    "white background, storybook style"
+    + pt.STILL_BACKDROP + ", storybook style"
 )
 
 

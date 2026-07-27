@@ -593,6 +593,19 @@ MATTE_GLARING_FRACTION = 0.4
 # one that passes every damaged one.
 MATTE_DAMAGE_PX_PER_FRAME = 100
 
+# The BACKDROP as a pixel (SPEC_MATTE_BACKDROP §9 I4). `prompt_templates.STILL_BACKDROP`
+# is the same decision as a SENTENCE — that one asks Z-Image to draw the field, this one
+# paints it where there is no model to ask: `_prep_reference_image` pads a non-square
+# reference and flattens an isolated upload's transparency, and both used to use white.
+# That path is not cosmetic — `_base_sprite`'s as-is branch runs it on EVERY web build,
+# and the upload door runs it with isolate=True, which cuts the subject out and would
+# otherwise drop it straight onto the white field this spec exists to remove.
+#
+# The value is MEASURED, not chosen: across six renders the model drew its cyan field at
+# RGB(88-104, 208-236, 183-222). It only has to be close enough not to seam against the
+# drawn backdrop it pads.
+STILL_BACKDROP_RGB = (100, 230, 215)
+
 
 class MatteDamage(NamedTuple):
     """What the hole fill did to one sheet (or one pose's cells)."""
@@ -761,7 +774,7 @@ def _slug(animal: str) -> str:
 
 def _prep_reference_image(src, *, isolate: bool = False) -> Path:
     """Normalize a caller-supplied reference image for the Wan I2V stage:
-    flatten any transparency onto white and pad to a square canvas (the video
+    flatten any transparency onto the backdrop and pad to a square canvas (the video
     canvas is square; padding preserves the animal's proportions where
     stretching would distort them). Returns the path of a PNG that ComfyUI can
     load. `src` is a path or anything PIL.Image.open accepts.
@@ -788,7 +801,10 @@ def _prep_reference_image(src, *, isolate: bool = False) -> Path:
             print(f"[pet_factory] subject isolation failed, using the raw photo: {e!r}",
                   flush=True)
     side = max(img.size)
-    canvas = Image.new("RGBA", (side, side), (255, 255, 255, 255))
+    # Pad onto the BACKDROP, never white (SPEC_MATTE_BACKDROP §9 I3). White here would
+    # re-create the defect the prompt change removes — most visibly on the upload door,
+    # where `isolate=True` has just cut the subject out and this paste is what it lands on.
+    canvas = Image.new("RGBA", (side, side), (*STILL_BACKDROP_RGB, 255))
     canvas.paste(img, ((side - img.width) // 2, (side - img.height) // 2), img)
     fd, out = tempfile.mkstemp(prefix="pf_ref_", suffix=".png")
     os.close(fd)
