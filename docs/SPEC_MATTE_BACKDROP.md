@@ -496,8 +496,35 @@ than scale instructions. So the prompt route is a partial mitigation, not a fix.
    and it flattens genuine species scale, which is a product question rather than a technical
    one.
 
-**Not decided here.** It affects every pet built from now on, so it wants a deliberate call
-before any catalog curation happens on top of it.
+### 8.1.1 DECIDED — accept it. It is cosmetic at the sizes pets are actually rendered.
+
+**Two questions from the operator deflated this, and both were right.**
+
+**Does the framing even reach a sprite?** Yes, but only through the anchors. A curated
+`base.png` never becomes a sprite frame — every enabled pose in all seven profiles has a
+`pose_prompt` anchor, so `pose_starts[name] = base` never fires for a prompt-derived pet.
+The base is a picker image and a design substrate, so ITS framing is irrelevant, and the
+tabby was promoted at 24% of cell without waiting for this decision.
+
+**Does it show at the size pets are displayed?** Barely. `PetThumbnail` draws the whole
+cell and `PetCanvas` scales it via `--pet-display-size` (default 96px); DatsMe's own pet-size
+control offers 32/48/64/96/128/192/256 and sits at **64** by default. Rendered at 32–64px,
+the same sprite at 41% and at 30% of cell are hard to tell apart — and no detail is lost
+either way, because even the 30% version carries ~77 source pixels of animal into a ~35px
+render. It is still a downscale.
+
+**So: accept.** The pets are correct, complete, and very slightly smaller in their box than
+white-era ones. Neither of the other options is worth its cost — the prompt phrase recovers
+half of a difference nobody can see at 64px, and cropping to the subject would rewrite sprite
+scale across the catalog to fix a cosmetic delta.
+
+**Also established while investigating, and worth keeping** (§8.1.2): the trade-off is real
+and there is no window — every backdrop tint that fixes the matte shrinks the pet, and every
+one that preserves framing breaks the matte. But the opposition exists ONLY FOR PALE PETS.
+White is fine for most (`fill+ 0` on a brown bear, a brown corgi, a blue jay) and
+catastrophic only for pale ones (`103,403` on a white snow leopard). If the framing loss ever
+does matter, the answer is not a global backdrop — it is to resolve the backdrop per pet:
+white by default, tinted only when the pet is pale. Not built, because nothing needs it.
 
 ## 9. Implementation decisions — closed before code
 
