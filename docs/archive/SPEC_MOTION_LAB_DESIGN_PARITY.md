@@ -1,4 +1,29 @@
-# SPEC — Design parity in the Motion Lab: author the pet a real build would animate
+# SPEC — Design parity in the Motion Lab: author the pet a real build would animate — CLOSED / IMPLEMENTED
+
+> **Status: CLOSED / IMPLEMENTED — 2026-07-27, Rev.7.** All of D1–D6 shipped, plus D5, which
+> was held behind `SPEC_MATTE_REPAIR_ORDER` F4 and unblocked when F4 landed the same day.
+> Guard tests 1–8 (backend) and 9–11 (frontend) are present and green; §7's gates 1–6 pass.
+> The last deferral — §5 item 11, `PoseGallery`'s `petId` path after the `PosePlayer`
+> widening — is discharged: `web/src/components/posePlayerSource.ts` holds the resolver and
+> `posePlayerSource.test.ts` pins it against the api adapter itself.
+>
+> **Deferred by design, not unfinished** (§10): a persisted design preset, and a matrix mode
+> for the Lab (`scripts/calibrate_design_axes.py` still owns sweeps).
+> **Archived; the code is the source of truth from here.**
+>
+> **What it bought, in the end.** The Lab was built to author pose clauses; this made it
+> faithful enough to be *evidence*. Within hours of shipping it caught three things that a
+> 3-minute blind build had been hiding for months: the pale-anchor template bug (D6), the
+> opaque-black hole fill (`SPEC_MATTE_REPAIR_ORDER` F1), and the white backdrop that caused
+> the holes in the first place (`SPEC_MATTE_BACKDROP`). The instrument found more than the
+> feature did.
+>
+> **One correction worth carrying forward** (Rev.7): §0.3's table said the anchors draw "the
+> short **typed** phrase". They draw `ref["description"]`, which a design REPLACES with
+> `display_name.lower()` — so a designed white snow leopard draws *white* anchors. The two
+> are the same string only until step 2 runs, and the implementation followed the wrong word
+> until a live run caught it.
+
 
 **Rev.7 — THE SUBJECT CHANGES WHEN A DESIGN IS APPLIED (§0.3).** Found by the operator in live
 testing, on the first designed run: the Lab drew a white snow leopard base and then drew **tan**
