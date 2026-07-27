@@ -506,17 +506,25 @@ than scale instructions. So the prompt route is a partial mitigation, not a fix.
 The base is a picker image and a design substrate, so ITS framing is irrelevant, and the
 tabby was promoted at 24% of cell without waiting for this decision.
 
-**Does it show at the size pets are displayed?** Barely. `PetThumbnail` draws the whole
-cell and `PetCanvas` scales it via `--pet-display-size` (default 96px); DatsMe's own pet-size
-control offers 32/48/64/96/128/192/256 and sits at **64** by default. Rendered at 32–64px,
-the same sprite at 41% and at 30% of cell are hard to tell apart — and no detail is lost
-either way, because even the 30% version carries ~77 source pixels of animal into a ~35px
-render. It is still a downscale.
+**Does it show at the size pets are displayed?** Rarely, and that is the operative word.
+`PetThumbnail` draws the whole cell and `PetCanvas` scales it via `--pet-display-size`
+(default 96px); DatsMe's pet-size control offers 32/48/64/96/128/192/256 and sits at **64**.
 
-**So: accept.** The pets are correct, complete, and very slightly smaller in their box than
-white-era ones. Neither of the other options is worth its cost — the prompt phrase recovers
-half of a difference nobody can see at 64px, and cropping to the subject would rewrite sprite
-scale across the catalog to fix a cosmetic delta.
+The product is **mobile-first**, so the small end of that range is where pets actually live —
+a phone has no room for more, and even on a desktop a 128px+ pet costs more screen than a
+profile ornament is worth. At 32–64px the same sprite at 41% and at 30% of cell are hard to
+tell apart, and no detail is lost either way: even the 30% version carries ~77 source pixels
+of animal into a ~35px render, still a downscale.
+
+**Being precise about the limit of that claim:** the larger sizes exist, and at 192 or 256 a
+30%-of-cell pet is visibly smaller in its box than a 41% one. The decision below rests on
+those sizes being rare by design rather than absent — if pets ever become a large-format
+element, this is worth re-opening, and §8.1.2 says what to do then.
+
+**So: accept.** The pets are correct, complete, and slightly smaller in their box than
+white-era ones. Neither alternative earns its cost at the sizes that dominate — the prompt
+phrase recovers half of a difference that is hard to see at 64px, and cropping to the subject
+would rewrite sprite scale across the whole catalog for a cosmetic delta.
 
 **Also established while investigating, and worth keeping** (§8.1.2): the trade-off is real
 and there is no window — every backdrop tint that fixes the matte shrinks the pet, and every
