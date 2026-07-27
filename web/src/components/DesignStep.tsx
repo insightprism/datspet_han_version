@@ -3,6 +3,13 @@
 /**
  * <DesignStep> — step 2, where the pet becomes yours (SPEC_PET_DESIGNER_FLOW §4).
  *
+ * SHARED (SPEC_MOTION_LAB_DESIGN_PARITY §2.4, I7): the general designer mounts it and
+ * so does the Motion Lab, which is why it lives in components/ beside PosePlayer and
+ * PetThumbnail rather than inside one route folder. It is pure props — 7 values, 5
+ * callbacks, no fetching, no reducer coupling — so a second mount costs nothing. If the
+ * Lab ever needs a variant that is a PROP, never a fork: two step-2 UIs drifting apart
+ * is the exact fidelity gap the Lab was mounted here to close.
+ *
  * EVERYTHING that answers "what should it look like" lives here: colour, body shape,
  * accessories, free text, and how hard to push it. Nothing here is a step-1 input,
  * and that placement is the whole spec (§0.1) — it is why picking "Chubby" can never
@@ -28,7 +35,10 @@
  */
 import { useState } from "react";
 import type { DesignAxis } from "@/lib/api";
-import { MAX_ACCESSORIES } from "./designFlow";
+// The accessory cap lives with the designer's state machine, which enforces it in the
+// reducer; this component only reports it. Imported, never retyped — two numbers that
+// disagree would let the UI offer a fourth chip the reducer silently drops.
+import { MAX_ACCESSORIES } from "@/app/design/general/designFlow";
 
 // §4.6: trimmed from 16 to 10 — NOT the "8" this comment used to claim, and the count
 // matters because it is the only number in the whole redesign that measures the thing

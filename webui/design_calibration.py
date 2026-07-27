@@ -42,6 +42,13 @@ _MANIFEST_FILE = _CALIB_DIR / "manifest.json"
 # cell stale on a 1e-16 wobble.
 _EPS = 1e-6
 
+# The denoise band a design redraw is held inside. The CAP is calibrated (above 0.9
+# the redraw stops resembling the source at all); the FLOOR is what keeps a redraw
+# from being a no-op that returns the base image and reads as "the design did
+# nothing". `_base_sprite` clamps the same band on the engine side.
+MIN_DENOISE = 0.3
+MAX_DENOISE = 0.9
+
 
 # ---------------------------------------------------------------------------
 # Data access (re-read each call — the guard test and the tool want live disk).
@@ -59,14 +66,24 @@ def load_manifest() -> dict:
 # ---------------------------------------------------------------------------
 def effective_strength(picks: Optional[dict], color: str, species: str,
                        base_strength: Optional[float] = None) -> float:
-    """Replicate /api/preview's clamp: start at base_strength, then max with
-    compose_design's returned min_strength, clamped to ≤ 0.9. Pure-CPU.
+    """THE denoise a design redraw runs at: start at base_strength, raise it by
+    compose_design's returned min_strength, and hold the result inside
+    [MIN_DENOISE, MAX_DENOISE]. Pure-CPU, and the only copy of that arithmetic —
+    /api/preview and the Motion Lab both call it (SPEC_MOTION_LAB_DESIGN_PARITY
+    I4/I11).
 
     compose_design's min_strength ALREADY folds every non-default picked axis's
     declared min_strength (it maxes them as it composes, skipping default picks)
     AND the colour-word/species conflict — so ONE max covers both. An earlier
     version also looped the picked axes here to re-derive the axis half; that
     duplicated compose_design's own folding (Finding 4e) and is gone.
+
+    The FLOOR is part of the formula, not the caller's business (I11). Both
+    surfaces used to clamp `min(0.9, max(0.3, s))` inline while this function
+    stopped at the cap — because its only callers passed the calibration
+    substrate (0.85) and never a number a user chose. Adopting it as "the one
+    knower" without moving the floor in would have deleted the lower bound from
+    both surfaces at once, in a refactor whose whole purpose was to have one.
 
     `base_strength` overrides the disk matrix's value — the caller (check) passes
     the matrix it was handed, so a test can vary the substrate as an ARGUMENT
@@ -77,7 +94,7 @@ def effective_strength(picks: Optional[dict], color: str, species: str,
     strength = float(base)
     if conflict:
         strength = max(strength, float(conflict))
-    return min(0.9, strength)
+    return min(MAX_DENOISE, max(MIN_DENOISE, strength))
 
 
 def compose_cell(species: str, color: str, accessories: list, picks: dict,

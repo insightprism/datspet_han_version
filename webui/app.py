@@ -39,7 +39,7 @@ import uuid
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +47,11 @@ from fastapi.responses import FileResponse, Response
 
 import db
 import pool_client
+# design_calibration owns the design redraw's denoise band (effective_strength) and the
+# calibration-staleness predicate. Safe at module top DESPITE the cycle: it imports `app`
+# lazily, inside its functions, precisely so this direction works (its §2 import
+# discipline). Pure-CPU — it reads design_axes, never pet_factory.factory.
+import design_calibration
 # ai_engine is web-tier + one HTTPS call, and imports anthropic LAZILY (inside its
 # one call), so importing it here costs nothing and stays GPU-less-safe. It powers
 # the upload captioner (SPEC_UPLOAD_LIKENESS §2.5); inert until DATSPET_AI_API_KEY.
@@ -271,6 +276,54 @@ _COLOR_WORDS = {
     "brown", "black", "white", "gray", "grey", "emerald", "teal", "rose",
     "indigo", "violet", "crimson", "scarlet", "azure",
 }
+
+
+# The design-input widths. These are part of the COMPOSITION contract, not request
+# hygiene (SPEC_MOTION_LAB_DESIGN_PARITY I2): two surfaces that cap differently compose
+# DIFFERENT strings from the same picks, and the drift is invisible to any test that
+# calls compose_design directly. Every surface that composes a design goes through
+# normalize_design_inputs below — there is no second copy of these numbers.
+MAX_SPECIES_CHARS = 60
+MAX_COLOR_CHARS = 20
+MAX_ACCESSORY_CHARS = 30
+MAX_DESIGN_ACCESSORIES = 3
+MAX_AXIS_TOKEN_CHARS = 30      # an axis key or an option key
+MAX_EXTRA_CHARS = 120          # the free-text escape hatch (§4.3)
+
+
+class DesignInputs(NamedTuple):
+    """What compose_design is allowed to see, after the caps."""
+    species: str
+    color: str
+    accessories: list[str]
+    picks: dict[str, str]
+    extra: str
+
+
+def normalize_design_inputs(species: str, color: str, accessories: list[str],
+                            axis_picks: Optional[dict] = None,
+                            extra: str = "") -> DesignInputs:
+    """Cap and lower-case step 2's raw inputs — the ONE gate every design passes
+    through before it becomes a prompt (I2).
+
+    TRANSPORT stays with the caller: /api/preview splits a comma-separated form
+    field and json.loads a picks string, the Motion Lab receives a real list and a
+    real object (§3.2). What must NOT differ is what survives the caps, so that is
+    here and only here.
+
+    Surface filtering is deliberately NOT done here: it needs the resolved surface,
+    which each caller reads from its own place (the reference record vs the typed
+    keyword map), and folding it in would make this function need one."""
+    return DesignInputs(
+        species=species.strip().lower()[:MAX_SPECIES_CHARS],
+        color=color.strip().lower()[:MAX_COLOR_CHARS],
+        accessories=[a.strip().lower()[:MAX_ACCESSORY_CHARS]
+                     for a in accessories if a.strip()][:MAX_DESIGN_ACCESSORIES],
+        picks={str(k).strip().lower()[:MAX_AXIS_TOKEN_CHARS]:
+               str(v).strip().lower()[:MAX_AXIS_TOKEN_CHARS]
+               for k, v in (axis_picks or {}).items() if isinstance(v, str)},
+        extra=extra.strip()[:MAX_EXTRA_CHARS],
+    )
 
 
 def compose_design(species: str, color: str, accessories: list[str],
@@ -1061,21 +1114,34 @@ def reference_image(reference_id: str, request: Request):
 
 
 @app.get("/api/design-axes")
-def design_axes_menu(request: Request, reference_id: str = ""):
+def design_axes_menu(request: Request, reference_id: str = "", animal: str = ""):
     """Step 2's design vocabulary (SPEC_PET_DESIGN_AXES §4). The SERVER reads the
-    reference's resolved surface and returns only the applicable axes — the
-    universal ones plus the single matching surface axis (or none): a bird is
-    offered feathers, never fur, and the browser renders what it is handed with
-    no animal logic of its own. A new axis or surface appears here with no
-    endpoint change.
+    resolved surface and returns only the applicable axes — the universal ones
+    plus the single matching surface axis (or none): a bird is offered feathers,
+    never fur, and the browser renders what it is handed with no animal logic of
+    its own. A new axis or surface appears here with no endpoint change.
 
-    Without a reference_id (or with one that doesn't resolve) the menu degrades
-    to the universal axes — the §3.3 unknown-animal posture, and the safe answer
-    for a menu endpoint, which must not dead-end the design step over a swept
-    reference. `prompt_fragment` is calibrated server-side wording and never
-    reaches the browser, same posture as the tier table."""
+    TWO ways to name the animal, never merged (SPEC_MOTION_LAB_DESIGN_PARITY §2.1):
+
+        reference_id   the designer, which holds a reference by step 2. WINS when
+                       both are given — one source of surface, not a blend.
+        animal         free text, for a surface that has no reference to read:
+                       the Motion Lab. Resolved through _resolve_typed_surface,
+                       the same keyword path the typed door uses, so the Lab's
+                       menu and a typed pet's menu cannot drift. A curated
+                       animal's `resolved_surface_options` RESTRICTION is not
+                       applied here — that is per-breed data, and a typed name
+                       is not a curated breed.
+
+    Neither (or one that doesn't resolve) degrades to the universal axes — the
+    §3.3 unknown-animal posture, and the safe answer for a menu endpoint, which
+    must not dead-end the design step over a swept reference or an animal the
+    keyword map has never seen. `prompt_fragment` is calibrated server-side
+    wording and never reaches the browser, same posture as the tier table."""
     surface = None
     restriction = None
+    if not reference_id.strip() and animal.strip():
+        surface = _resolve_typed_surface(animal.strip()[:MAX_SPECIES_CHARS])
     if reference_id.strip():
         owner = datsme_integration.resolve_launch_identity(request)
         try:
@@ -1131,43 +1197,48 @@ def preview_design(
         raise HTTPException(400, "Pick a base animal first.")
     ref = _load_reference(reference_id, owner)
 
-    color = color.strip().lower()[:20]
-    accessory_list = [a.strip().lower()[:30] for a in accessories.split(",") if a.strip()][:3]
-    extra = extra.strip()[:120]
-
     # Axis picks arrive as ONE JSON object {axis_key: option_key}
     # (SPEC_PET_DESIGN_AXES §4) — a new axis adds no Form field. Malformed JSON
     # degrades to "no picks" (the body_shapes typo posture: a broken request
     # must not 500 a design); unknown axes and surface-mismatched picks are
     # dropped by filter_picks (defense in depth — the menu already hid them).
-    picks: dict[str, str] = {}
+    raw_picks = {}
     if axis_picks.strip():
         try:
-            raw_picks = json.loads(axis_picks)
+            parsed = json.loads(axis_picks)
         except ValueError:
-            raw_picks = {}
-        if isinstance(raw_picks, dict):
-            picks = {str(k).strip().lower()[:30]: str(v).strip().lower()[:30]
-                     for k, v in raw_picks.items() if isinstance(v, str)}
+            parsed = {}
+        if isinstance(parsed, dict):
+            raw_picks = parsed
     # `body_shape` stays a server-side alias for axis_picks["body"] for one
     # deprecation cycle, mirroring the /api/body-shapes alias (§4).
-    if body_shape.strip() and "body" not in picks:
-        picks["body"] = body_shape.strip().lower()[:20]
-    picks = design_axes_mod.filter_picks(picks, ref.get("surface"))
+    if body_shape.strip() and "body" not in raw_picks:
+        raw_picks["body"] = body_shape
+
+    # Parsing the TRANSPORT is this endpoint's business (form fields, comma lists,
+    # a JSON string); what survives the caps is the composition contract's, so it
+    # goes through the shared normalizer the Motion Lab also calls (I2).
+    # `.strip()` before the `or`: a whitespace-only name must fall back to the
+    # reference's description, not normalize to an empty species.
+    design = normalize_design_inputs(
+        name.strip() or ref["description"], color,
+        accessories.split(","), raw_picks, extra)
+    picks = design_axes_mod.filter_picks(design.picks, ref.get("surface"))
 
     axis_touched = any(not design_axes_mod.is_default(a, k) for a, k in picks.items())
-    if not (color or accessory_list or axis_touched or extra):
+    if not (design.color or design.accessories or axis_touched or design.extra):
         # §4.1, widened to count a non-default pick on ANY axis. Designing
         # nothing is adopting, and the zero-GPU adopt path exists for that.
         raise HTTPException(400, "Pick a colour, an accessory, a body shape, or "
                                  "describe a change.")
 
-    species = name.strip().lower()[:60] or ref["description"]
+    species = design.species
     description, display_name, min_strength = compose_design(
-        species, color, accessory_list, picks, extra)
-    strength = min(0.9, max(0.3, strength))
-    if min_strength:
-        strength = max(strength, min_strength)
+        species, design.color, design.accessories, picks, design.extra)
+    # The clamp is design_calibration's, not a local copy (I4): the calibration
+    # tool, the staleness check, this endpoint and the Motion Lab all read the same
+    # band, so "the one knower" is a fact rather than an aspiration.
+    strength = design_calibration.effective_strength(picks, design.color, species, strength)
 
     png_path, _ = _reference_paths(ref["id"])
     png = _render_still(description, request, owner,

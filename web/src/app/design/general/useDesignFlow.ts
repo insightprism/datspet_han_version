@@ -56,7 +56,7 @@ export function useDesignFlow() {
   const referenceId = state.reference?.reference_id ?? null;
   useEffect(() => {
     let cancelled = false;
-    fetchDesignAxes(referenceId ?? undefined)
+    fetchDesignAxes({ referenceId: referenceId ?? undefined })
       .then((r) => { if (!cancelled) setAxes(r.axes); })
       .catch(() => { /* keep the previous menu; the server still filters picks */ });
     return () => { cancelled = true; };

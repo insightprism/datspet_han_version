@@ -49,6 +49,28 @@ body {
   opacity: 0.6;
 }
 
+/*
+ * .card-design — a panel that holds STEP 2, the design (SPEC_PET_DESIGN_AXES §2).
+ *
+ * A modifier rather than a one-off style block, because the thing it marks is a
+ * category, not a location: "what the pet LOOKS like" is a different kind of decision
+ * from the setup around it (which animal, which pose, which motion profile), and the
+ * two are easy to confuse when they share a surface. On the Motion Lab they sat in one
+ * card separated by a hairline, and the seam did not read as a seam.
+ *
+ * The tint is the DatsMe purple, dark enough to stay clearly the same app; the accent
+ * strip drops the three-colour gradient for the two design colours, so the panel is
+ * identifiable from the strip alone when it is collapsed.
+ */
+.card-design {
+  background: #1b1733;
+  border-color: #3b3168;
+}
+.card-design::before {
+  background: linear-gradient(90deg, transparent, var(--gold), var(--accent), transparent);
+  opacity: 1;
+}
+
 .mono {
   font-family: "Fira Code", "JetBrains Mono", monospace;
 }

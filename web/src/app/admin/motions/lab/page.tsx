@@ -9,19 +9,44 @@
  * is ASYNC (start → poll /job), with a live elapsed timer and a Cancel button. Several
  * generations may be fired at once — they QUEUE on the serial GPU and read "pending…"
  * until they start. LOCAL backend only. Save is the existing motion_admin write.
+ *
+ * DESIGN PARITY (SPEC_MOTION_LAB_DESIGN_PARITY). The setup card mirrors a real build's
+ * first two steps: Draw base is step 1 (txt2img from the typed name), Apply design is
+ * step 2 (the designer's own <DesignStep>, redrawn img2img, composed server-side). The
+ * composed string is spent THERE and nowhere else — every pose anchor below is txt2img
+ * from the SUBJECT in the remix sentence, which is what a build draws (§0.3, §2.6). After
+ * a design that subject is the display name ("white snow leopard"), because that is what
+ * step 2 saves on its new reference and step 3 reads back: the colour rides into every
+ * anchor, the body shape and accessories do not. Imitating that asymmetry exactly is the
+ * parity — being more designed than a build would make the Lab lie in the investigation
+ * it exists to serve, and being less designed makes it draw the wrong animal.
  */
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   motionAdmin, motionLab, getDatsmeSession, AdminApiError, CANONICAL_POSES, fetchMotions,
-  type MotionAdminList, type MotionClassification, type MotionProfileDetail, type MotionProfileFile, type LabReference,
-  type LabAsset, type LabJob, type LabEndpoint,
+  fetchDesignAxes,
+  type MotionAdminList, type MotionClassification, type MotionProfileDetail, type MotionProfileFile,
+  type LabAsset, type LabJob, type LabEndpoint, type DesignAxis, type LabMatteMetrics,
 } from "@/lib/api";
+import PosePlayer from "@/components/PosePlayer";
+import { MAX_ACCESSORIES } from "@/app/design/general/designFlow";
 import { ProfileEditor, type Draft } from "../ProfileEditor";
 import ModalOverlay from "@/components/ModalOverlay";
 import ConfirmModal from "@/components/ConfirmModal";
+import DesignStep from "@/components/DesignStep";
+import { baseDrawOptions, packedTile, poseSubject, type LabSource } from "./labDraw";
 
 const DEFAULT_SEED = 42;
+// The app's own default design/redraw denoise — DesignStep's "balanced" rung and
+// /api/preview's `strength` default are this same number.
+const DEFAULT_DENOISE = 0.85;
+// The band every redraw is held inside, mirrored from design_calibration's
+// MIN_DENOISE/MAX_DENOISE. The SERVER is authoritative (it clamps whatever arrives);
+// naming them here keeps the slider from offering a value that would be silently moved.
+const MIN_DENOISE = 0.3;
+const MAX_DENOISE = 0.9;
+const DENOISE_STEP = 0.05;
 const inputStyle = { background: "#1c1c1c", border: "1px solid var(--line)", color: "var(--heading)" };
 const labelCls = "mono mb-1 block text-xs tracking-wide";
 type Phase = LabJob["phase"];
@@ -29,6 +54,11 @@ type Phase = LabJob["phase"];
 type Cell = {
   clause: string; still: LabAsset | null; loop: LabAsset | null;
   busy: "" | "draw" | "animate" | "save" | "suggest"; jobId: string | null; elapsed: number; phase: Phase;
+  // F4's second result: the SAME animation, packed. `packed` points PosePlayer at the Lab's
+  // own sheet+manifest (there is no saved pet behind a scratch bundle); `packError` names the
+  // stage when the pack alone failed, which must cost the packed tile and nothing else.
+  packed: { sheetUrl: string; manifestUrl: string } | null;
+  packError: string; metrics: LabMatteMetrics | null;
 };
 type Cells = Record<string, Cell>;
 
@@ -36,16 +66,24 @@ const genErr = (e: unknown) => e instanceof AdminApiError ? e.message : "Generat
 const saveErr = (e: unknown) => e instanceof AdminApiError ? (e.errors[0] ?? e.message) : "Save failed.";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function pollJob(jobId: string, onTick: (elapsed: number, phase: Phase) => void): Promise<LabAsset | null> {
+// Polls to a terminal state and returns the WHOLE job, not just its asset: an animate
+// carries a second result (the packed sheet, its metrics, or the stage that failed), and
+// a poller that returned one asset could not express that. `onTick` sees every reading, so
+// a caller can render the raw loop the moment it lands — the pack runs on for ~6 s after.
+async function pollJob(jobId: string, onTick: (j: LabJob) => void): Promise<LabJob | null> {
   for (;;) {
     const j = await motionLab.job(jobId);
-    onTick(j.elapsed, j.phase);
-    if (j.state === "done") return { asset_id: j.asset_id ?? "", url: j.url ?? "", ms: j.ms ?? 0 };
+    onTick(j);
+    if (j.state === "done") return j;
     if (j.state === "canceled") return null;
     if (j.state === "error") throw new AdminApiError(j.error ?? "generation failed", 500);
     await sleep(1500);
   }
 }
+const assetOf = (j: LabJob): LabAsset => ({ asset_id: j.asset_id ?? "", url: j.url ?? "", ms: j.ms ?? 0 });
+// The packed sheet as PosePlayer wants it — resolved by labDraw so the "a failed pack
+// costs the tile and nothing else" rule is testable without a DOM (I10).
+const packedOf = (j: LabJob) => packedTile(j, motionLab.assetUrl);
 
 function profileWithClauses(base: MotionProfileFile, clauses: Record<string, string>): MotionProfileFile {
   const p = structuredClone(base);
@@ -71,11 +109,29 @@ export default function MotionLabPage() {
   const [animal, setAnimal] = useState("robin");
   const [matchedProfileFor, setMatchedProfileFor] = useState("");   // the animal the profile was auto-matched from
   const [buildMatch, setBuildMatch] = useState<MotionClassification | null>(null);  // what a real build would resolve to
-  // An uploaded photo: present → every draw uses the REMIX template and the base is
-  // redrawn img2img from it, exactly as a build with a reference does (factory.py:733).
-  const [reference, setReference] = useState<LabReference | null>(null);
+  // The still the BASE draw is redrawn from — an uploaded photo, or a design applied to
+  // an earlier base (I12). Present → the base is img2img from it, exactly as a build with
+  // a reference does. It has no say in the anchors: those are txt2img either way (§2.6).
+  const [source, setSource] = useState<LabSource | null>(null);
   const [refBusy, setRefBusy] = useState(false);
-  const [refStrength, setRefStrength] = useState(0.85);   // base-only denoise
+  const [baseDenoise, setBaseDenoise] = useState(DEFAULT_DENOISE);   // base-only denoise
+  // Step 2's design (§2.2–§2.4): the designer's OWN <DesignStep>, over the one composer
+  // server-side. These picks are spent on exactly one draw — the base redraw — and never
+  // reach an anchor or a loop (§0.3). `composed` is the string the server actually spent,
+  // read back off the /still response so the operator can see it (§2.3).
+  const [color, setColor] = useState("");
+  const [accessories, setAccessories] = useState<string[]>([]);
+  const [axisPicks, setAxisPicks] = useState<Record<string, string>>({});
+  const [extra, setExtra] = useState("");
+  const [designStrength, setDesignStrength] = useState(DEFAULT_DENOISE);
+  const [axes, setAxes] = useState<DesignAxis[]>([]);
+  const [minStrength, setMinStrength] = useState<number | null>(null);
+  const [composed, setComposed] = useState("");
+  const [designOpen, setDesignOpen] = useState(false);   // closed by default: poses are the Lab's job
+  const [designBusy, setDesignBusy] = useState(false);
+  const [designJob, setDesignJob] = useState<string | null>(null);
+  const [designElapsed, setDesignElapsed] = useState(0);
+  const [designPhase, setDesignPhase] = useState<Phase>("running");
   const [seed, setSeed] = useState(DEFAULT_SEED);
   const [base, setBase] = useState<LabAsset | null>(null);
   const [basePose, setBasePose] = useState("standing");   // the posture the base still is drawn in (profile.base_pose)
@@ -132,7 +188,7 @@ export default function MotionLabPage() {
       setDetail(d);
       const enabled = CANONICAL_POSES.filter((n) => d.profile.poses[n]?.enabled);
       const next: Cells = {};
-      for (const n of enabled) next[n] = { clause: d.profile.poses[n].control?.pose ?? "", still: null, loop: null, busy: "", jobId: null, elapsed: 0, phase: "running" };
+      for (const n of enabled) next[n] = { clause: d.profile.poses[n].control?.pose ?? "", still: null, loop: null, busy: "", jobId: null, elapsed: 0, phase: "running", packed: null, packError: "", metrics: null };
       setCells(next);
       // Default-open: walk + idle only (the required active/rest pair). Base and the rest stay closed.
       const def = enabled.filter((n) => ["walk", "idle"].includes(n));
@@ -181,12 +237,27 @@ export default function MotionLabPage() {
     return () => clearTimeout(t);
   }, [animal]);
 
+  // The design vocabulary for the TYPED animal (§2.1). The designer keys this off its
+  // reference; the Lab has free text and no reference, so it asks by name and the server
+  // resolves the surface — a bird is offered plumage, a cat coat, an unknown creature
+  // neither. Same debounce as the profile match, for the same reason.
+  useEffect(() => {
+    const a = animal.trim();
+    let cancelled = false;
+    const t = setTimeout(() => {
+      fetchDesignAxes({ animal: a })
+        .then((r) => { if (!cancelled) setAxes(r.axes); })
+        .catch(() => { /* keep the previous menu; the server still filters picks */ });
+    }, 500);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [animal]);
+
   async function uploadReference(file: File) {
     setErr(""); setNotice(""); setRefBusy(true);
     try {
       const r = await motionLab.uploadReference(file);
-      setReference(r);
       clearRenders();                       // the base and every anchor are now stale
+      setSource({ kind: "upload", reference_id: r.reference_id, url: r.url, upload: r });
       if (r.subject) setAnimal(r.subject);  // the captioner's noun, as the upload door would use it
       setNotice(r.usable
         ? `Triage accepted it — the captioner called it “${r.subject}”${r.features ? ` (${r.features})` : ""}.`
@@ -198,42 +269,61 @@ export default function MotionLabPage() {
 
   function clearRenders() {
     setBase(null);
-    setCells((c) => Object.fromEntries(Object.entries(c).map(([n, cell]) => [n, { ...cell, still: null, loop: null }])));
+    setCells((c) => Object.fromEntries(Object.entries(c).map(([n, cell]) =>
+      [n, { ...cell, still: null, loop: null, packed: null, packError: "", metrics: null }])));
+    // A DESIGN source is a redraw of the base still that just went stale, so it goes with
+    // it; an UPLOAD source is a photo on the desk and stays (I12). The design PICKS stay
+    // too — they are what you are iterating on.
+    setSource((s) => (s?.kind === "design" ? null : s));
+    setComposed("");
   }
   const patch = (name: string, p: Partial<Cell>) => setCells((c) => ({ ...c, [name]: { ...c[name], ...p } }));
+  // What every anchor and loop draws from — the typed animal until a design replaces it
+  // with the display name a build's record would now carry (labDraw.poseSubject).
+  const subject = poseSubject(source, animal);
 
   // --- core ops: start a job, poll it (timer + phase), return the asset or null (canceled) ---
   async function doDrawBase(): Promise<LabAsset | null> {
     setBaseElapsed(0); setBasePhase("pending");
     // The base still's pose word IS base_pose (empty → the backend's "standing" default).
     const { job_id } = await motionLab.startStill(animal, basePose.trim(), seed,
-      reference ? { reference_id: reference.reference_id, base: true, strength: refStrength } : undefined);
+      baseDrawOptions(source?.reference_id ?? null, baseDenoise));
     setBaseJob(job_id);
     try {
-      const a = await pollJob(job_id, (e, ph) => { setBaseElapsed(e); setBasePhase(ph); });
+      const j = await pollJob(job_id, (t) => { setBaseElapsed(t.elapsed); setBasePhase(t.phase); });
+      const a = j && assetOf(j);
       if (a) setBase(a);
       return a;
     } finally { setBaseJob(null); }
   }
   async function doDrawAnchor(name: string, clause: string): Promise<LabAsset | null> {
     patch(name, { elapsed: 0, phase: "pending" });
-    // Anchors stay txt2img even with a reference — a build never img2img's an anchor.
-    const { job_id } = await motionLab.startStill(animal, clause, seed,
-      reference ? { reference_id: reference.reference_id } : undefined);
+    // No draw options at all: an anchor is txt2img in the remix sentence whatever is
+    // loaded (§2.6). It carries the SUBJECT, not the typed field — after a design that is
+    // "white snow leopard", exactly what a build's reference record now says (poseSubject).
+    const { job_id } = await motionLab.startStill(subject, clause, seed);
     patch(name, { jobId: job_id });
     try {
-      const a = await pollJob(job_id, (e, ph) => patch(name, { elapsed: e, phase: ph }));
-      if (a) patch(name, { still: a, loop: null });
+      const j = await pollJob(job_id, (t) => patch(name, { elapsed: t.elapsed, phase: t.phase }));
+      const a = j && assetOf(j);
+      if (a) patch(name, { still: a, loop: null, packed: null, packError: "", metrics: null });
       return a;
     } finally { patch(name, { jobId: null }); }
   }
-  async function doAnimate(name: string, source: LabAsset): Promise<LabAsset | null> {
+  async function doAnimate(name: string, start: LabAsset): Promise<LabAsset | null> {
     patch(name, { elapsed: 0, phase: "pending" });
-    const { job_id } = await motionLab.startAnimate(source.asset_id, animal, profileKey, name, seed);
+    // The loop prompt is compose_pose_prompt(subject, pose) — same subject as the anchor,
+    // because a build passes one `description` to the whole of make_pet_zip.
+    const { job_id } = await motionLab.startAnimate(start.asset_id, subject, profileKey, name, seed);
     patch(name, { jobId: job_id });
     try {
-      const a = await pollJob(job_id, (e, ph) => patch(name, { elapsed: e, phase: ph }));
-      if (a) patch(name, { loop: a });
+      // The raw tile renders while the packer is still running — a visible loop IS a
+      // result, and it is the one you still have when the packer is the broken thing.
+      const j = await pollJob(job_id, (t) => patch(name, {
+        elapsed: t.elapsed, phase: t.phase, ...(t.url ? { loop: assetOf(t) } : null),
+      }));
+      const a = j && assetOf(j);
+      if (j) patch(name, { loop: a, packed: packedOf(j), packError: j.pack_error ?? "", metrics: j.metrics });
       return a;
     } finally { patch(name, { jobId: null }); }
   }
@@ -243,6 +333,33 @@ export default function MotionLabPage() {
     setBaseBusy(true); setErr("");
     try { await doDrawBase(); } catch (e) { setErr(genErr(e)); } finally { setBaseBusy(false); }
   }
+
+  /** Step 2, in the Lab: redraw the base still that is on screen toward the design
+   *  (§2.3). This is the ONE draw the composed description is spent on, exactly as a
+   *  build spends it once in `/api/preview`'s redraw — after which the result IS the
+   *  design, replaces the base, and becomes what the next base draw restacks from (I6). */
+  async function applyDesign() {
+    if (!base) { setErr("Draw the base first — a design is a redraw of it."); return; }
+    setDesignBusy(true); setErr(""); setNotice(""); setDesignElapsed(0); setDesignPhase("pending");
+    try {
+      const { job_id, description, subject: designed, min_strength } = await motionLab.startStill(
+        animal, basePose.trim(), seed,
+        baseDrawOptions(base.asset_id, designStrength,
+                        { color, accessories, axis_picks: axisPicks, extra }));
+      setDesignJob(job_id);
+      setMinStrength(min_strength);
+      const j = await pollJob(job_id, (t) => { setDesignElapsed(t.elapsed); setDesignPhase(t.phase); });
+      const a = j && assetOf(j);
+      if (a) {
+        setBase(a);
+        // The design's OUTPUT record: the still to restack from, and the subject every
+        // later anchor/loop now draws from — a build's step-2 reference, in two fields.
+        setSource({ kind: "design", reference_id: a.asset_id, url: a.url, description, subject: designed });
+        setComposed(description);
+      }
+    } catch (e) { setErr(genErr(e)); }
+    finally { setDesignBusy(false); setDesignJob(null); }
+  }
   async function drawAnchor(name: string) {
     const clause = cells[name].clause.trim();
     if (!clause) return;
@@ -251,10 +368,10 @@ export default function MotionLabPage() {
   }
   async function animateOne(name: string) {
     const clause = cells[name].clause.trim();
-    const source = clause ? cells[name].still : base;
-    if (!source) { setErr(clause ? "Draw this pose's anchor first." : "Draw the base first."); return; }
+    const start = clause ? cells[name].still : base;
+    if (!start) { setErr(clause ? "Draw this pose's anchor first." : "Draw the base first."); return; }
     patch(name, { busy: "animate" }); setErr("");
-    try { await doAnimate(name, source); } catch (e) { setErr(genErr(e)); } finally { patch(name, { busy: "" }); }
+    try { await doAnimate(name, start); } catch (e) { setErr(genErr(e)); } finally { patch(name, { busy: "" }); }
   }
   async function saveOne(name: string) {
     if (!detail) return;
@@ -327,11 +444,11 @@ export default function MotionLabPage() {
       await Promise.all(columns.map(async (name) => {
         try {
           const clause = cells[name].clause.trim();
-          let source = clause ? cells[name].still : b;
-          if (clause && !source) { patch(name, { busy: "draw" }); source = await doDrawAnchor(name, clause); }
-          if (!source) return;
+          let start = clause ? cells[name].still : b;
+          if (clause && !start) { patch(name, { busy: "draw" }); start = await doDrawAnchor(name, clause); }
+          if (!start) return;
           patch(name, { busy: "animate" });
-          await doAnimate(name, source);
+          await doAnimate(name, start);
         } catch (e) { setErr(genErr(e)); }
         finally { patch(name, { busy: "" }); }
       }));
@@ -413,9 +530,16 @@ export default function MotionLabPage() {
     );
   }
 
+  // The photo behind an `upload` source — the only kind that has a triage verdict to show.
+  const upload = source?.kind === "upload" ? source.upload : null;
+  // "Has the operator designed anything?" — the same predicate the server applies (a pick
+  // equal to its axis default is no design at all), so the ✎ marker and the composed
+  // string agree about whether step 2 was used.
+  const designed = !!(color || accessories.length || extra.trim()
+    || Object.entries(axisPicks).some(([axis, key]) => key !== axes.find((a) => a.axis === axis)?.default));
   const enabledPoses = detail ? CANONICAL_POSES.filter((n) => detail.profile.poses[n]?.enabled) : [];
   const columns = CANONICAL_POSES.filter((n) => selected.includes(n) && cells[n]);
-  const anyBusy = baseBusy || busyAll !== "" || Object.values(cells).some((c) => c.busy);
+  const anyBusy = baseBusy || designBusy || busyAll !== "" || Object.values(cells).some((c) => c.busy);
   const baseDirty = basePose.trim() !== (detail?.profile.base_pose ?? "standing").trim();
   const anyDirty = baseDirty || columns.some((n) => cells[n].clause.trim() !== (detail?.profile.poses[n]?.control?.pose ?? "").trim());
   const current = list?.profiles.find((p) => p.key === profileKey);
@@ -453,7 +577,7 @@ export default function MotionLabPage() {
             <label className={labelCls} style={{ color: "var(--muted)" }}>base still (shared)</label>
             <div className="flex items-center gap-2">
               <CellImg asset={base} size={64} placeholder={baseBusy ? (basePhase === "pending" ? "…" : `${baseElapsed}s`) : "—"} />
-              <button onClick={drawBase} disabled={baseBusy}
+              <button onClick={drawBase} disabled={baseBusy || designBusy}
                 className="mono rounded-lg border px-4 py-2 text-sm font-semibold disabled:opacity-45"
                 style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}>
                 {runLabel(baseBusy, basePhase, baseElapsed, "Drawing", base ? "Redraw" : "Draw base")}
@@ -463,40 +587,43 @@ export default function MotionLabPage() {
           </div>
         </div>
 
-        {/* Upload door parity. WITHOUT a reference the Lab draws from text (_base_prompt) —
-            which is only how a TYPED pet is built. A designed or uploaded pet is built from
-            the remix template, and its base is redrawn img2img from the reference. Loading a
-            photo here puts the Lab on that second path, so both can be previewed. */}
+        {/* Upload door parity. A photo puts the base draw on the img2img path a photo pet
+            (and a designed one) takes — the anchors are unaffected either way (§2.6). */}
         <div className="flex flex-wrap items-center gap-3 border-t pt-3" style={{ borderColor: "var(--line)" }}>
           <span className="mono text-xs" style={{ color: "var(--muted)" }}>from a photo</span>
           <label className="mono cursor-pointer rounded-lg border px-3 py-1.5 text-xs"
             style={{ color: "var(--accent)", borderColor: "var(--line)" }}>
-            {refBusy ? "reading…" : reference ? "replace" : "upload"}
+            {refBusy ? "reading…" : upload ? "replace" : "upload"}
             <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="hidden"
               disabled={refBusy}
               onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) uploadReference(f); }} />
           </label>
-          {reference && (
+          {upload && (
             <>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={motionLab.assetUrl(reference.url)} alt="reference" width={48} height={48}
+              <img src={motionLab.assetUrl(upload.url)} alt="reference" width={48} height={48}
                 className="rounded" style={{ objectFit: "cover", border: "1px solid var(--line)" }} />
-              <span className="mono text-xs" style={{ color: reference.usable ? "var(--green)" : "var(--orange)" }}>
-                {reference.usable ? `triage ok — “${reference.subject}”` : "triage REJECTED — no noun from the AI"}
+              <span className="mono text-xs" style={{ color: upload.usable ? "var(--green)" : "var(--orange)" }}>
+                {upload.usable ? `triage ok — “${upload.subject}”` : "triage REJECTED — no noun from the AI"}
               </span>
-              <label className="mono flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
-                base denoise
-                <input type="range" min={0.3} max={0.9} step={0.05} value={refStrength}
-                  onChange={(e) => { setRefStrength(Number(e.target.value)); setBase(null); }} />
-                <span style={{ color: "var(--heading)" }}>{refStrength.toFixed(2)}</span>
-              </label>
-              <button onClick={() => { setReference(null); clearRenders(); }}
+              <button onClick={() => { setSource(null); clearRenders(); }}
                 className="mono rounded border px-2 py-1 text-xs"
                 style={{ color: "var(--faint)", borderColor: "var(--line)" }}>clear</button>
-              <span className="mono w-full text-xs" style={{ color: "var(--faint)" }}>
-                anchors now use the remix template (txt2img, as a build does); only the base is redrawn from the photo
-              </span>
             </>
+          )}
+          {source && (
+            <label className="mono flex items-center gap-2 text-xs" style={{ color: "var(--muted)" }}>
+              base denoise
+              <input type="range" min={MIN_DENOISE} max={MAX_DENOISE} step={DENOISE_STEP} value={baseDenoise}
+                onChange={(e) => { setBaseDenoise(Number(e.target.value)); setBase(null); }} />
+              <span style={{ color: "var(--heading)" }}>{baseDenoise.toFixed(2)}</span>
+            </label>
+          )}
+          {source && (
+            <span className="mono w-full text-xs" style={{ color: "var(--faint)" }}>
+              only the base is redrawn from {source.kind === "upload" ? "the photo" : "the design"};
+              anchors stay txt2img from the subject, as every build draws them
+            </span>
           )}
         </div>
 
@@ -547,6 +674,67 @@ export default function MotionLabPage() {
             {!canWrite && <span className="mono text-xs" style={{ color: "var(--orange)" }}>read-only</span>}
           </div>
         </div>
+      </div>
+
+      {/* STEP 2 — its OWN card, in the design tint (.card-design), directly under the
+          setup it follows. It began as another border-top row inside the card above and
+          that was wrong twice over: it split the setup card's own three rows in half, and
+          "what does the pet look like" read as one more piece of "which animal, which
+          profile" when it is a different kind of decision entirely. One card, one
+          question — the same rule the three-step designer is built on. */}
+      <div className="card card-design mb-3 flex flex-col gap-3 p-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <button onClick={() => setDesignOpen((v) => !v)}
+            className="mono rounded-lg border px-3 py-1.5 text-xs"
+            style={{ color: "var(--gold)", borderColor: "rgba(167,139,250,0.4)" }}>
+            {designOpen ? "▾" : "▸"} design (step 2){designed ? " ✎" : ""}
+          </button>
+          <span className="mono text-xs" style={{ color: "var(--faint)" }}>
+            what the pet LOOKS like — redraws the base still; the poses below draw from{" "}
+            <span style={{ color: source?.kind === "design" ? "var(--gold)" : "var(--faint)" }}>
+              “{subject || "…"}”
+            </span>
+            {source?.kind === "design" && " (the colour rides along; the rest was spent on the redraw)"}
+          </span>
+          {/* The RESULT, where the button that produced it is. "Apply design" replaces the
+              shared base still (I6), whose thumbnail lives in the setup card — so without
+              this tile the operator presses Redraw and the output appears in a different
+              card, often scrolled off screen. A redraw you cannot see is not a preview. */}
+          <div className="ml-auto flex items-center gap-3">
+            <div className="flex flex-col items-center gap-1">
+              <CellImg asset={base} size={72}
+                placeholder={designBusy ? (designPhase === "pending" ? "…" : `${designElapsed}s`) : "no base"} />
+              <span className="mono text-xs" style={{ color: "var(--faint)" }}>
+                {composed ? "designed" : "base still"}
+              </span>
+            </div>
+            <button onClick={applyDesign} disabled={designBusy || baseBusy || !base}
+              className="mono rounded-lg border px-4 py-1.5 text-xs font-semibold disabled:opacity-45"
+              style={{ background: "rgba(167,139,250,0.14)", color: "var(--gold)", borderColor: "rgba(167,139,250,0.5)" }}
+              title={base ? undefined : "draw the base first — a design is a redraw of it"}>
+              {runLabel(designBusy, designPhase, designElapsed, "Redrawing", "Apply design")}
+            </button>
+            {designBusy && <CancelBtn onClick={() => cancelJob(designJob)} />}
+          </div>
+        </div>
+        {designOpen && (
+          <DesignStep
+            color={color} accessories={accessories} axisPicks={axisPicks} extra={extra}
+            strength={designStrength} axes={axes} minStrength={minStrength}
+            onColor={setColor}
+            onAccessory={(a) => setAccessories((list) => list.includes(a)
+              ? list.filter((x) => x !== a)
+              : [...list, a].slice(0, MAX_ACCESSORIES))}
+            onAxisPick={(axis, key) => setAxisPicks((p) => ({ ...p, [axis]: key }))}
+            onExtra={setExtra}
+            onStrength={setDesignStrength}
+          />
+        )}
+        {composed && (
+          <div className="mono border-t pt-2 text-xs" style={{ borderColor: "rgba(167,139,250,0.25)", color: "var(--faint)" }}>
+            spent on the base: <span style={{ color: "var(--gold)" }}>“{composed}”</span>
+          </div>
+        )}
       </div>
 
       {/* Poses — right below the motion profile: the available poses come from it */}
@@ -663,7 +851,7 @@ export default function MotionLabPage() {
         {columns.map((name) => {
           const cell = cells[name];
           const isAnchored = !!cell.clause.trim();
-          const source = isAnchored ? cell.still : base;
+          const start = isAnchored ? cell.still : base;
           const dirty = cell.clause.trim() !== (detail?.profile.poses[name]?.control?.pose ?? "").trim();
           return (
             <div key={name} className="card w-56 shrink-0 overflow-hidden p-0">
@@ -696,20 +884,51 @@ export default function MotionLabPage() {
                 <textarea value={cell.clause} onChange={(e) => patch(name, { clause: e.target.value })}
                   placeholder="pose clause (empty = uses base)"
                   className="mono mb-2 min-h-[44px] w-full resize-y rounded px-2 py-1 text-xs outline-none" style={inputStyle} />
-                <CellImg asset={source} size={168}
+                <CellImg asset={start} size={168}
                   placeholder={cell.busy === "draw" ? runLabel(true, cell.phase, cell.elapsed, "Drawing", "") : isAnchored ? "Draw anchor" : "Draw base"} />
                 <ActionRow label={runLabel(cell.busy === "draw", cell.phase, cell.elapsed, "Drawing", "Draw anchor")}
                   disabled={cell.busy !== "" || !isAnchored} onClick={() => drawAnchor(name)} tone="draw"
                   onCancel={cell.busy === "draw" ? () => cancelJob(cell.jobId) : undefined} />
               </div>
 
-              {/* Animation section — visually distinct (green) */}
+              {/* Animation section — visually distinct (green). TWO tiles, and they are the
+                  instrument (SPEC_MOTION_LAB_DESIGN_PARITY §2.5): the raw loop as ComfyUI
+                  made it, then the SAME animation packed. Whatever the packer did to the pet
+                  is the visible difference between them, in one run — which is what answers
+                  "which step caused it". Same 40 s of GPU, no A/B to set up. */}
               <div className="m-3 mt-0 rounded-lg p-2" style={{ background: "rgba(52,211,153,0.06)", border: "1px solid rgba(52,211,153,0.22)" }}>
                 <div className="mono mb-1 text-xs font-semibold" style={{ color: "var(--green)" }}>▸ animation</div>
                 <CellImg asset={cell.loop} size={168}
                   placeholder={cell.busy === "animate" ? runLabel(true, cell.phase, cell.elapsed, "Animating", "") : "Animate"} />
+
+                {/* The packed tile appears WHEN IT APPEARS: the loop is published first and
+                    the pack follows (~6 s), so the raw tile renders while the packer is still
+                    running. Holding both back for one atomic update would cost you the result
+                    you still have when the packer is the broken thing. */}
+                <div className="mono mb-1 mt-2 text-xs font-semibold" style={{ color: "var(--gold)" }}>▸ packed</div>
+                {cell.packed ? (
+                  <div className="overflow-hidden rounded-lg" style={{ border: "1px solid var(--line)", width: 168, height: 168 }}>
+                    <PosePlayer source={cell.packed} pose={name} size={168} checkered />
+                  </div>
+                ) : (
+                  <div className="mono flex items-center justify-center rounded-lg px-2 text-center text-xs"
+                    style={{ width: 168, height: 168, color: cell.packError ? "var(--orange)" : "var(--faint)",
+                             background: "#151515", border: "1px dashed var(--line)" }}>
+                    {cell.packError
+                      ? `packing failed: ${cell.packError}`
+                      : cell.busy === "animate" && cell.phase === "packing" ? "packing…" : "—"}
+                  </div>
+                )}
+                {/* A number beside the picture is what turns "that looks off" into a report —
+                    and it comes from the same function scripts/probe_matte_fill.py prints. */}
+                {cell.metrics && (
+                  <div className="mono mt-1 text-xs"
+                    style={{ color: cell.metrics.hard_zero_px ? "var(--orange)" : "var(--green)" }}>
+                    {cell.metrics.line}
+                  </div>
+                )}
                 <ActionRow label={runLabel(cell.busy === "animate", cell.phase, cell.elapsed, "Animating", "Animate")}
-                  disabled={cell.busy !== "" || !source} onClick={() => animateOne(name)} tone="animate"
+                  disabled={cell.busy !== "" || !start} onClick={() => animateOne(name)} tone="animate"
                   onCancel={cell.busy === "animate" ? () => cancelJob(cell.jobId) : undefined} />
               </div>
 

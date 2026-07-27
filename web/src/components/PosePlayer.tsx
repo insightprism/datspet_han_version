@@ -13,24 +13,55 @@ import { useEffect, useRef } from "react";
 import { petManifestUrl, petSheetUrl } from "@/lib/api";
 import type { RawManifest } from "@/pet";
 
+/**
+ * WHERE THE FRAMES COME FROM. Two shapes, because there are two kinds of caller
+ * (SPEC_MATTE_REPAIR_ORDER §12.4 / SPEC_MOTION_LAB_DESIGN_PARITY §2.5):
+ *
+ *   petId              a SAVED pet — the result panel's PoseGallery. Derives both URLs.
+ *   {sheetUrl,
+ *    manifestUrl}      an arbitrary sheet — the Motion Lab's packed tile, which is a
+ *                      scratch bundle with no pet row behind it.
+ *
+ * A union rather than a second component: the Lab's packed tile must be rendered by the
+ * SAME code the user's result card uses, or "does this imitate what really happens" has
+ * no answer. A second frame-cycling implementation is exactly how the two would start
+ * disagreeing about fps, column count or the final-frame duplicate.
+ */
+export type PoseSource = { petId: string } | { sheetUrl: string; manifestUrl: string };
+
+const urlsFor = (src: PoseSource) =>
+  "petId" in src
+    ? { manifest: petManifestUrl(src.petId), sheet: petSheetUrl(src.petId) }
+    : { manifest: src.manifestUrl, sheet: src.sheetUrl };
+
 interface Props {
-  petId: string;
+  /** A saved pet id — the original call shape, unchanged for PoseGallery. */
+  petId?: string;
+  /** …or an explicit sheet + manifest, for a bundle that was never saved as a pet. */
+  source?: PoseSource;
   pose: string;
   size?: number;
+  /** Draw a checkerboard behind the frames, so MISSING ALPHA is visible (§2.5). */
+  checkered?: boolean;
 }
 
-export default function PosePlayer({ petId, pose, size = 128 }: Props) {
+export default function PosePlayer({ petId, source, pose, size = 128, checkered }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const src: PoseSource | null = source ?? (petId ? { petId } : null);
+  // Depend on the resolved URLs, not the object identity: `source={{…}}` is a fresh
+  // object every render, and an effect keyed on it would restart the animation each time.
+  const { manifest: manifestUrl, sheet: sheetUrl } = src ? urlsFor(src) : { manifest: "", sheet: "" };
 
   useEffect(() => {
+    if (!manifestUrl || !sheetUrl) return;
     let cancelled = false;
     let raf = 0;
 
     (async () => {
-      const m: RawManifest = await (await fetch(petManifestUrl(petId))).json();
+      const m: RawManifest = await (await fetch(manifestUrl, { credentials: "include" })).json();
       const sheet = new Image();
       sheet.crossOrigin = "anonymous";
-      sheet.src = petSheetUrl(petId);
+      sheet.src = sheetUrl;
       await sheet.decode();
       if (cancelled || !canvasRef.current) return;
 
@@ -75,14 +106,34 @@ export default function PosePlayer({ petId, pose, size = 128 }: Props) {
       cancelled = true;
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [petId, pose]);
+  }, [manifestUrl, sheetUrl, pose]);
 
   return (
     <canvas
       ref={canvasRef}
       width={256}
       height={256}
-      style={{ width: size, height: size, imageRendering: "auto" }}
+      style={{
+        width: size, height: size, imageRendering: "auto",
+        // A checkerboard, drawn in CSS so nothing lands in the pixels being judged. On
+        // white, missing alpha is invisible — and a matte defect that only shows against
+        // a background is the exact class of bug this substrate exists to catch (§2.5).
+        ...(checkered ? {
+          backgroundColor: CHECKER_LIGHT,
+          backgroundImage: `linear-gradient(45deg, ${CHECKER_DARK} 25%, transparent 25%),
+                            linear-gradient(-45deg, ${CHECKER_DARK} 25%, transparent 25%),
+                            linear-gradient(45deg, transparent 75%, ${CHECKER_DARK} 75%),
+                            linear-gradient(-45deg, transparent 75%, ${CHECKER_DARK} 75%)`,
+          backgroundSize: `${CHECKER_PX}px ${CHECKER_PX}px`,
+          backgroundPosition: `0 0, 0 ${CHECKER_PX / 2}px, ${CHECKER_PX / 2}px -${CHECKER_PX / 2}px, -${CHECKER_PX / 2}px 0`,
+        } : null),
+      }}
     />
   );
 }
+
+// Mid-greys: light enough that black fill reads as black, dark enough that white fur
+// reads as white. A checkerboard of pure white/black would hide one or the other.
+const CHECKER_LIGHT = "#8a8a8a";
+const CHECKER_DARK = "#6e6e6e";
+const CHECKER_PX = 16;

@@ -398,24 +398,78 @@ export const motionAdmin = {
 export interface LabAsset { asset_id: string; url: string; ms: number }
 // Generation is a JOB (it outlasts the dev proxy's connection timeout): start →
 // poll /job/{id} → the page shows an elapsed timer and can /cancel.
+// What the hole fill did to one packed pose (SPEC_MATTE_REPAIR_ORDER §1). Computed by
+// `factory.matte_fill_damage` — the same function scripts/probe_matte_fill.py prints, so a
+// Lab number and a probe number cannot disagree. `hard_zero_px` is the one that decides:
+// opaque pure black is arithmetically impossible from a matte, so any non-zero count IS the
+// defect. A high `filled_pct` alone is not damage — the otter bundle was 23% filled and shipped clean.
+export interface LabMatteMetrics {
+  hard_zero_px: number;
+  filled_pct: number;
+  glaring_pct: number;
+  line: string;           // the preformatted readout, so the tile and the probe say it identically
+}
 export interface LabJob {
   state: "running" | "done" | "error" | "canceled";
-  phase: "pending" | "running";   // waiting in ComfyUI's serial queue, vs actively generating
+  // "packing" is F4's stage (§12.2): the loop is already published and served while the
+  // packer runs, so a client can render the raw tile before the packed one exists.
+  phase: "pending" | "running" | "packing";
   asset_id: string | null;
   url: string | null;
   ms: number | null;
   error: string | null;
   elapsed: number;
+  // F4's second result slot. All null on `pack: false` or before the pack lands.
+  packed_asset_id: string | null;
+  packed_url: string | null;           // the packed SHEET, for PosePlayer
+  packed_manifest_url: string | null;  // …and its manifest, which is where fps/frames live
+  packed_zip_url: string | null;  // the real bundle — feed it to scripts/probe_matte_fill.py
+  metrics: LabMatteMetrics | null;
+  // A packer failure, NAMED — deliberately not `error`, because a job whose pack failed
+  // still produced a ~40 s loop and "which stage broke" must be readable off the record.
+  pack_error: string | null;
+}
+// Step 2's structured design, as the Lab sends it (SPEC_MOTION_LAB_DESIGN_PARITY §2.2).
+// The SERVER composes it — `prompt_fragment` never reaches the browser, so a browser-side
+// composer would be a second implementation of ordering rules still under calibration.
+export interface LabDesign {
+  color?: string;
+  accessories?: string[];
+  axis_picks?: Record<string, string>;
+  extra?: string;
+}
+export interface LabStillOptions {
+  /** The still to redraw FROM. Decides img2img vs txt2img — never the prompt template (§2.6). */
+  reference_id?: string;
+  /** The shared base still, as opposed to a pose anchor. EVERY base draw sets it (§2.6). */
+  base?: boolean;
+  strength?: number;
+  /** Spent on a base redraw of a reference and nowhere else — the server 400s otherwise (I13). */
+  design?: LabDesign;
+}
+// What the draw spent, and what it leaves behind — all known at request time, so they ride
+// the START response rather than the job record (I5). LabJob stays a job-status shape.
+export interface LabStillStarted {
+  job_id: string;
+  /** The exact string spent on THIS draw: the composed design, or the subject if undesigned. */
+  description: string;
+  /** The subject a build would now carry into step 3 — "white snow leopard". See poseSubject. */
+  subject: string;
+  /** The denoise floor the design forced, so the strength control can say so. */
+  min_strength: number | null;
 }
 const labFetch = (path: string, init?: RequestInit) =>
   adminApiFetch("/api/admin/motion-lab", path, init);
 export const motionLab = {
-  // clause "" → the standing base; a clause → the pose anchor (§3.9.1). `opts.reference_id`
-  // switches the prompt template to the remix one (as a build does when a reference exists);
-  // `opts.base` marks the shared base still, which is the only draw done img2img.
+  // clause "" → the standing base; a clause → the pose anchor (§3.9.1). Build the opts with
+  // `baseDrawOptions` (labDraw.ts) rather than by hand — `base` selects the prompt SENTENCE.
   startStill: (animal: string, clause: string, seed?: number,
-               opts?: { reference_id?: string; base?: boolean; strength?: number }): Promise<{ job_id: string }> =>
-    labFetch("/still", { method: "POST", body: JSON.stringify({ animal, clause, seed, ...opts }) }),
+               opts?: LabStillOptions): Promise<LabStillStarted> => {
+    const { design, ...draw } = opts ?? {};
+    // The design fields are flat on the wire (one StillBody), grouped in the client so a
+    // caller cannot half-send one.
+    return labFetch("/still", { method: "POST", body: JSON.stringify({ animal, clause, seed, ...draw, ...design }) });
+  },
   // Upload a photo into the Lab. Runs the REAL upload door's triage + captioner, so that
   // path is exercised here rather than only in a 3-minute designer build.
   uploadReference: (file: File): Promise<LabReference> => {
@@ -423,8 +477,11 @@ export const motionLab = {
     fd.append("image", file);
     return labFetch("/reference", { method: "POST", body: fd });
   },
-  startAnimate: (asset_id: string, animal: string, profile_key: string, pose_name: string, seed?: number): Promise<{ job_id: string }> =>
-    labFetch("/animate", { method: "POST", body: JSON.stringify({ asset_id, animal, profile_key, pose_name, seed }) }),
+  // Runs the Wan loop AND then the shipped packer, as one job (F4). `pack: false` is the
+  // bisection lever — the loop alone, skipping the eviction tax on a batch.
+  startAnimate: (asset_id: string, animal: string, profile_key: string, pose_name: string,
+                 seed?: number, pack = true): Promise<{ job_id: string }> =>
+    labFetch("/animate", { method: "POST", body: JSON.stringify({ asset_id, animal, profile_key, pose_name, seed, pack }) }),
   job: (job_id: string): Promise<LabJob> => labFetch(`/job/${encodeURIComponent(job_id)}`),
   cancel: (job_id: string): Promise<unknown> => labFetch(`/cancel/${encodeURIComponent(job_id)}`, { method: "POST" }),
   config: (): Promise<{ endpoints: LabEndpoint[] }> => labFetch("/config"),
@@ -763,12 +820,24 @@ export function referenceImageUrl(referenceId: string): string {
   return `${API_URL}/api/reference/${encodeURIComponent(referenceId)}.png`;
 }
 
-// The design-step vocabulary, filtered server-side by the reference's resolved
-// surface (SPEC_PET_DESIGN_AXES §4). Without a referenceId the server returns
-// the universal axes — enough for the flow to reason about defaults before an
-// animal is chosen. Credentialed: the reference is owner-scoped (§7.3).
-export async function fetchDesignAxes(referenceId?: string): Promise<{ axes: DesignAxis[] }> {
-  const qs = referenceId ? `?reference_id=${encodeURIComponent(referenceId)}` : "";
+// The design-step vocabulary, filtered server-side by the resolved surface
+// (SPEC_PET_DESIGN_AXES §4). Two ways to name the animal, and the server prefers
+// `referenceId` when both are given — never merges them:
+//   referenceId  the designer, which always holds a reference by step 2
+//   animal       the Motion Lab, which has free text and no reference (§2.1)
+// Neither → the universal axes: a menu endpoint must not dead-end the step.
+//
+// An OPTIONS OBJECT, not two optional positional strings (I8): `fetchDesignAxes(animal)`
+// would type-check, be read as a reference id, fail to load, and degrade silently to the
+// universal axes — the call that looks most obviously right breaking in the one way this
+// endpoint is designed never to complain about. Credentialed: references are owner-scoped.
+export async function fetchDesignAxes(
+  opts: { referenceId?: string; animal?: string } = {},
+): Promise<{ axes: DesignAxis[] }> {
+  const params = new URLSearchParams();
+  if (opts.referenceId) params.set("reference_id", opts.referenceId);
+  else if (opts.animal) params.set("animal", opts.animal);
+  const qs = params.toString() ? `?${params}` : "";
   const r = await fetch(`${API_URL}/api/design-axes${qs}`, {
     cache: "no-store",
     credentials: "include",

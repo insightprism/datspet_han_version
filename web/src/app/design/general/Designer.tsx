@@ -45,7 +45,7 @@ import CandidateStrip from "./CandidateStrip";
 import BaseGalleryDialog from "./BaseGalleryDialog";
 import type { PendingSource } from "./pendingSource";
 import { prepareUpload, UploadRejected, ACCEPT_ATTR } from "./prepareUpload";
-import DesignStep from "./DesignStep";
+import DesignStep from "@/components/DesignStep";
 import PoseStep from "./PoseStep";
 
 export default function Designer() {

@@ -69,8 +69,13 @@ def _upload(name="photo.png", mime="image/png"):
     return {"image": (name, buf, mime)}
 
 
-def _axes_for(client, reference_id=""):
-    qs = f"?reference_id={reference_id}" if reference_id else ""
+def _axes_for(client, reference_id="", animal=""):
+    params = []
+    if reference_id:
+        params.append(f"reference_id={reference_id}")
+    if animal:
+        params.append(f"animal={animal}")
+    qs = f"?{'&'.join(params)}" if params else ""
     r = client.get(f"/api/design-axes{qs}")
     assert r.status_code == 200, r.text
     return {a["axis"]: a for a in r.json()["axes"]}
@@ -119,6 +124,31 @@ def test_an_upload_with_a_typed_name_promotes_via_the_keyword_map(client, no_gpu
 def test_no_reference_id_degrades_to_universal_axes(client):
     assert set(_axes_for(client)) == {"body", "pattern", "expression"}
     assert set(_axes_for(client, "deadbeef0000")) == {"body", "pattern", "expression"}
+
+
+# ── the ?animal= door (SPEC_MOTION_LAB_DESIGN_PARITY §2.1, test 3) ───────────
+
+def test_the_axes_menu_matches_the_designer_for_the_same_surface(client, no_gpu):
+    """A caller with free text and no reference — the Motion Lab — gets the SAME menu a
+    reference with that surface gets. Same resolver (`_resolve_typed_surface`), so the
+    Lab's step 2 and the designer's step 2 cannot offer different vocabularies."""
+    ref = client.post("/api/reference", data={"animal": "cockatiel"}).json()
+    assert set(_axes_for(client, animal="cockatiel")) == set(_axes_for(client, ref["reference_id"]))
+    assert "plumage" in _axes_for(client, animal="cockatiel")
+
+
+def test_an_unresolved_animal_gets_universal_axes_and_never_errors(client):
+    """§3.3's unknown-animal posture, on the typed door: a menu endpoint must not
+    dead-end the design step over a name the keyword map has never seen."""
+    assert set(_axes_for(client, animal="a clockwork octopus")) == {"body", "pattern", "expression"}
+
+
+def test_a_reference_id_wins_over_animal(client, no_gpu):
+    """Two sources of surface are never merged (§2.1): the reference is the specific
+    answer and the typed name the general one, so the specific one decides alone."""
+    ref = client.post("/api/reference", data={"animal": "cockatiel"}).json()
+    both = _axes_for(client, ref["reference_id"], animal="tabby cat")
+    assert "plumage" in both and "coat" not in both
 
 
 def test_design_axes_never_serializes_a_prompt_fragment(client, no_gpu):

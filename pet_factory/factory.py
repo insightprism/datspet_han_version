@@ -31,6 +31,7 @@ import time
 import uuid
 import zipfile
 from collections import deque
+from typing import NamedTuple
 from pathlib import Path
 
 import logging
@@ -543,6 +544,84 @@ def _frames_rgba(path: Path) -> list:
             last_err = e
             time.sleep(0.6)
     raise last_err
+
+
+# ---------------------------------------------------------------------------
+# The damage metric (SPEC_MATTE_REPAIR_ORDER §1, §12.4) — ONE function, two callers
+# ---------------------------------------------------------------------------
+# It lives HERE, beside the repair it measures, rather than inside
+# scripts/probe_matte_fill.py, because `webui/motion_lab.py` cannot import a script and
+# the Motion Lab must show the same numbers the probe prints (§12.4). A Lab number and a
+# probe number that can disagree are worse than no number — the same "one knower, many
+# surfaces" rule as design_calibration.effective_strength. The Lab reaches it through the
+# lazy `_pf()` accessor, so the GPU-less web tier still never imports this module.
+#
+# The fill's SIGNATURE is `alpha == 255` (§7). `_fit_square` pastes each cell with itself
+# as the mask, which squares the alpha and leaves genuine matte foreground at ≤254; only
+# `_fill_holes_alpha`, which runs after that paste, writes an exact 255. That inference is
+# a property of the BUGGY path: once the repair moves into the matte stage (F1) the
+# separation is gone, which is why the acceptance gate is stated as "hard-zero == 0" and
+# never as a fill count.
+MATTE_FILL_ALPHA = 255
+# "Colour fully annihilated": a filled pixel whose value channel survived at ≤ this is one
+# whose true colour the premultiplying resample had already destroyed. Fitted against §1's
+# measured table — at 8, the penguin bundle reports 237,164 hard-zero px against the 237,343
+# measured by hand, and the otter (23% filled, visibly clean) reports 0.
+MATTE_ANNIHILATED_LUMA = 8
+# "Glaring": a filled pixel left below this fraction of the pet's OWN median brightness has
+# lost >60% of its true value (§1). Relative, not absolute, and that is the whole subtlety:
+# the otter is a legitimately dark animal, so an absolute cut reports 3% damage on a bundle
+# that shipped clean, while this reports 0.78% against the 0.7% measured.
+MATTE_GLARING_FRACTION = 0.4
+
+
+class MatteDamage(NamedTuple):
+    """What the hole fill did to one sheet (or one pose's cells)."""
+    subject_px: int        # pixels the matte kept (alpha > 0)
+    filled_px: int         # of those, pixels the fill made opaque
+    hard_zero_px: int      # of those, pixels whose colour was annihilated
+    glaring_px: int        # of those, pixels visibly darker than the pet itself
+    intact_luma: int       # the pet's own median brightness — the reference glaring uses
+
+    @property
+    def filled_pct(self) -> float:
+        return self.filled_px / self.subject_px if self.subject_px else 0.0
+
+    @property
+    def glaring_pct(self) -> float:
+        return self.glaring_px / self.subject_px if self.subject_px else 0.0
+
+    def line(self) -> str:
+        """The one-line readout the probe prints and the Lab renders under its tile."""
+        return (f"hard-zero {self.hard_zero_px:,} px · filled {self.filled_pct:.1%} · "
+                f"glaring {self.glaring_pct:.1%}")
+
+
+def matte_fill_damage(sheet: Image.Image) -> MatteDamage:
+    """Measure the hole fill's damage on a packed RGBA sheet (§1's three numbers).
+
+    Pass a whole sprite sheet or a single pose's cells composited together — the
+    arithmetic is per-pixel and holds either way.
+
+    `hard_zero_px` is the number that matters: opaque pure black is arithmetically
+    impossible from a matte (§0.1), so any non-zero count is the defect, and the gate
+    after F1 is that it reads zero on a freshly built pale pet."""
+    px = np.array(sheet.convert("RGBA"))
+    alpha = px[..., 3]
+    luma = px[..., :3].max(axis=-1)            # value channel: a pixel is dark only if ALL of it is
+    subject = alpha > 0
+    filled = alpha == MATTE_FILL_ALPHA
+    # The pet's own brightness, read off the pixels the fill did NOT touch. Falls back to
+    # full white when a sheet is entirely filled, which would itself be the finding.
+    intact = subject & ~filled
+    intact_luma = int(np.median(luma[intact])) if intact.any() else 255
+    return MatteDamage(
+        subject_px=int(subject.sum()),
+        filled_px=int(filled.sum()),
+        hard_zero_px=int((filled & (luma <= MATTE_ANNIHILATED_LUMA)).sum()),
+        glaring_px=int((filled & (luma < MATTE_GLARING_FRACTION * intact_luma)).sum()),
+        intact_luma=intact_luma,
+    )
 
 
 def _fill_holes_alpha(alpha: Image.Image, thr: int = 160) -> Image.Image:
