@@ -64,6 +64,19 @@ the matte needed no repair at all**, which is the number that matters.
 | designer blue corgi¹ | **cyan** | 158,729 | 7,151 | 65.0 |
 | designer blue corgi¹ | white | 140,321 | 10,033 | 5.1 |
 | designer teal corgi¹ | **cyan** | 82,142 | **73,591** ❌ | 71.4 |
+| hyacinth macaw² | **cyan** | 94,218 | **0** ✅ | — |
+| hyacinth macaw² | white | 125,319 | 65 | — |
+| blue jay² | **cyan** | 122,206 | 2,739 ³ | — |
+| blue jay² | white | 153,922 | **0** | — |
+
+² Natural blues, because blue is the plausible collision for a cyan field. Worth noting how
+thin that risk actually is: blue in animals is almost always **structural** — Tyndall
+scattering and photonic nanostructures — rather than pigment, so genuinely blue animals are
+rare. A cartoon render draws them blue anyway, which is why they are tested. The hyacinth
+macaw is the most saturated blue bird there is and returns a perfect matte on cyan.
+
+³ **Not a matte failure — see §2.2.** The 2,739 px the fill closed have a mean colour of
+RGB(104, 236, 222): it swallowed real *background* trapped between the bird's legs.
 
 ¹ `vivid brown corgi, recolored entirely brown` — the DESIGNER path, which flattens a coat
 to one colour and so removes the tonal variation that otherwise separates a pet from a
@@ -182,7 +195,28 @@ choice is made while composing the prompt rather than by looking at pixels. It i
 subsystem rather than a constant, and `surface_keywords.json`'s miss log is the precedent
 for how its map grows.
 
-### 2.2 What this does NOT do
+### 2.2 It makes an existing latent defect VISIBLE — and, for the first time, fixable
+
+`SPEC_MATTE_REPAIR_ORDER` §3.3 records "enclosed-background false positives" as a known
+defect it deliberately does not fix: when the animal's own geometry traps a pocket of real
+background — between the legs, inside a curled tail — `binary_fill_holes` closes it, because
+a hole and a trapped pocket are topologically identical.
+
+**This has always happened.** On a white backdrop the result is a white blob on a pale pet
+and nobody notices. On cyan it is a turquoise patch, and the blue jay row above is one:
+2,739 px at RGB(104, 236, 222) between the legs. Adopting a saturated backdrop therefore
+*surfaces* a defect rather than causing one — the same way F1 surfaced this spec's defect by
+removing the black paint that hid it.
+
+**And the same change makes it solvable.** The reason §3.3 was left alone is that with a
+white backdrop a white pocket and a white fur hole are indistinguishable — the exact
+ambiguity §1 is about. With a known, distinctive backdrop the repair gains a test it never
+had: *do not close a pocket whose pixels look like the backdrop.* On the blue jay the pocket
+is RGB(104, 236, 222) and the bird is RGB(100, 134, 179) — trivially separable. That is a
+follow-up, scoped in §5.8, not part of this change; but it is the reason a saturated
+backdrop is strictly better than a neutral one even though both matte equally well.
+
+### 2.3 What this does NOT do
 
 - **It does not touch the repair.** `_repair_matte_holes` stays exactly as F1 left it. On a
   good backdrop it becomes a no-op, which is the correct end state for a repair: present,
@@ -301,7 +335,12 @@ contact sheets. That is worth remembering when the next matte question arrives.
    measurement demands it: a constant is a one-line change and a resolver is a subsystem.
 6. **What happens to the curated catalog?** §3. Re-curate, or fork the template for curated
    animals. This spec prefers re-curation and does not decide it.
-7. **Does F3 go quiet?** `_MATTE_HARD_HOLE_WARN_FRACTION` fires when a frame has >10% hard
+8. **Fix §3.3 using the known backdrop.** Now cheap and previously impossible: the repair
+   refuses to close an enclosed pocket whose mean colour matches the backdrop within a
+   tolerance. Needs a threshold chosen against real pockets, and a guard for the case where
+   a pet genuinely IS backdrop-coloured in that region. Ships after this spec, not with it —
+   but it is what turns the blue jay's turquoise patch from a known wart into a fixed bug.
+9. **Does F3 go quiet?** `_MATTE_HARD_HOLE_WARN_FRACTION` fires when a frame has >10% hard
    interior holes. If the backdrop change is working, that warning should stop appearing in
    ordinary builds. It is the cheapest possible production signal that this held.
 
