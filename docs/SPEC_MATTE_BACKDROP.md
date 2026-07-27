@@ -68,6 +68,12 @@ the matte needed no repair at all**, which is the number that matters.
 | hyacinth macaw² | white | 125,319 | 65 | — |
 | blue jay² | **cyan** | 122,206 | 2,739 ³ | — |
 | blue jay² | white | 153,922 | **0** | — |
+| peacock² | **cyan** | 90,725 | 3,228 ³ | — |
+| peacock² | white | 122,099 | 5,838 | — |
+| green parrot² | **cyan** | 142,963 | 422 ³ | — |
+| green parrot² | white | 182,932 | 1,545 | — |
+| cyan parakeet² | **cyan** | 112,800 | 346 ³ | — |
+| cyan parakeet² | white | 167,832 | 768 | — |
 
 ² Natural blues, because blue is the plausible collision for a cyan field. Worth noting how
 thin that risk actually is: blue in animals is almost always **structural** — Tyndall
@@ -81,6 +87,28 @@ RGB(104, 236, 222): it swallowed real *background* trapped between the bird's le
 ¹ `vivid brown corgi, recolored entirely brown` — the DESIGNER path, which flattens a coat
 to one colour and so removes the tonal variation that otherwise separates a pet from a
 similar backdrop. The hardest form of the brown/grey collision, and it still mattes whole.
+
+### 1.0 Three things the natural-bird rows settle
+
+**The natural collision does not exist.** A *cyan parakeet on a cyan field* needs 346 px of
+repair — **half** what the same bird needs on white. Real animals carry dark barring, eyes,
+beaks and shading that birefnet locks onto; the peacock (iridescent blue-green, the closest
+natural colour to the backdrop) and a green parrot behave the same way. What broke cyan was
+the `recolored entirely teal` corgi, whose coat is *flat and artificial*. So the hole is not
+"cyan animals" — it is **flat artificial recolours aimed at the backdrop**, reachable only
+through free text, and far narrower than the teal row alone suggests.
+
+**Cyan needs less repair than white on every pet tested**, including birds with nothing in
+common with either colour: 3,228 vs 5,838, 422 vs 1,545, 346 vs 768. White is not a neutral
+default that happens to fail pale pets; it is the worse backdrop generally.
+
+**And the residual on cyan is never the animal.** Every cyan row's closed pixels come back
+backdrop-coloured — RGB(101,233,212), (88,208,183), (95,221,212) — i.e. §3.3 pockets, not
+fur. Every white row's come back white, RGB(~248,248,246), which is **unreadable**: on a
+white field a swallowed background pocket and a repaired fur hole are both white. That is
+not a measurement weakness, it is the ambiguity itself, and it is exactly why §3.3 has been
+unfixable. **The discriminator §5.8 proposes is now validated 6/6** on these rows: on a
+distinctive backdrop, "is this pocket the backdrop?" is a question with an answer.
 
 ### 1.1 What `fill+` actually means — read this before drawing conclusions from the table
 
@@ -335,10 +363,11 @@ contact sheets. That is worth remembering when the next matte question arrives.
    measurement demands it: a constant is a one-line change and a resolver is a subsystem.
 6. **What happens to the curated catalog?** §3. Re-curate, or fork the template for curated
    animals. This spec prefers re-curation and does not decide it.
-8. **Fix §3.3 using the known backdrop.** Now cheap and previously impossible: the repair
-   refuses to close an enclosed pocket whose mean colour matches the backdrop within a
-   tolerance. Needs a threshold chosen against real pockets, and a guard for the case where
-   a pet genuinely IS backdrop-coloured in that region. Ships after this spec, not with it —
+8. **Fix §3.3 using the known backdrop — the discriminator is VALIDATED, 6/6** (§1.0). The
+   repair refuses to close an enclosed pocket whose mean colour matches the backdrop within a
+   tolerance. Every cyan row above separates cleanly; every white row is unreadable, which is
+   the point. Still needs a threshold chosen against real pockets and a guard for a pet that
+   genuinely IS backdrop-coloured in that region. Ships after this spec, not with it —
    but it is what turns the blue jay's turquoise patch from a known wart into a fixed bug.
 9. **Does F3 go quiet?** `_MATTE_HARD_HOLE_WARN_FRACTION` fires when a frame has >10% hard
    interior holes. If the backdrop change is working, that warning should stop appearing in
@@ -362,6 +391,24 @@ contact sheets. That is worth remembering when the next matte question arrives.
    keeps drawing on white.
 
 ---
+
+## 6.1 Peripheral impact — the checklist the fleet roll is gated on
+
+"Confirmed fixed" is not enough on its own; the backdrop is an input to more than the matte.
+Each of these is a *look* or *calibration* question rather than a correctness one, which is
+why they need eyes on them before the pool nodes are rolled:
+
+- **The designer's preview changes.** Step 1's archetype and step 2's preview are the stills
+  a user looks at before pressing Generate, and they would sit on cyan. The most visible
+  non-pet effect of this change, and a deliberate design call.
+- **`compose_design`'s calibration was tuned on WHITE renders** — the colour-word conflict,
+  the 0.9 clamp, the clause ordering (`SPEC_PET_DESIGN_AXES` §8 Phase 3 already flags these
+  as reasoned rather than measured). A recolour now fights a differently-lit source image, so
+  the axis calibration may drift. The Motion Lab's design panel is the instrument for
+  re-checking it.
+- **Curated `base.png` keeps the defect until re-curated** (§3) — a curated base IS the base
+  sprite.
+- **`animal_catalog/**/*.zip` samples** would visibly differ from freshly built pets.
 
 ## 7. Acceptance gate
 
