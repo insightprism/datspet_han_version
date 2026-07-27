@@ -452,6 +452,53 @@ why they need eyes on them before the pool nodes are rolled:
 
 ---
 
+## 8.1 KNOWN COST — the backdrop shrinks the pet by ~40% of its area
+
+**Measured after implementation, 2026-07-27.** Same species, same clause, **same seed**, only
+the backdrop phrase differing. The animal's share is read off the DRAWING (flood the field in
+from the border, count what it cannot reach), so the matte's own quality cannot contaminate it:
+
+| pet | white | cyan | area lost |
+|---|---|---|---|
+| tabby cat | 31.1% | 18.3% | **−41%** |
+| corgi dog | 24.1% | 14.6% | **−39%** |
+
+This is not seed variance — both baselines reproduced exactly on a re-run. Z-Image appears to
+treat a coloured field as a *scene* and leaves environmental space around the subject, where a
+white field reads as "sprite on blank" and it fills.
+
+**Why it matters beyond looks:** the pet occupies ~40% less of the 704² frame, so ~40% fewer
+real pixels of animal survive the downscale into a 256² cell. It is a resolution cost, not
+only a scale one.
+
+**A prompt phrase recovers about half, and no more:**
+
+| variant | share |
+|---|---|
+| white, today's words | 31.1% |
+| cyan, today's words | 18.3% |
+| cyan + `the animal fills the frame` | 17.0% (worse) |
+| cyan + `large in frame, close-up` | 23.7% |
+| cyan + `tightly cropped, the animal fills most of the image` | **25.6%** |
+
+"Fills the frame" making it *worse* suggests the model reads these as composition hints rather
+than scale instructions. So the prompt route is a partial mitigation, not a fix.
+
+**Three options, none of them free** — this is an open decision, not a settled one:
+
+1. **Accept.** Sprites are complete, just smaller in their cell. Cheapest, and pre-launch the
+   inconsistency with existing pets does not matter.
+2. **Take the partial recovery** — one clause, ~half the loss back, no new failure modes.
+3. **Crop to the subject at pack time.** Fully fixes framing AND the pre-existing variance —
+   even on white, framing ranged 24.1% (corgi) to 41% (snow leopard), so sprite scale has
+   never been consistent. Two caveats: a PER-FRAME crop makes the animal *breathe* through a
+   walk cycle, so it needs one shared box computed from the union of every frame's subject;
+   and it flattens genuine species scale, which is a product question rather than a technical
+   one.
+
+**Not decided here.** It affects every pet built from now on, so it wants a deliberate call
+before any catalog curation happens on top of it.
+
 ## 9. Implementation decisions — closed before code
 
 Found by asking what two implementers would do differently. **I3 is the one that matters**:

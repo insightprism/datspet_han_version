@@ -103,10 +103,14 @@ def remix_still_prompt(animal: str, pose: str = DEFAULT_POSE) -> str:
 # those scripts and both hardcoded "plain white background" — so the backdrop existed in
 # three places and two of them would have been missed. `test_prompt_templates` explicitly
 # excluded this sentence for exactly that reason; now there is one of it.
-CURATION_STILL_TEMPLATE = (
-    "a cute cartoon {species}, side profile view, facing right, standing, "
-    "full body, centered, simple flat shading, storybook style"
-)
+# It carries ONLY what the wrapping template does not already say. It used to repeat the
+# template almost word for word — "a cute cartoon a cute cartoon tabby cat, side profile
+# view, facing right, standing, ... side profile view, facing right, standing, ..." — because
+# it was written as a STANDALONE prompt and later reused as the `animal` of a real build.
+# Every instruction appeared twice, which diluted all of them: asked for a standing side
+# profile, Z-Image drew a sitting cat three seeds out of three. Saying each thing once is
+# what makes "standing" land.
+CURATION_STILL_TEMPLATE = "{species}, full body, centered"
 
 
 def curation_still_prompt(species: str) -> str:
