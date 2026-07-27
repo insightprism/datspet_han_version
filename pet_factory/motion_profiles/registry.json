@@ -4,7 +4,7 @@
     {
       "key": "aquatic",
       "file": "aquatic.json",
-      "label": "Aquatic swimmer — no legs; fins and a tail, body held horizontal, moves by undulating its body and steering with fins. Lives and travels in water A body that swims with a tail or fluke instead of legs belongs here even if its upper half is human-shaped (fish, shark, dolphin, seahorse, ray, mermaid)",
+      "label": "Aquatic swimmer — built to travel through water rather than to walk: fins, flippers or a tail drive it and the body is held horizontal. Flippers and paddles count as fins, so having four of them does not make it four-legged — the test is whether it walks about on land on those limbs, and if it cannot, it belongs here. A body that swims with a tail or fluke instead of legs belongs here even if its upper half is human-shaped. An animal that swims well but still walks on four legs ashore is `quadruped`, not this (fish, shark, dolphin, seahorse, ray, mermaid)",
       "level": 3
     },
     {
@@ -16,13 +16,13 @@
     {
       "key": "humanoid",
       "file": "humanoid.json",
-      "label": "Humanoid — a person-shaped body: fully UPRIGHT on two legs with the hands free, not used for walking. Strides heel-to-toe with the arms swinging in opposition and the hips counter-rotating, torso stable and vertical. Covers anything built on a human frame, real or invented It must have TWO LEGS that it walks on: a human-headed body with four legs, or with a fish tail instead of legs, is not humanoid — classify those by how they get around (human, alien, superhero, robot, elf, zombie)",
+      "label": "Humanoid — a person-shaped body: fully UPRIGHT on two legs with the hands free, not used for walking. Strides heel-to-toe with the arms swinging in opposition and the hips counter-rotating, torso stable and vertical. Covers anything built on a human frame, real or invented, including shaggy, ape-like or monstrous ones — fur and a beast's face do not make it a `primate` if it strides upright with its hands free. It must have TWO LEGS that it walks on: a human-headed body with four legs, or with a fish tail instead of legs, is not humanoid — classify those by how they get around (human, alien, superhero, robot, elf, zombie)",
       "level": 3
     },
     {
       "key": "primate",
       "file": "primate.json",
-      "label": "Primate — two arms with HANDS plus two legs, torso semi-upright rather than horizontal. Moves on all fours with its hands (or knuckles) in contact with the ground, shoulders rolling with each stride; sits upright, and grips, carries and grooms with its hands It is NOT fully upright and its hands are used for locomotion — a person-shaped body that walks upright with free hands is `humanoid`, not this (monkey, ape, gorilla, chimpanzee, orangutan, lemur)",
+      "label": "Primate — two arms with HANDS plus two legs, torso semi-upright rather than horizontal. Moves on all fours with its hands (or knuckles) in contact with the ground, shoulders rolling with each stride; sits upright, and grips, carries and grooms with its hands. It is NOT fully upright and its hands are used for locomotion — a body that walks fully upright with its hands free is `humanoid`, not this, however ape-like, hairy or beast-like it looks (monkey, ape, gorilla, chimpanzee, orangutan, lemur)",
       "level": 3
     },
     {
