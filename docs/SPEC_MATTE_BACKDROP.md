@@ -54,6 +54,10 @@ the matte needed no repair at all**, which is the number that matters.
 | brown bear | **grey** | 189,274 | **0** | 3.3 |
 | designer brown corgi¹ | white | 213,159 | **0** | 2.9 |
 | designer brown corgi¹ | **grey** | 170,129 | **0** | 3.2 |
+| designer grey corgi¹ | white | 220,667 | **0** | 1.2 |
+| designer grey corgi¹ | **grey** | 125,308 | **47,407** ❌ | 3.9 |
+| elephant | white | 290,110 | 4,202 | 1.3 |
+| elephant | **grey** | 129,119 | **30,190** ❌ | 10.9 |
 
 ¹ `vivid brown corgi, recolored entirely brown` — the DESIGNER path, which flattens a coat
 to one colour and so removes the tonal variation that otherwise separates a pet from a
@@ -67,7 +71,12 @@ repair is drawing the animal. Every other row needs no repair whatsoever.
 is **pet colour ≈ backdrop colour**. The grey parrot mattes fine on white (`fill+ 665`)
 and the white leopard does not. Contrast is the variable.
 
-**And the collision threshold is far looser than raw colour distance suggests.** Grey sits
+**A pet on a field of its OWN colour is unsegmentable — that is the whole rule.** A flat
+grey corgi and an elephant both matte cleanly on white and both collapse on grey
+(`fill+ 47,407` and `30,190`), exactly as the white leopard collapses on white. The defect
+is symmetric and it is about the PAIR, never about the backdrop alone.
+
+**And short of that near-match, the threshold is far looser than raw colour distance suggests.** Grey sits
 61 RGB units from the designer's `brown` — by distance alone the worst collision of any
 candidate — and a brown bear, a brown corgi and an *entirely recoloured* brown corgi all
 matte whole on grey (`fill+ 0`). A grey parrot on grey does too. The model's own dark
@@ -105,18 +114,34 @@ Z-Image draws a *scene* with a coloured background, not a key. So colour keying 
 replace segmentation here, and the ~134 lines of cutout apparatus in `factory.py` stay.
 We are choosing a backdrop that helps birefnet, not one that replaces it.
 
-Given that, the ranking inverts from what the chroma-key literature would suggest:
+**No fixed colour survives §1's symmetry.** An earlier draft of this spec proposed grey on
+the strength of the parrot and brown results; the grey-corgi and elephant rows killed it.
+Whatever constant is chosen, a pet of that colour defeats it — and the designer hands users
+a colour picker, so they can aim at it deliberately. The candidates, with what each is
+actually worth:
 
-| candidate | for | against |
+| candidate | clean on | breaks on |
 |---|---|---|
-| **grey** ✅ | flattest the model draws (4.0); `fill+ 0` on both test pets; neutral, so least spill risk | 61 RGB units from the designer's `brown` — the closest collision of any candidate |
-| green | `fill+ 0` on both; far from most pet colours | vignettes badly (38+); users can pick green pets; green parrots and iguanas exist |
-| magenta | `fill+ 0` on the leopard | worst vignetting (60); **~5× the edge spill of green on pale fur** (34.3% vs 6.2%), the documented blonde-hair failure; users can pick pink and purple |
-| white ❌ | — | the defect |
+| white (today) | grey, brown, dark pets | **pale pets** — the live defect |
+| grey | white, brown pets | **grey pets** — `fill+ 47,407` |
+| green | leopard, parrot | untested against a green pet; vignettes (38+) |
+| magenta | leopard | parrot `fill+ 306`; worst vignetting (60); ~5× green's spill on pale fur |
 
-**Grey, pending §5's open question.** It is the only candidate the model renders flat, and
-flatness is what a segmentation model benefits from too — a busy backdrop gives birefnet
-more to be wrong about.
+Two designs survive, and §5 says which to measure first:
+
+**(a) A colour no pet can be.** The designer's palette is ten fixed colours, and a
+saturated cyan/teal is not among them and is ~100+ RGB from every one — a gap the brown/grey
+result (61, survived) suggests is ample. Natural cyan animals do not exist. It stays a
+constant, costs nothing, and its only hole is free text ("teal parrot"), which F3's warning
+would surface. **Untested.**
+
+**(b) Resolve the backdrop from the pet, at fill time.** The shape `base_pose`,
+`motion_profile` and `surface` already use: content plus a keyword map, resolved where the
+animal is known, defaulting to today's white when it is not. Robust by construction — it
+picks a backdrop that contrasts with *this* pet — and it costs no extra GPU, because the
+choice is made while composing the prompt rather than by looking at pixels. It is a
+subsystem rather than a constant, and `surface_keywords.json`'s miss log is the precedent
+for how its map grows.
 
 ### 2.2 What this does NOT do
 
@@ -130,23 +155,38 @@ more to be wrong about.
 
 ---
 
-## 3. The cost, which is the real decision
+## 3. The cost — smaller than it first appears, because the app is pre-launch
 
-**The still is user-visible.** It is the designer's step-1 archetype and step-2 preview —
-the picture someone looks at before pressing Generate. Today it sits on white. It would
-sit on grey.
+**The project is in development. Pets already built do not have to stay compatible**
+(decision, 2026-07-27). That removes most of what looked like the expensive half of this
+change, and it is worth being explicit about what survives that removal and what does not.
 
-**Every curated `base.png` in `animal_catalog/` was drawn on white**, and this is a
-CORRECTNESS problem rather than a cosmetic one. A curated base is fed to Wan directly — it
-*is* the base sprite on the adopt path — so until those files are re-curated, a curated pet
-keeps a white backdrop and keeps this defect while every typed pet is fixed. They are
-human-approved best-of-N selections and do not silently regenerate. Either they are
-re-curated, or the catalog silently diverges from the rest of the app.
+**Gone as a concern:**
 
-**The drawing itself changes.** Measured, not assumed: swapping the backdrop phrase changed
-the leopard's composition — smaller in frame, differently posed. The template is part of
-the prompt, so every pet drawn after this change differs from the same pet drawn before it.
-That is why this is a content decision with catalog-wide reach, not a bug fix.
+- *Existing bundles.* Already-built pets keep whatever they were built with. Nothing
+  migrates, nothing is re-issued, and a pet built before this change is not "wrong" — it is
+  just older. The backdrop never reaches a bundle anyway; it is removed by the cutout.
+- *"The drawing changes."* It does — measured, the backdrop phrase changed the leopard's
+  composition, smaller in frame and differently posed. Pre-launch, that is a restyle, not a
+  regression. It would be a serious cost against a live catalog users had already adopted
+  from; it is not one now.
+- *Catalog divergence over time.* Nothing has to be kept consistent with pets that already
+  exist.
+
+**Still real, and the only work this change actually carries:**
+
+- **Curated `base.png` files must be re-curated**, and this is CORRECTNESS, not tidiness. A
+  curated base is fed to Wan **directly** — it *is* the base sprite on the adopt path — so a
+  curated base drawn on white keeps this defect after the fix, while every typed pet is
+  cured. That is a live divergence *going forward*, not a legacy one, which is why it
+  survives the pre-launch dispensation. They are human-approved best-of-N selections and do
+  not silently regenerate.
+- **The still is user-visible.** It is the designer's step-1 archetype and step-2 preview —
+  what someone looks at before pressing Generate. It would sit on grey. That is a design
+  call to make deliberately rather than a cost to absorb: a grey field may read better or
+  worse behind a pale pet, and it is worth one look before committing.
+- **Pool worker nodes carry `prompt_templates.py`.** An unrolled node keeps drawing on
+  white, so the fleet roll is part of shipping this, not a follow-up.
 
 ---
 
@@ -190,7 +230,12 @@ contact sheets. That is worth remembering when the next matte question arrives.
 1. ~~**Does a BROWN pet survive a grey backdrop?**~~ **ANSWERED — yes, in all three forms
    tested** (§1): a brown bear, a brown corgi, and the designer's `recolored entirely
    brown`, all `fill+ 0`. The 61-unit collision does not materialise in practice.
-2. **A pet recoloured to the backdrop's OWN colour is the untested case.** The white
+2. ~~**A pet recoloured to the backdrop's OWN colour is the untested case.**~~ **ANSWERED —
+   it breaks, decisively** (§1): a flat grey corgi `fill+ 47,407` and an elephant
+   `fill+ 30,190` on grey, both `fill+ 0`-to-4k on white. No fixed backdrop survives. The
+   text below is kept because its reasoning was wrong in an instructive way — the palette
+   argument and the live parrot both suggested grey was safe, and neither predicted this.
+   ORIGINAL TEXT: The white
    leopard broke on white; by symmetry a flat grey pet should break on grey. Two things
    make it a smaller risk than it sounds, and neither makes it zero:
    - **`grey` is not in the designer's palette.** The ten colours are red, orange, yellow,
@@ -200,7 +245,12 @@ contact sheets. That is worth remembering when the next matte question arrives.
    The route that remains open is free text — "anything else?" → *grey* — and typed
    animals whose name implies flat grey. Worth two renders before shipping; it is the one
    place the argument still rests on symmetry rather than measurement.
-3. **Does the backdrop want to be per-pet?** Only if (2) fails. The backdrop would become
+3. **Which of §2.1's two designs?** (2) failed, so this is now the live question, and it
+   is one experiment: **run the adversarial set against a saturated cyan** — white leopard,
+   grey elephant, brown bear, and a designer-recoloured BLUE pet (the nearest palette colour
+   to cyan). All `fill+ 0` → design (a), a constant, and this spec stays a one-line change.
+   Any failure → design (b), the per-pet resolver, and the spec grows a keyword map.
+   ORIGINAL TEXT: Only if (2) fails. The backdrop would become
    content resolved at fill time from the pet's colour — the same shape as `base_pose` and
    `motion_profile`, which are already resolved that way. Do not build it until the
    measurement demands it: a constant is a one-line change and a resolver is a subsystem.
@@ -220,8 +270,10 @@ contact sheets. That is worth remembering when the next matte question arrives.
    and that both templates carry it.
 3. **Re-render the §7 baselines and probe them**: `white snow leopard`, the pale case that
    started this, plus one brown pet — `fill+ 0` and `hard-zero 0` on both.
-4. **Content regeneration** (§3): the curated `base.png` files and
-   `animal_catalog/**/*.zip` samples. This is the bulk of the work and it is not code.
+4. **Re-curate the curated `base.png` files** (§3) — required for correctness, since a
+   curated base is the base sprite. The `animal_catalog/**/*.zip` samples are cosmetic by
+   comparison and can follow whenever convenient; pre-launch, nothing depends on them
+   matching pets that already exist.
 5. Roll the pool fleet — worker nodes carry `prompt_templates.py` too, so an unrolled node
    keeps drawing on white.
 
