@@ -38,9 +38,16 @@ it perfectly, which is exactly how this defect shipped for months.
 down from 45.8% to 5.3% — the matte no longer leans on the repair at all. See
 `SPEC_MATTE_BACKDROP`, which fixes the *cause* this spec's F1 was compensating for.
 
-**Still open on this spec:** §8 (regenerate the baked bundles + roll the pool fleet), and
-§7 gate 4's real-matte equivalence at full scale — the scipy/BFS agreement was verified on
-**16/16** real alpha channels from a Lab bundle, not the 128 a full build offers.
+**THE FLEET IS ROLLED — 2026-07-27, `0c5a5f9`, GREEN 7/7** (`roll_pet_fleet.sh --stash
+--verify-build`; `omen-pet` ff'd 29 commits, `dual-nvidia-pet` already at HEAD, neither
+version-mixed, a real build per node returning `alpha=(0, 255)`). Verified in each worker's
+own importable engine, not just in git: the repair call precedes the resample and no
+`putalpha` follows it on either node. So every pool-built pet now gets F1 + the cyan backdrop.
+The user's own production runs — primates and humanoids — were the go-ahead (§8).
+
+**Still open on this spec:** §7 gate 4's real-matte equivalence at full scale — the scipy/BFS
+agreement was verified on **16/16** real alpha channels from a Lab bundle, not the 128 a full
+build offers. §8's remaining baked bundles are both scratch/draft, neither ships.
 
 **F4 IS BUILT AND THE INSTRUMENT WORKS — 2026-07-27, verified on real GPU.** §6 step 0
 (`factory.matte_fill_damage` + `scripts/probe_matte_fill.py`) and F4 (packing as the last
@@ -370,6 +377,17 @@ enclosed gap (between legs, inside a curled tail). Post-F1 that region fills wit
 colour instead of black. Both are wrong; neither is new (the fill already fired there); and
 background-coloured is far less jarring than black. Not a regression, and not addressed.
 
+> **REOPENED as a question, 2026-07-27 — `docs/INVESTIGATE_CYAN_BACKDROP_ARTIFACT.md`.**
+> "Background-coloured is far less jarring than black" was written when the background was
+> **white**. `SPEC_MATTE_BACKDROP` made it vivid cyan, so these regions now come out as
+> saturated teal patches — measured at 2,168 px (0.10% of subject) across a real 8-pose
+> `white snow leopard`, worst in `eat`. The metrics cannot see it: cyan luma is 230, and
+> `hard_zero` / `glaring` only measure darkness, so the probe calls those bundles **clean**.
+>
+> **PARKED, not accepted-again:** the artifact was invisible to the naked eye on the live
+> profile page, and that is real evidence. The brief's first step is the perceptual one and
+> it is allowed to close this. If it does, the answer belongs **here**, replacing this note.
+
 ### 3.4 Holes that touch the frame border
 Still left transparent, correctly — that is real background. None of the snow leopard's damage
 was border-connected (100% interior, §0.1), so this is not the current failure mode.
@@ -506,8 +524,13 @@ after the gate passes:
 - `created_pets/penguin_dualnvidia_test.zip` — worst measured (41%); gitignored, so regenerate or
   delete.
 - The staging `white_snow_leopard` pet (job `d401be570e91`) — a user-visible draft.
-- **Pool worker nodes carry this code** (`pool-install-handler`): both pet nodes need a roll
-  (`scripts/roll_pet_fleet.sh --verify-build`) or every pool-built pet keeps the defect.
+- ~~**Pool worker nodes carry this code**~~ — **ROLLED 2026-07-27 to `0c5a5f9`, GREEN 7/7.**
+  `scripts/roll_pet_fleet.sh --stash --verify-build`: `omen-pet` ff'd `c18f69a → 0c5a5f9` (29
+  commits), `dual-nvidia-pet` already tracked HEAD (it imports the engine from this checkout),
+  both handlers re-installed at v3, both units restarted, neither version-mixed. The real
+  per-node build returned `breed=black_bat alpha=(0, 255) real-transparency` on both.
+  Delivery followed A6's order — push to GitHub, `git fetch` on omen, *then* roll — because
+  the script deliberately does not fetch.
 
 ---
 

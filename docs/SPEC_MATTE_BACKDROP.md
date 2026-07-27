@@ -399,8 +399,10 @@ contact sheets. That is worth remembering when the next matte question arrives.
    spec: `cat/tabby`, which carried 795 hard-zero px of F1-era damage, and the staged
    `friendlypup.zip` sample. Both were pre-existing debt, neither blocked — and both are now
    cleared: tabby regenerated (`589de78`), friendlypup replaced by `cat/snowleopard`.
-5. Roll the pool fleet — worker nodes carry `prompt_templates.py` too, so an unrolled node
-   keeps drawing on white.
+5. ~~Roll the pool fleet~~ — **DONE 2026-07-27, `0c5a5f9`, GREEN 7/7.** Worker nodes carry
+   `prompt_templates.py` too, so an unrolled node would keep drawing on white. Confirmed by
+   importing the constant in each worker's own engine: both `omen-pet` and `dual-nvidia-pet`
+   report `STILL_BACKDROP = 'flat vivid cyan background'` / `(100, 230, 215)`.
 
 ---
 
