@@ -49,6 +49,15 @@ DEFAULT_POSE = "standing"
 # with `factory.STILL_BACKDROP_RGB`, which is the same decision as a pixel (§9 I5).
 STILL_BACKDROP = "flat vivid cyan background"
 
+# The same decision as a PIXEL, for the places that paint the field instead of asking a
+# model to draw it (`factory._prep_reference_image` pads and flattens onto it). It lives
+# HERE, beside the phrase, because a backdrop split across two modules is a backdrop that
+# will eventually disagree with itself — `factory` re-exports it rather than redefining it.
+# A tuple needs no imports, so this module stays pure data and GPU-less-safe.
+# MEASURED from what the model actually draws for the phrase above: across six renders its
+# cyan field came out RGB(88-104, 208-236, 183-222).
+STILL_BACKDROP_RGB = (100, 230, 215)
+
 # From-scratch still (Z-Image txt2img). "facing right" is load-bearing: DatsMe
 # authors pets facing right and mirrors them for leftward movement, so the source
 # must face right.
@@ -82,3 +91,24 @@ def remix_still_prompt(animal: str, pose: str = DEFAULT_POSE) -> str:
     `base_still_prompt`, so a reference-based pet's fly anchor matches its designed
     still's palette)."""
     return REMIX_STILL_TEMPLATE.format(animal=animal, pose=pose)
+
+
+# The CURATION still (animal_catalog/generate_candidates.py, generate_sample.py). It is
+# deliberately different from the two above — "full body, centered", because a curated
+# base.png wants the whole animal in frame — and it is used differently: the rendered
+# string is passed as the `animal` of a real build, so one of the templates above wraps it
+# and supplies the backdrop. It must therefore carry NO background clause of its own.
+#
+# It lives here, with the other sentences, because it was duplicated verbatim in both of
+# those scripts and both hardcoded "plain white background" — so the backdrop existed in
+# three places and two of them would have been missed. `test_prompt_templates` explicitly
+# excluded this sentence for exactly that reason; now there is one of it.
+CURATION_STILL_TEMPLATE = (
+    "a cute cartoon {species}, side profile view, facing right, standing, "
+    "full body, centered, simple flat shading, storybook style"
+)
+
+
+def curation_still_prompt(species: str) -> str:
+    """The from-scratch prompt for a CURATED base still (SPEC_PET_DESIGNER_PLATFORM §4.5)."""
+    return CURATION_STILL_TEMPLATE.format(species=species)

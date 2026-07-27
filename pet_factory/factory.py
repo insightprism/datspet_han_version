@@ -593,18 +593,15 @@ MATTE_GLARING_FRACTION = 0.4
 # one that passes every damaged one.
 MATTE_DAMAGE_PX_PER_FRAME = 100
 
-# The BACKDROP as a pixel (SPEC_MATTE_BACKDROP §9 I4). `prompt_templates.STILL_BACKDROP`
-# is the same decision as a SENTENCE — that one asks Z-Image to draw the field, this one
-# paints it where there is no model to ask: `_prep_reference_image` pads a non-square
-# reference and flattens an isolated upload's transparency, and both used to use white.
-# That path is not cosmetic — `_base_sprite`'s as-is branch runs it on EVERY web build,
-# and the upload door runs it with isolate=True, which cuts the subject out and would
-# otherwise drop it straight onto the white field this spec exists to remove.
-#
-# The value is MEASURED, not chosen: across six renders the model drew its cyan field at
-# RGB(88-104, 208-236, 183-222). It only has to be close enough not to seam against the
-# drawn backdrop it pads.
-STILL_BACKDROP_RGB = (100, 230, 215)
+# The BACKDROP as a pixel — RE-EXPORTED from prompt_templates, never redefined here
+# (SPEC_MATTE_BACKDROP §9 I5). That module owns the backdrop in both of its forms: the
+# SENTENCE that asks Z-Image to draw the field, and this tuple for the places that paint it
+# because there is no model to ask — `_prep_reference_image` pads a non-square reference and
+# flattens an isolated upload's transparency, and both used to use white. That path is not
+# cosmetic: `_base_sprite`'s as-is branch runs it on EVERY web build, and the upload door
+# runs it with isolate=True, which cuts the subject out and would otherwise drop it straight
+# onto the white field this change exists to remove.
+STILL_BACKDROP_RGB = prompt_templates.STILL_BACKDROP_RGB
 
 
 class MatteDamage(NamedTuple):

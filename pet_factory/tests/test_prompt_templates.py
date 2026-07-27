@@ -120,3 +120,52 @@ def test_templates_import_without_the_ml_stack():
     src = open(module.__file__).read()
     for banned in ("import numpy", "import PIL", "from PIL", "import torch", "import rembg"):
         assert banned not in src
+
+
+# ── SPEC_MATTE_BACKDROP: ONE owner for the backdrop ──────────────────────────────────────
+
+def test_the_backdrop_is_defined_in_exactly_one_module():
+    """The backdrop existed in FIVE places before this was consolidated: both still
+    templates, `factory._prep_reference_image`'s white pad, and a curation sentence
+    duplicated verbatim in generate_candidates.py and generate_sample.py — the last two
+    hardcoding "plain white background" where nothing would have caught them (this file's
+    own docstring used to exempt them).
+
+    So this walks the package and fails if a background phrase is written anywhere except
+    `prompt_templates`. A backdrop split across modules is a backdrop that will eventually
+    disagree with itself, and the failure mode is silent: a pet drawn on the wrong field."""
+    import re
+    from pathlib import Path
+
+    pkg = Path(pt.__file__).resolve().parent
+    owner = Path(pt.__file__).resolve()
+    phrase = re.compile(r"\b(?:white|cyan|teal|grey|gray|green|magenta)\s+background\b", re.I)
+    offenders = []
+    for path in pkg.rglob("*.py"):
+        if path.resolve() == owner or "tests" in path.parts or "__pycache__" in path.parts:
+            continue
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            code = line.split("#")[0]                      # prose in comments is fine
+            if phrase.search(code):
+                offenders.append(f"{path.relative_to(pkg)}:{n}: {line.strip()}")
+    assert not offenders, (
+        "a background phrase is hardcoded outside prompt_templates:\n  " + "\n  ".join(offenders))
+
+
+def test_the_pixel_backdrop_is_re_exported_not_redefined():
+    """§9 I5 — `factory.STILL_BACKDROP_RGB` must BE the one in prompt_templates, not a
+    second tuple that happens to match today. Identity, not equality: two equal literals
+    drift the moment one of them is edited."""
+    from pet_factory import factory
+    assert factory.STILL_BACKDROP_RGB is pt.STILL_BACKDROP_RGB
+
+
+def test_the_curation_prompt_carries_no_backdrop_of_its_own():
+    """The curation sentence is passed as the `animal` of a real build, so a template wraps
+    it and supplies the backdrop. A background clause here would put TWO backdrops in one
+    prompt — which is what both curation scripts used to do."""
+    rendered = pt.curation_still_prompt("tabby cat")
+    assert "background" not in rendered, f"the curation prompt names a backdrop: {rendered!r}"
+    # …and it is what the templates wrap, so the pair composes to exactly one backdrop.
+    wrapped = pt.base_still_prompt(rendered)
+    assert wrapped.count("background") == 1

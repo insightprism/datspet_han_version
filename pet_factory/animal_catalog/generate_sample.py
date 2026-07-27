@@ -33,6 +33,8 @@ _REPO = _DIR.parent.parent
 sys.path.insert(0, str(_REPO / "webui"))
 import pool_client  # noqa: E402
 
+from pet_factory import prompt_templates  # noqa: E402
+
 _CANDIDATES_ROOT = _DIR / "_candidates"
 
 
@@ -64,9 +66,10 @@ def generate_sample(animal, breed, key, poses, motion_profile, timeout_s=900.0):
     if b is None:
         print(f"unknown breed {animal}/{breed!r}"); sys.exit(1)
     species = f"{b.get('label', breed)} {a.get('label', animal)}".lower()
-    prompt = (f"a cute cartoon {species}, side profile view, facing right, standing, "
-              "full body, centered, simple flat shading, plain white background, "
-              "storybook style")
+    # ONE definition of the curation sentence (prompt_templates), shared with
+    # generate_candidates.py. It carries no background clause: this string is passed as the
+    # `animal` of a real build, whose template supplies the backdrop (SPEC_MATTE_BACKDROP).
+    prompt = prompt_templates.curation_still_prompt(species)
     # Pin the catalog motion profile (the curated path, §4.2).
     profile = motion_profile or b.get("motion_profile") or a.get("motion_profile")
     poses_pkg = {p: True for p in poses}

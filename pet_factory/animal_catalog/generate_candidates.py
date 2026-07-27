@@ -43,16 +43,17 @@ _REPO = _DIR.parent.parent
 sys.path.insert(0, str(_REPO / "webui"))
 import pool_client  # noqa: E402
 
+from pet_factory import prompt_templates  # noqa: E402
+
 _CANDIDATES_ROOT = _DIR / "_candidates"
 
 
 def _base_prompt(animal: str) -> str:
-    """The from-scratch base-still prompt. Mirrors factory._base_prompt wording
-    (side profile, facing right, plain background, storybook style) so a promoted
-    candidate matches the curation contract and is a drop-in base.png."""
-    return (f"a cute cartoon {animal}, side profile view, facing right, standing, "
-            "full body, centered, simple flat shading, plain white background, "
-            "storybook style")
+    """The from-scratch base-still prompt — ONE definition, in prompt_templates, shared with
+    generate_sample.py. Both scripts used to carry their own copy ending in "plain white
+    background"; after SPEC_MATTE_BACKDROP that would have put two different backdrops in
+    one sentence, since this string is wrapped by a real build's template."""
+    return prompt_templates.curation_still_prompt(animal)
 
 
 def _idle_frame_from_bundle(zip_bytes: bytes) -> bytes:
