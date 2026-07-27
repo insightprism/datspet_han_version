@@ -33,8 +33,14 @@ remain cheaper than the shipped order.
 weak here.` That frame's matte is genuinely broken; before F3 the repair would have hidden
 it perfectly, which is exactly how this defect shipped for months.
 
-**Not yet done:** §7 gate 2 (a full `./make_pet.sh "white snow leopard"` build) and §8
-(regenerating the baked bundles + rolling the pool fleet).
+**Gate 2 is now GREEN too** (2026-07-27, after the backdrop change): a full 3-pose build of
+`white snow leopard` reports `hard-zero 0` on every pose, zero F3 warnings, and `filled`
+down from 45.8% to 5.3% — the matte no longer leans on the repair at all. See
+`SPEC_MATTE_BACKDROP`, which fixes the *cause* this spec's F1 was compensating for.
+
+**Still open on this spec:** §8 (regenerate the baked bundles + roll the pool fleet), and
+§7 gate 4's real-matte equivalence at full scale — the scipy/BFS agreement was verified on
+**16/16** real alpha channels from a Lab bundle, not the 128 a full build offers.
 
 **F4 IS BUILT AND THE INSTRUMENT WORKS — 2026-07-27, verified on real GPU.** §6 step 0
 (`factory.matte_fill_damage` + `scripts/probe_matte_fill.py`) and F4 (packing as the last
@@ -57,9 +63,11 @@ bundle carries **16 cells from a 17-frame loop** (the duplicated final frame dro
 `runtime_role` / `view`, and `scripts/probe_matte_fill.py` reads the Lab's own `.zip`
 unchanged and prints **the same numbers the tile shows** — one instrument, both surfaces.
 
-**F1 has NOT been built.** The defect above is the live bug, measured; the repair is still
-§2. That ordering is deliberate (§12.7): a workbench that cannot show the defect while the
-defect is still there is not yet an instrument, and now it demonstrably can.
+**F1 had NOT been built when this paragraph was written**, and that was the point: the
+ordering in §12.7 is deliberate — a workbench that cannot show the defect while the defect
+is still there is not yet an instrument. F4 proved it could, and F1 shipped immediately
+after (see the header). Kept in the past tense rather than deleted, because the sequence is
+the argument for building the instrument first.
 
 
 **Status:** proposed, 2026-07-27. **Rev.3 (2026-07-27) — F4 is now a STAGE of the Lab's animate job,
