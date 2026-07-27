@@ -58,14 +58,37 @@ the matte needed no repair at all**, which is the number that matters.
 | designer grey corgi¹ | **grey** | 125,308 | **47,407** ❌ | 3.9 |
 | elephant | white | 290,110 | 4,202 | 1.3 |
 | elephant | **grey** | 129,119 | **30,190** ❌ | 10.9 |
+| white snow leopard | **cyan** | 161,848 | **0** ✅ | 57.9 |
+| elephant | **cyan** | 197,314 | **0** ✅ | 63.0 |
+| brown bear | **cyan** | 196,928 | **0** ✅ | 59.0 |
+| designer blue corgi¹ | **cyan** | 158,729 | 7,151 | 65.0 |
+| designer blue corgi¹ | white | 140,321 | 10,033 | 5.1 |
+| designer teal corgi¹ | **cyan** | 82,142 | **73,591** ❌ | 71.4 |
 
 ¹ `vivid brown corgi, recolored entirely brown` — the DESIGNER path, which flattens a coat
 to one colour and so removes the tonal variation that otherwise separates a pet from a
 similar backdrop. The hardest form of the brown/grey collision, and it still mattes whole.
 
-**Read the first row.** On white, birefnet keeps 97k px of a pet whose body is ~160k, and
-the fill adds 103k — *more than the matte returned*. The matte is a line drawing and the
-repair is drawing the animal. Every other row needs no repair whatsoever.
+### 1.1 What `fill+` actually means — read this before drawing conclusions from the table
+
+`fill+` is **how much the sprite depends on the repair**, not whether it is broken. The
+distinction cost a wrong reading during this investigation and is easy to repeat:
+
+- **`fill+ 0`** — the matte is complete unaided. Nothing can go wrong downstream.
+- **`fill+` high** — the matte came back a partial or line drawing and
+  `_repair_matte_holes` reconstructs the body. That WORKS while every dropped region is
+  **enclosed**, and produces a visible bite the moment one is **open** to the background,
+  because `binary_fill_holes` closes pockets only. Verified: the teal corgi's 73,591 px were
+  all enclosed and its final sprite is complete — while the white leopard's SLEEP pose, at
+  comparable reliance, had one region open through the curl and shipped a hole.
+
+So high `fill+` is a loaded gun rather than a corpse. It is the right thing to design
+against — a matte that needs no repair cannot be defeated by an unlucky pose — but a single
+high-`fill+` frame is not itself proof of a broken pet.
+
+**Read the first row with that in mind.** On white, birefnet keeps 97k px of a pet whose
+body is ~160k and the fill adds 103k — *more than the matte returned*. The repair is drawing
+the animal. That is maximal fragility, and the sleep pose is where it cashed out.
 
 **Read the second and sixth rows together.** The failure is not "white pets are hard"; it
 is **pet colour ≈ backdrop colour**. The grey parrot mattes fine on white (`fill+ 665`)
@@ -95,7 +118,8 @@ BASE_STILL_TEMPLATE  = "... simple flat shading, {backdrop}, storybook style"
 REMIX_STILL_TEMPLATE = "... simple flat shading, {backdrop}, storybook style"
 ```
 
-with the backdrop a **named constant**, not a literal, beside the templates it feeds.
+with the backdrop a **named constant**, not a literal, beside the templates it feeds — the
+tested phrase is `flat vivid cyan background` (§2.1).
 
 ### 2.1 Which colour — and why not a chroma key
 
@@ -127,15 +151,30 @@ actually worth:
 | green | leopard, parrot | untested against a green pet; vignettes (38+) |
 | magenta | leopard | parrot `fill+ 306`; worst vignetting (60); ~5× green's spill on pale fur |
 
-Two designs survive, and §5 says which to measure first:
+Two designs were candidates; **(a) is now measured and is the proposal:**
 
-**(a) A colour no pet can be.** The designer's palette is ten fixed colours, and a
-saturated cyan/teal is not among them and is ~100+ RGB from every one — a gap the brown/grey
-result (61, survived) suggests is ample. Natural cyan animals do not exist. It stays a
-constant, costs nothing, and its only hole is free text ("teal parrot"), which F3's warning
-would surface. **Untested.**
+**(a) A colour no pet can be — SATURATED CYAN. ✅ MEASURED.** Every pet that has defeated
+another backdrop comes back with a **complete matte, `fill+ 0`**: the white leopard that
+broke white, the elephant that broke grey, and the brown bear. The palette-reachable
+near-collision — a `recolored entirely blue` corgi — is *better* on cyan (7,151) than on
+today's white (10,033), so blue is comfortably far enough, and those holes are the corgi's
+own white chest blaze rather than the backdrop.
 
-**(b) Resolve the backdrop from the pet, at fill time.** The shape `base_pose`,
+The one failure is the exact match: a `recolored entirely teal` corgi returns a line drawing
+on cyan (`fill+ 73,591`), the same shape as a white pet on white. **No fixed backdrop can
+escape its own colour** (§1), so the question is only how reachable that colour is — and
+cyan is not in the designer's ten-colour palette. It takes someone typing "teal" into the
+free-text box, and F3's warning is what would surface it.
+
+Note the flatness column is irrelevant here and the reason is worth keeping: cyan vignettes
+hard (58–65) and still returns perfect mattes, because **birefnet is a segmentation model,
+not a chroma keyer.** It reads shape and semantics; an uneven field costs it nothing. This
+is also why the film industry's reason for choosing green — twice as many green photosites
+on a Bayer sensor, and distance from skin tones — does not transfer: there is no sensor and
+no skin here.
+
+**(b) Resolve the backdrop from the pet, at fill time — NOT NEEDED unless (a)'s hole
+matters.** The shape `base_pose`,
 `motion_profile` and `surface` already use: content plus a keyword map, resolved where the
 animal is known, defaulting to today's white when it is not. Robust by construction — it
 picks a backdrop that contrasts with *this* pet — and it costs no extra GPU, because the
@@ -245,18 +284,24 @@ contact sheets. That is worth remembering when the next matte question arrives.
    The route that remains open is free text — "anything else?" → *grey* — and typed
    animals whose name implies flat grey. Worth two renders before shipping; it is the one
    place the argument still rests on symmetry rather than measurement.
-3. **Which of §2.1's two designs?** (2) failed, so this is now the live question, and it
-   is one experiment: **run the adversarial set against a saturated cyan** — white leopard,
-   grey elephant, brown bear, and a designer-recoloured BLUE pet (the nearest palette colour
-   to cyan). All `fill+ 0` → design (a), a constant, and this spec stays a one-line change.
-   Any failure → design (b), the per-pet resolver, and the spec grows a keyword map.
-   ORIGINAL TEXT: Only if (2) fails. The backdrop would become
+3. ~~**Which of §2.1's two designs?**~~ **ANSWERED — (a), a saturated cyan constant** (§2.1).
+   The adversarial set all came back `fill+ 0`. The per-pet resolver is not needed and should
+   not be built: it is a subsystem where a constant suffices, and §1 shows it would still
+   have an exact-match hole of its own if the resolver ever guessed wrong.
+4. **Is cyan the right cyan?** The tested phrase is `flat vivid cyan background`. The exact
+   value is unpinned — the model interprets it — and a slightly different phrasing may sit
+   nearer or further from the palette's `blue`. Worth pinning the phrase in the constant and
+   re-running the blue corgi if it is ever reworded.
+5. **Does the free-text hole need a guard?** A user typing "teal" or "cyan" into the
+   free-text field aims straight at the backdrop. Cheapest mitigation is not a colour
+   resolver but a note from F3's warning telling us it happened; the next cheapest is
+   refusing those two words in free text. Do neither until it is seen. The backdrop would become
    content resolved at fill time from the pet's colour — the same shape as `base_pose` and
    `motion_profile`, which are already resolved that way. Do not build it until the
    measurement demands it: a constant is a one-line change and a resolver is a subsystem.
-4. **What happens to the curated catalog?** §3. Re-curate, or fork the template for curated
+6. **What happens to the curated catalog?** §3. Re-curate, or fork the template for curated
    animals. This spec prefers re-curation and does not decide it.
-5. **Does F3 go quiet?** `_MATTE_HARD_HOLE_WARN_FRACTION` fires when a frame has >10% hard
+7. **Does F3 go quiet?** `_MATTE_HARD_HOLE_WARN_FRACTION` fires when a frame has >10% hard
    interior holes. If the backdrop change is working, that warning should stop appearing in
    ordinary builds. It is the cheapest possible production signal that this held.
 
