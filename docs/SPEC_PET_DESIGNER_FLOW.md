@@ -1774,10 +1774,16 @@ Platform §4.4 calls it the zero-GPU business lever — free users steered to ad
 generate — and it is worth reviving deliberately rather than losing by attrition.
 
 It never worked anyway, and not for a code reason: **`catalog.json` defines no samples**, so
-the gallery rendered nothing even when it existed. That is a CONTENT gap. A real dog sample
-sits staged at `_candidates/dog/samples/friendlypup.zip` (commit `b64dc3c`), one
-`promote_sample.py dog friendlypup` from being real. Whoever revives the lever needs a
-surface AND that promote — and the surface is now a decision, not a leftover.
+the gallery rendered nothing even when it existed. That is a CONTENT gap. A real sample sits
+staged at `_candidates/cat/samples/snowleopard.zip`, one `promote_sample.py cat snowleopard`
+from being real. Whoever revives the lever needs a surface AND that promote — and the surface
+is now a decision, not a leftover.
+
+The staged sample was `dog/friendlypup` (commit `b64dc3c`) until 2026-07-27, when it was
+replaced: built before `SPEC_MATTE_REPAIR_ORDER`'s F1, it carried 38,933 hard-zero px of
+black-blob damage baked into its sheet. The snow leopard is a post-fix build, verified on a
+live DatsMe profile, and measures 161. Samples are curated content — swapping one for a better
+pet is a curation decision, not a migration.
 
 ### 11.3 Still not done
 

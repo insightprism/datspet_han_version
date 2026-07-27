@@ -464,8 +464,10 @@ def test_poll_budget_is_bounded_and_actually_polls():
 # reads as a stylistic choice (§1.2).
 #
 # FIXTURES ARE GENERATED, not committed: there is no precedent for binaries under
-# pet_factory/tests, and the obvious real-data fixture (friendlypup.zip) is scheduled for
-# regeneration in §8 — a test keyed to it would change inputs the moment the fix ships.
+# pet_factory/tests, and the one real-data candidate — the catalog's staged sample bundle —
+# is CONTENT, replaceable the moment a better pet is curated (the damaged `dog/friendlypup`
+# was swapped for `cat/snowleopard` the day the fix landed). A test keyed to curated content
+# breaks on a curation decision, which is not a code regression.
 # The real-matte equivalence run (128/128 channels) is §7's gate, against a bundle, where
 # it can be re-run rather than frozen.
 

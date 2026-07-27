@@ -396,8 +396,9 @@ contact sheets. That is worth remembering when the next matte question arrives.
    started this, plus one brown pet — `fill+ 0` and `hard-zero 0` on both.
 4. **Nothing required in the catalog** (§3, corrected): the curated bases are transparent
    cutouts and composite onto the new backdrop unchanged. Optional and unrelated to this
-   spec: redraw `cat/tabby`, which carries 795 hard-zero px of F1-era damage, and the
-   `friendlypup.zip` sample (608 px/frame). Both are pre-existing debt, neither blocks.
+   spec: `cat/tabby`, which carried 795 hard-zero px of F1-era damage, and the staged
+   `friendlypup.zip` sample. Both were pre-existing debt, neither blocked — and both are now
+   cleared: tabby regenerated (`589de78`), friendlypup replaced by `cat/snowleopard`.
 5. Roll the pool fleet — worker nodes carry `prompt_templates.py` too, so an unrolled node
    keeps drawing on white.
 

@@ -426,8 +426,9 @@ be **red-green verified** — confirmed failing against the shipped order before
 **Fixtures are generated, not committed.** Build the matte set in-test from a seeded
 `numpy.random.default_rng` plus a few hand-drawn shapes (hard hole, soft hole, border-connected
 bite, donut). Two reasons this is not laziness: committing binaries into `pet_factory/tests` has no
-precedent, and the obvious real-data fixture — `friendlypup.zip` — **is scheduled for regeneration
-in §8**, so a test keyed to it would change inputs the moment the fix ships. The real-matte
+precedent, and the obvious real-data fixture — the catalog's staged sample bundle — **is content,
+replaceable on a curation decision** (§8: `dog/friendlypup` was swapped for `cat/snowleopard` the
+day the fix landed), so a test keyed to it breaks on something that is not a code change. The real-matte
 equivalence run (128/128, §2.2) belongs in the §7 gate, against a bundle, where it can be re-run
 rather than frozen.
 5. `test_non_hole_pixels_are_unchanged_by_the_repair_move` — pins §2.1's byte-identical claim.
@@ -494,8 +495,14 @@ tells you it still does.
 The damage is baked into shipped bytes; no code change repairs an existing `.zip`. Regenerate
 after the gate passes:
 
-- `pet_factory/animal_catalog/_candidates/dog/samples/friendlypup.zip` — **ships with the repo**
-  as curated catalog content, 7.5% glaring. The highest priority.
+- ~~`_candidates/dog/samples/friendlypup.zip`~~ — **DONE 2026-07-27.** Shipped with the repo as
+  curated catalog content at 7.5% glaring / 38,933 hard-zero px. Not regenerated: **replaced**.
+  A sample is curated content, and a verified-good post-fix bundle already existed — the
+  `white_snow_leopard` the user rendered on a live DatsMe profile (161 hard-zero px, 0.9%
+  glaring, and 8 poses to friendlypup's 4). Now staged as
+  `_candidates/cat/samples/snowleopard.zip`. Rebuilding a corgi to preserve the *dog* slot
+  would have spent GPU time to re-derive a bundle we already had a better one than; the slot
+  is not a contract, `list_samples()` enumerates whatever is there.
 - `created_pets/penguin_dualnvidia_test.zip` — worst measured (41%); gitignored, so regenerate or
   delete.
 - The staging `white_snow_leopard` pet (job `d401be570e91`) — a user-visible draft.

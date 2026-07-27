@@ -223,8 +223,8 @@ export function catalogBaseOptions(animals: CatalogAnimal[]): CatalogBaseOption[
 //               writing them.)
 //
 // So it is three-quarters dead, and reviving it needs all three: promote the one real
-// sample (staged at _candidates/dog/samples/friendlypup.zip, commit b64dc3c — a path
-// _samples_dir never looks at), build an entry point, and test the endpoint.
+// sample (staged at _candidates/cat/samples/snowleopard.zip — a path _samples_dir never
+// looks at), build an entry point, and test the endpoint.
 //
 // `CatalogSample` / `CatalogAnimal.samples` below stay: /api/catalog really does return
 // the field, and the type must model the response, not the consumer.

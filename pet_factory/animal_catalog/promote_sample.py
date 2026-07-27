@@ -7,7 +7,7 @@ deliberately manual, like base-image promotion.
 
 Usage
 -----
-    python3 pet_factory/animal_catalog/promote_sample.py dog friendlypup
+    python3 pet_factory/animal_catalog/promote_sample.py cat snowleopard
     python3 pet_factory/animal_catalog/promote_sample.py --list
 """
 from __future__ import annotations

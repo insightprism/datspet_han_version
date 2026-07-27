@@ -16,7 +16,7 @@ correctly-labeled pet of that animal, staged and reviewed, never a relabel.
 
 Usage
 -----
-    python3 pet_factory/animal_catalog/generate_sample.py --animal dog --breed corgi --key friendlypup
+    python3 pet_factory/animal_catalog/generate_sample.py --animal dog --breed corgi --key corgipup
     # poses default to walk+idle+run+sit (a lively showcase); override with --poses.
 """
 from __future__ import annotations

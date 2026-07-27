@@ -137,8 +137,10 @@ contains 32 near-black pixels of its own**, so the repaired sheet is blacker now
 drawing it came from.
 
 **Guard tests, each verified red against the shipped order before the move** — 8 in
-`test_cutout_hygiene.py`, with fixtures generated from a seeded RNG rather than committed (the
-obvious real-data fixture, `friendlypup.zip`, is itself scheduled for regeneration).
+`test_cutout_hygiene.py`, with fixtures generated from a seeded RNG rather than committed. The
+obvious real-data fixture was the catalog's staged sample bundle, and declining it proved
+correct within the day: `dog/friendlypup` (38,933 hard-zero px, built pre-fix) was retired for
+`cat/snowleopard` on 2026-07-27. A test keyed to curated content breaks on a curation decision.
 
 **Two mutation tests** confirmed the new guards actually guard: retyping an input cap fails the
 parity test; removing the clamp floor fails the strength test.
