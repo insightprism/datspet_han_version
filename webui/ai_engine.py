@@ -40,6 +40,22 @@ from pet_factory import ai_models, ai_purposes
 
 API_KEY_ENV = "DATSPET_AI_API_KEY"
 
+# Thinking is sent EXPLICITLY on every call rather than left to the model's default.
+# A purpose's `max_tokens` budgets its JSON ANSWER (32 tokens for a profile key), but
+# on a thinking-by-default model it caps thinking + answer TOGETHER: the model spends
+# the whole budget reasoning, returns an empty text block, and the JSON parse fails.
+# That reads as a model failure and degrades silently to each caller's fallback — so
+# flipping one purpose's `tier` from "fast" to "balanced" could downgrade it to its
+# offline path with nothing in the logs to say so. Declaring it here means a tier or
+# catalog edit cannot change what `max_tokens` means. Measured against every model in
+# ai_models/catalog.json: all accept it.
+THINKING_DISABLED = {"type": "disabled"}
+
+# `stop_reason` when the model ran out of `max_tokens` mid-answer. A truncated reply is
+# a normal 200 carrying a fragment — nothing raises on its own, which is exactly how
+# this stayed invisible. Checking it is what makes truncation loud.
+STOP_REASON_TRUNCATED = "max_tokens"
+
 
 class AIUnavailable(RuntimeError):
     """The engine cannot serve this call right now: the API key is unset, or the
@@ -51,6 +67,22 @@ class AIError(RuntimeError):
     """A call was attempted and failed: an unknown purpose key, a bad image
     contract, an API error, or output that was not valid JSON. Distinct from
     AIUnavailable — this is a real failure a caller surfaces, not a degrade."""
+
+
+class AITruncated(AIError):
+    """The model hit `max_tokens` before finishing its JSON, so the answer is a
+    fragment rather than an object. A SUBCLASS of AIError so every caller that
+    already degrades keeps degrading unchanged — what it adds is a name in the
+    ai_usage ledger's `error_code` and a message naming the knob to turn, instead
+    of a bare JSONDecodeError that blames the model for the budget.
+
+    It carries the tokens the call really billed: a truncated call is a PAID call,
+    and the ledger must not record it as zero (§5)."""
+
+    def __init__(self, message: str, *, input_tokens: int = 0, output_tokens: int = 0):
+        super().__init__(message)
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
 
 @dataclass(frozen=True)
@@ -122,13 +154,21 @@ def _call_model(*, model_id: str, system_prompt: str, messages: list,
         max_tokens=max_tokens,
         system=system_prompt,
         messages=messages,
+        thinking=THINKING_DISABLED,
         output_config={"format": {"type": "json_schema", "schema": output_schema}},
     )
-    text = next((b.text for b in response.content if getattr(b, "type", None) == "text"), "")
     usage = {
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
     }
+    if getattr(response, "stop_reason", None) == STOP_REASON_TRUNCATED:
+        raise AITruncated(
+            f"{model_id} hit max_tokens={max_tokens} before finishing its JSON. Raise "
+            f"`max_tokens` on the purpose — it budgets the ANSWER, so a longer schema "
+            f"needs more room, and any model that thinks spends this budget first.",
+            input_tokens=usage["input_tokens"], output_tokens=usage["output_tokens"],
+        )
+    text = next((b.text for b in response.content if getattr(b, "type", None) == "text"), "")
     return text, usage
 
 
@@ -198,6 +238,12 @@ def call_purpose(purpose_key: str, *, image: Optional[bytes] = None,
             max_tokens=int(purpose["max_tokens"]), output_schema=purpose["output_schema"],
         )
     except AIUnavailable:
+        raise
+    except AITruncated as e:
+        # The API answered and BILLED, then we rejected the fragment — record the real
+        # tokens it carries, and re-raise as itself so `error_code` names the budget.
+        _record(ts, purpose_key, model_id, e.input_tokens, e.output_tokens, ok=False,
+                error_code=type(e).__name__, external_user_id=external_user_id)
         raise
     except Exception as e:
         # The API never billed (no usage to record) — log a zero-token failure row.

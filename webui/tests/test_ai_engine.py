@@ -29,6 +29,14 @@ def _ok_model(text_obj, in_tok=11, out_tok=7):
     return fake
 
 
+def _truncating_model(engine, in_tok=9, out_tok=32):
+    """A seam that answered, billed, and ran out of budget mid-JSON."""
+    def fake(**kwargs):
+        raise engine.AITruncated(
+            f"hit max_tokens={out_tok}", input_tokens=in_tok, output_tokens=out_tok)
+    return fake
+
+
 # ── the happy path: resolve → call → record → return ─────────────────────────
 
 def test_call_purpose_resolves_records_and_returns(engine, dpp_env, monkeypatch):
@@ -133,6 +141,91 @@ def test_usage_ledger_is_append_only(engine, dpp_env, monkeypatch):
     row = dpp_env["db"].ai_usage_summary()[0]
     assert row["calls"] == 3, "a re-run is a NEW row, never an UPDATE"
     assert row["input_tokens"] == 12 and row["output_tokens"] == 6
+
+
+# ── max_tokens cannot silently truncate ──────────────────────────────────────
+#
+# A purpose's `max_tokens` budgets its JSON answer, but on a thinking-by-default
+# model it caps thinking + answer together: the budget goes on reasoning, the text
+# block comes back empty, and the JSON parse fails. Callers degrade on AIError, so
+# a one-word `tier` edit could drop a purpose to its offline path with nothing in
+# the logs. These lock both halves of the fix — thinking is stated, truncation is
+# loud — against the real `_call_model` rather than the monkeypatched seam.
+
+def _fake_anthropic(monkeypatch, *, stop_reason, text='{"ok": true}',
+                    in_tok=7, out_tok=3):
+    """Stand in for `anthropic.Anthropic`, capturing the request kwargs. Patched on
+    the real module because `_call_model` imports it lazily at call time."""
+    import anthropic
+    from types import SimpleNamespace
+
+    captured = {}
+
+    class FakeMessages:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text=text)],
+                stop_reason=stop_reason,
+                usage=SimpleNamespace(input_tokens=in_tok, output_tokens=out_tok),
+            )
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr(anthropic, "Anthropic", FakeClient)
+    return captured
+
+
+def _call_the_model(engine, max_tokens=32):
+    return engine._call_model(
+        model_id="claude-haiku-4-5", system_prompt="s",
+        messages=[{"role": "user", "content": "u"}],
+        max_tokens=max_tokens, output_schema={"type": "object"},
+    )
+
+
+def test_thinking_is_sent_explicitly_so_max_tokens_budgets_the_answer(engine, monkeypatch):
+    captured = _fake_anthropic(monkeypatch, stop_reason="end_turn")
+    _call_the_model(engine)
+    assert captured["thinking"] == engine.THINKING_DISABLED, (
+        "thinking must be stated on every call — leaving it to the model default lets "
+        "a tier change silently spend max_tokens on reasoning instead of the answer"
+    )
+
+
+def test_truncated_answer_raises_aitruncated_not_a_json_error(engine, monkeypatch):
+    """A truncated reply is a normal 200 carrying a fragment. Unchecked it surfaces
+    as a JSONDecodeError that blames the model instead of the budget."""
+    _fake_anthropic(monkeypatch, stop_reason=engine.STOP_REASON_TRUNCATED, text='{"ok": tr')
+    with pytest.raises(engine.AITruncated) as excinfo:
+        _call_the_model(engine, max_tokens=32)
+    assert "max_tokens=32" in str(excinfo.value), "the error must name the budget to raise"
+    assert excinfo.value.input_tokens == 7 and excinfo.value.output_tokens == 3
+
+
+def test_aitruncated_still_degrades_callers_that_catch_aierror(engine):
+    """Callers (motion_resolver.classify) fall back on AIError. Truncation must keep
+    degrading them, not escape as a new unhandled type."""
+    assert issubclass(engine.AITruncated, engine.AIError)
+
+
+def test_truncated_call_records_the_tokens_it_billed(engine, dpp_env, monkeypatch):
+    """A truncated call is a PAID call — recording it as zero would understate spend
+    in the ledger the cost view reads (§5)."""
+    monkeypatch.setattr(engine, "_call_model", _truncating_model(engine, in_tok=9, out_tok=32))
+    with pytest.raises(engine.AITruncated):
+        engine.call_purpose("connectivity_check")
+    row = dpp_env["db"].ai_usage_summary()[0]
+    assert row["error_calls"] == 1
+    assert row["input_tokens"] == 9 and row["output_tokens"] == 32
+    # Read the raw column: `error_code` is what names the budget failure, and no
+    # public reader exposes it (ai_usage_summary aggregates), so assert it directly
+    # or a re-wrap back into a bare AIError would silently undo the diagnosis.
+    code = dpp_env["db"]._connect().execute(
+        "SELECT error_code FROM ai_usage ORDER BY ts DESC LIMIT 1").fetchone()[0]
+    assert code == "AITruncated"
 
 
 # ── the seam (§11): the engine names no purpose key ──────────────────────────
