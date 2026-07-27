@@ -632,13 +632,18 @@ In `web/` — and **I10 decides where they can live**:
    frontend's pure-logic suite.
 10. **`baseDrawOptions` carries a design only with a reference** — the client-side mirror of I13,
     so the 400 is a backstop rather than something the UI can trip.
-11. **Deferred with D5** (Rev.6). Rev.4's tests 9–10 — `PosePlayer` keeping its `petId` path
-    byte-identical after the `{sheetUrl, manifestUrl}` widening, and the raw tile rendering before
-    the packed one — are **component** assertions of a feature that requires F4 and is not being
-    built here. They move to `SPEC_MATTE_REPAIR_ORDER` §12's ledger with D5. When D5 lands, the
-    same rule applies: extract the source resolution (`petId` → URLs vs explicit URLs) into a pure
-    function and test *that*; the two-tile rendering is §7's by-eye gate 6, which is a GPU gate
-    anyway and was never going to be a unit test.
+11. ~~**Deferred with D5**~~ **— WRITTEN, 2026-07-27.** D5 is no longer held (F4 shipped), so
+    this deferral is discharged rather than pending. Rev.6 said that when D5 landed the rule
+    would be "extract the source resolution into a pure function and test *that*" — done:
+    `web/src/components/posePlayerSource.ts` owns `posePlayerUrls`, `PosePlayer` delegates
+    to it, and `posePlayerSource.test.ts` pins that a saved pet's URLs are still exactly
+    `petManifestUrl`/`petSheetUrl` — compared against the adapter itself rather than a
+    copied literal, so it follows a URL-shape change instead of going stale.
+    **Why it mattered:** `PoseGallery` renders the user's finished pet on the result panel
+    and passes `petId`. The widening for the Lab's packed tile had to leave that path
+    untouched, and "untouched" was a claim in a comment until this test existed.
+    The two-tile RENDERING remains a by-eye gate (§7), as Rev.6 said — that part is a GPU
+    check and was never going to be a unit test.
 
 ---
 

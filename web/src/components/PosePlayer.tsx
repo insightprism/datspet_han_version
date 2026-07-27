@@ -10,8 +10,10 @@
  * frame loop at the pose's fps (respecting prefers-reduced-motion).
  */
 import { useEffect, useRef } from "react";
-import { petManifestUrl, petSheetUrl } from "@/lib/api";
 import type { RawManifest } from "@/pet";
+// The source resolution lives in its own pure module so it can be tested without a DOM —
+// PoseGallery's `petId` path is user-visible and must not regress (posePlayerSource.ts).
+import { posePlayerUrls, type PoseSource } from "./posePlayerSource";
 
 /**
  * WHERE THE FRAMES COME FROM. Two shapes, because there are two kinds of caller
@@ -27,12 +29,7 @@ import type { RawManifest } from "@/pet";
  * no answer. A second frame-cycling implementation is exactly how the two would start
  * disagreeing about fps, column count or the final-frame duplicate.
  */
-export type PoseSource = { petId: string } | { sheetUrl: string; manifestUrl: string };
-
-const urlsFor = (src: PoseSource) =>
-  "petId" in src
-    ? { manifest: petManifestUrl(src.petId), sheet: petSheetUrl(src.petId) }
-    : { manifest: src.manifestUrl, sheet: src.sheetUrl };
+export type { PoseSource };
 
 interface Props {
   /** A saved pet id — the original call shape, unchanged for PoseGallery. */
@@ -50,7 +47,7 @@ export default function PosePlayer({ petId, source, pose, size = 128, checkered 
   const src: PoseSource | null = source ?? (petId ? { petId } : null);
   // Depend on the resolved URLs, not the object identity: `source={{…}}` is a fresh
   // object every render, and an effect keyed on it would restart the animation each time.
-  const { manifest: manifestUrl, sheet: sheetUrl } = src ? urlsFor(src) : { manifest: "", sheet: "" };
+  const { manifest: manifestUrl, sheet: sheetUrl } = src ? posePlayerUrls(src) : { manifest: "", sheet: "" };
 
   useEffect(() => {
     if (!manifestUrl || !sheetUrl) return;
