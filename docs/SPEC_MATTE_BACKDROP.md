@@ -516,6 +516,24 @@ profile ornament is worth. At 32–64px the same sprite at 41% and at 30% of cel
 tell apart, and no detail is lost either way: even the 30% version carries ~77 source pixels
 of animal into a ~35px render, still a downscale.
 
+**Quality is never the issue at any supported size — only apparent size is.** The sheet cell
+IS 256px and `--pet-display-size` caps at 256, so every render is a downscale or 1:1. Nothing
+upscales, so nothing softens. Measured on the same idle frame either side of the change
+(bounding box 185×188 on cyan vs 212×217 on white — about 13% smaller linearly):
+
+| display box | cyan era | white era |
+|---|---|---|
+| 48px | 35px of animal | 40px |
+| 64px | 47px | 54px |
+| 128px | 94px | 108px |
+| 192px | 141px | 162px |
+| 256px | 188px | 217px |
+
+So a cyan-era pet renders correctly at 128 or 192 — it simply sits slightly smaller in its
+box with a little more margin. The one scenario that would bite is wanting the ANIMAL itself
+to span a full 192px, which needs the cell drawn at ~260px and crosses into upscaling; the
+white-era framing had ~15% more headroom before that point. Nothing in the product does this.
+
 **Being precise about the limit of that claim:** the larger sizes exist, and at 192 or 256 a
 30%-of-cell pet is visibly smaller in its box than a 41% one. The decision below rests on
 those sizes being rare by design rather than absent — if pets ever become a large-format
