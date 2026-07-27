@@ -496,7 +496,31 @@ than scale instructions. So the prompt route is a partial mitigation, not a fix.
    and it flattens genuine species scale, which is a product question rather than a technical
    one.
 
-### 8.1.1 DECIDED — accept it. It is cosmetic at the sizes pets are actually rendered.
+### 8.1.1 DECIDED — accept it. CONFIRMED against a real DatsMe render.
+
+**The confirming evidence came from the product, not from this repo** (2026-07-27): a full
+8-pose `white snow leopard` built after every fix, uploaded to DatsMe and rendered on a live
+profile at both 128px and 256px. It looks right — clean silhouette, correct colour, sharp,
+and well-proportioned on the page. No visible issue at either size, and normal usage is
+smaller still.
+
+That bundle also closes the loop on the original defect:
+
+```
+BUNDLE   filled 5.9%   hard-zero 161 px across 8 poses (1.3 per frame)
+```
+
+against **157,296** on the same pet before F1 — and the 161 are its eyes and nose, drawn
+black rather than filled.
+
+**A note on how this section got written.** The framing measurement below is sound and
+reproducible, but its significance was over-estimated here for several revisions: it was
+escalated to a three-option decision on the strength of pixel coverage inside a 256px cell,
+which is not where anyone looks at a pet. The questions that actually resolved it were about
+the product — does a curated base ever become a sprite (no), what size are pets rendered at
+(64 and below, mobile-first), and does the real thing look wrong (it does not). Worth
+remembering the next time a measured difference starts looking like a decision.
+
 
 **Two questions from the operator deflated this, and both were right.**
 
