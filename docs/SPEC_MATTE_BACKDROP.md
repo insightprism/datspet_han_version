@@ -422,6 +422,20 @@ why they need eyes on them before the pool nodes are rolled:
 
 ---
 
+## 9. Implementation decisions — closed before code
+
+Found by asking what two implementers would do differently. **I3 is the one that matters**:
+without it this change silently does nothing for most pets.
+
+| # | the question | decision |
+|---|---|---|
+| **I1** | where does the phrase live? | `STILL_BACKDROP = "flat vivid cyan background"` in `prompt_templates.py`, baked into both templates at module level so `base_still_prompt(animal, pose)` keeps its exact signature. A third format field would break every caller for no gain. |
+| **I2** | both templates, or only the remix one? | **both.** `_base_prompt` is the CLI's branch (§2.6 of SPEC_MOTION_LAB_DESIGN_PARITY) and `_remix_prompt` is every web build's. Fixing one would make the CLI and the app disagree about the one thing this spec is about. |
+| **I3** | **`_prep_reference_image` pads and flattens onto `(255,255,255)`.** | **It must use the backdrop too.** This is not optional and it is easy to miss: `_base_sprite`'s **as-is** branch runs it on EVERY web build, and the upload door runs it with `isolate=True`, which cuts the subject out and then drops it on a white field — manufacturing the exact defect this spec removes. A prompt-only change leaves that path broken. |
+| **I4** | what RGB, given the phrase only *asks* for cyan? | `STILL_BACKDROP_RGB = (100, 230, 215)`, measured from what the model actually draws (the swallowed-pocket means across six renders were RGB(88–104, 208–236, 183–222)). It only has to be close enough that padding does not seam against the drawn field. |
+| **I5** | two representations of one decision — a PHRASE and a PIXEL. | Accepted, and guarded: the phrase lives in `prompt_templates` (pure data, GPU-less-safe) and the pixel in `factory` (needs PIL). A test pins that they agree in name and intent, since nothing else can keep a sentence and a tuple in sync. |
+| **I6** | does anything downstream assume white? | The cutout removes the backdrop, so the shipped sprite is unchanged. The one behavioural difference is the **cutout-failure fallback**: `_CUTOUT_MAX_FALLBACK_FRAMES = 0` means a failure raises rather than shipping an opaque frame, so no cyan-backed sprite can escape. Worth knowing that if that constant were ever raised, the failure mode becomes visibly cyan instead of invisibly white — which is an improvement. |
+
 ## 8. Rollback
 
 One constant. Revert it and every subsequently drawn pet returns to a white backdrop; pets
