@@ -276,12 +276,23 @@ change, and it is worth being explicit about what survives that removal and what
 
 **Still real, and the only work this change actually carries:**
 
-- **Curated `base.png` files must be re-curated**, and this is CORRECTNESS, not tidiness. A
-  curated base is fed to Wan **directly** — it *is* the base sprite on the adopt path — so a
-  curated base drawn on white keeps this defect after the fix, while every typed pet is
-  cured. That is a live divergence *going forward*, not a legacy one, which is why it
-  survives the pre-launch dispensation. They are human-approved best-of-N selections and do
-  not silently regenerate.
+- ~~**Curated `base.png` files must be re-curated**~~ **— WRONG, corrected 2026-07-27.**
+  This spec claimed the catalog was a correctness blocker. It is not, and the reason is
+  worth recording because the mistake was an assumption that went unchecked for several
+  revisions: **every curated `base.png` is a transparent CUTOUT** (RGBA, 60–71% transparent,
+  corner `(0,0,0,0)`), not a white-backed image. No white is baked into them. The white only
+  ever entered at `_prep_reference_image`'s flatten — the I3 path — which this change already
+  fixes. Verified end-to-end: all four bases now composite onto `(100,230,215)`.
+
+  What the audit DID find is unrelated to the backdrop: `cat/tabby` carries **795 hard-zero
+  px** of F1-era damage baked into the file — visible dark blotches on its hind legs. The
+  other three are clean (0, 0, 32 — the 32 being a corgi's own nose and eyes). So the work is
+  **one breed, optional**, and it is F1 debt rather than backdrop debt.
+
+  Note for whoever does it: `generate_candidates.py` runs through the POOL, so it would need
+  the fleet rolled to produce cyan-era candidates — a circular dependency with §6.1's gating.
+  It dissolves because the bases do not need the roll to be correct; and candidates can be
+  generated on a local GPU box instead if that ordering is ever inconvenient.
 - **The still is user-visible.** It is the designer's step-1 archetype and step-2 preview —
   what someone looks at before pressing Generate. It would sit on grey. That is a design
   call to make deliberately rather than a cost to absorb: a grey field may read better or
@@ -383,10 +394,10 @@ contact sheets. That is worth remembering when the next matte question arrives.
    and that both templates carry it.
 3. **Re-render the §7 baselines and probe them**: `white snow leopard`, the pale case that
    started this, plus one brown pet — `fill+ 0` and `hard-zero 0` on both.
-4. **Re-curate the curated `base.png` files** (§3) — required for correctness, since a
-   curated base is the base sprite. The `animal_catalog/**/*.zip` samples are cosmetic by
-   comparison and can follow whenever convenient; pre-launch, nothing depends on them
-   matching pets that already exist.
+4. **Nothing required in the catalog** (§3, corrected): the curated bases are transparent
+   cutouts and composite onto the new backdrop unchanged. Optional and unrelated to this
+   spec: redraw `cat/tabby`, which carries 795 hard-zero px of F1-era damage, and the
+   `friendlypup.zip` sample (608 px/frame). Both are pre-existing debt, neither blocks.
 5. Roll the pool fleet — worker nodes carry `prompt_templates.py` too, so an unrolled node
    keeps drawing on white.
 
