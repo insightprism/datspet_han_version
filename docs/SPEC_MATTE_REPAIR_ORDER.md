@@ -523,6 +523,7 @@ record. One row per attempt, newest last. Record the *measurement*, not the inte
 | # | date | attempt | measured result | verdict |
 |---|---|---|---|---|
 | A1 | 2026-07-27 | F1+F2+F3, A/B'd on the exact loop that produced the blob | hard-zero **157,296 → 53** px (9,831 → 3.3 per frame), glaring 43.7% → 2.7%; the 53 are the sprite's own eye/nose ink, and the raw ComfyUI frame contains 32 near-black px of its own — the repaired sheet is BLACKER NOWHERE than the drawing | the fix holds. The gate had to move from a raw count to px/frame, because §7's "alpha==255 means fill" inference dissolves with the fix — `MATTE_DAMAGE_PX_PER_FRAME = 100`, in the 3-orders gap |
+| A3 | 2026-07-27 | §11 Q4: does a contrasting backdrop fix the matte? And which stage actually fails? | The Z-Image **still** mattes perfectly on white. The **Wan loop frame** does not — it drops the tucked paws, open to the background so no fill can close it. Redrawn on `flat slate grey background`: clean silhouette, **fill added 0 px**. Two earlier offline attempts were CONFOUNDED — repainting a frame's background changes birefnet's output independently of colour (193k px kept untouched vs 68k repainted-white), so only a real re-render answers this | the lever is real but it lives in `prompt_templates`, which redraws the whole catalog — §3.2's decision, not this spec's |
 | A2 | 2026-07-27 | Is §2.2's 303.9 ms BFS estimate right on real mattes? | **No — 444.8 ms/frame** at 704². F1 alone would have been a 57 s regression, not 39 s. scipy: 10.0 ms, byte-identical on 16/16 real alpha channels | F2 was even less optional than the spec said |
 | A1 | 2026-07-27 | Read the sheet: is the damage real and where? | 240,889 px `RGB(0,0,0)/alpha=255`; 100% border-unreachable; `alpha==255` is the fill's fingerprint | defect confirmed, mechanism located |
 | A2 | 2026-07-27 | `_fit_square`: paste without the self-mask | hole `RGB=[3,3,3]` — still black | **rejected** → §4.1 |
@@ -553,10 +554,38 @@ a row here *and* a `[Rev.N]` note in the header. If the §7 real-build step cont
 3. **How often does F3 fire across the catalog?** If a large fraction of ordinary builds trip
    0.10, the threshold is wrong or the matte is worse than anyone thought — either is worth
    knowing, and it is the input to the §3.2 matte-quality spec.
-4. **How much of the hole disappears if the still is rendered on a contrasting background?**
-   (§0.5, §3.2.) The cheapest possible experiment — one prompt word, one build, then the §7 probe
-   — and if it removes most hard-zero holes it reframes F3's threshold and outranks any
-   matte-model work. Worth running *after* F1 lands, so the two effects stay separable.
+4. **ANSWERED, 2026-07-27 — yes, and the failing stage is not the one this spec assumed.**
+   Run after F1, so the two effects stayed separable. Three findings, in order of how much
+   they change the picture:
+
+   **(a) The Z-Image STILL mattes perfectly on white.** A clean, complete silhouette, no
+   holes. So "white-on-white breaks birefnet" is wrong *at the still stage*, and §0.5's
+   reading of the trigger needs qualifying.
+
+   **(b) The WAN FRAME does not.** What gets packed is never the still — it is the I2V loop
+   output, which at 4 steps is softer and lower-contrast. On the same pet, same seed, same
+   clause: the Wan frame's matte drops the tucked front paws and lower chest, and because
+   that region is open to the background no fill can close it (the repair added 758 px and
+   the hole survived). This is the "transparent bite" an operator sees post-F1, and it was
+   there before F1 too — the opaque black was covering it.
+
+   **(c) A contrasting backdrop removes it entirely.** Same pet, `white background` →
+   `flat slate grey background` in the template:
+
+   | Wan frame drawn on | matte | after fill | result |
+   |---|---|---|---|
+   | white (today) | 257,936 px | 258,694 | bite out of the bottom |
+   | slate grey | 151,612 px | 151,612 | clean silhouette, **fill added 0 px** |
+
+   **What this does NOT settle**, and why it is not being changed here: the backdrop is in
+   `prompt_templates`, which every pet in the catalog is drawn through, and swapping it
+   visibly changed the drawing itself (the leopard came out smaller and differently posed).
+   So it is a content decision with catalog-wide reach — curated `base.png` files would no
+   longer match their own template — not a bug fix. A single fixed colour also only moves
+   the problem: a grey pet on a grey backdrop is the same ambiguity. The principled options
+   are a saturated colour no pet uses (green-screen logic, needs a bleed check) or a
+   per-pet backdrop resolved like `base_pose` already is. Both belong in the §3.2 matte-
+   quality spec, with this measurement as their premise.
 
 ---
 
