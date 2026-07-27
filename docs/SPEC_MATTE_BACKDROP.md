@@ -401,11 +401,30 @@ why they need eyes on them before the pool nodes are rolled:
 - **The designer's preview changes.** Step 1's archetype and step 2's preview are the stills
   a user looks at before pressing Generate, and they would sit on cyan. The most visible
   non-pet effect of this change, and a deliberate design call.
-- **`compose_design`'s calibration was tuned on WHITE renders** — the colour-word conflict,
-  the 0.9 clamp, the clause ordering (`SPEC_PET_DESIGN_AXES` §8 Phase 3 already flags these
-  as reasoned rather than measured). A recolour now fights a differently-lit source image, so
-  the axis calibration may drift. The Motion Lab's design panel is the instrument for
-  re-checking it.
+- **`compose_design`'s calibration — MEASURED, 2026-07-27: it holds, with a small shift.**
+  Two designs (`purple` + `body:fat`, `white` + `coat:fluffy`) rendered through the real
+  designer path on both backdrops, same seed:
+
+  | design | on cyan | on white | fur shifted toward cyan by |
+  |---|---|---|---|
+  | purple + chubby | RGB(175,129,235) | RGB(146, 88,206) | +5.5 |
+  | white + fluffy | RGB(245,245,241) | RGB(234,229,222) | +6.4 |
+
+  **The recolour still wins** — visually unambiguous in all four, and the `min_strength`
+  clamp fired identically (0.90) on both backdrops, so the strength calibration is
+  untouched. What changes is a small lightening/cooling of about 5–6 units.
+
+  The white row is the one worth understanding: on cyan the pet renders RGB(245,245,241),
+  near-perfect white; on white it renders (234,229,222), noticeably warm. **The model was
+  shading white pets AWAY from a white field to keep them visible** — the same pressure that
+  broke the matte, showing up in the colours. On cyan it is free to draw true white, so for
+  pale pets this is an improvement rather than a regression.
+
+  **Consequence for the pending work:** `SPEC_PET_DESIGN_AXES` §8 Phase 3 (the axis
+  calibration that is "reasoned, not measured") must be done on the CYAN substrate. Doing it
+  before this change would have measured the wrong thing. The freshness predicate itself is
+  unaffected — `design_calibration.check()` reports 76/76 cells current, because it compares
+  (description, strength) and not pixels; only the rendered contact sheets look stale.
 - **Curated `base.png` keeps the defect until re-curated** (§3) — a curated base IS the base
   sprite.
 - **`animal_catalog/**/*.zip` samples** would visibly differ from freshly built pets.
