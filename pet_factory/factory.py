@@ -38,6 +38,10 @@ import logging
 
 import numpy as np
 import requests
+# scipy arrives transitively with rembg — no new dependency (SPEC_MATTE_REPAIR_ORDER
+# §2.2). It stays in THIS module, behind the lazy pet_factory.__init__ boundary, so the
+# GPU-less web tier still never imports it.
+from scipy import ndimage
 from PIL import Image, ImageSequence
 
 from . import motion_profiles as mp
@@ -573,6 +577,21 @@ MATTE_ANNIHILATED_LUMA = 8
 # the otter is a legitimately dark animal, so an absolute cut reports 3% damage on a bundle
 # that shipped clean, while this reports 0.78% against the 0.7% measured.
 MATTE_GLARING_FRACTION = 0.4
+# Above this many hard-zero px PER FRAME, a bundle is damaged rather than merely dark.
+#
+# The floor is not a fudge, it is the metric's honest limit after F1. `hard_zero_px` counts
+# opaque near-black pixels, and it identified FILL only because the buggy path left the
+# fill as the one thing writing an exact 255 (§7). With the repair moved onto the matte
+# that signature is gone, so the count also picks up whatever the model DREW black — an
+# eye pupil, a nose, a dark spot.
+#
+# MEASURED on the white snow leopard, same 16 frames through both orders: 9,831 px/frame
+# before F1, 3.3 px/frame after — and the raw ComfyUI frame contains 32 near-black px of
+# its own, so the repaired sheet carries FEWER black pixels than the drawing it came from.
+# Three orders of magnitude separate the defect from the sprite's own ink; 100 sits in
+# that gap and needs no tuning. A probe that flags every healthy bundle is as broken as
+# one that passes every damaged one.
+MATTE_DAMAGE_PX_PER_FRAME = 100
 
 
 class MatteDamage(NamedTuple):
@@ -624,10 +643,79 @@ def matte_fill_damage(sheet: Image.Image) -> MatteDamage:
     )
 
 
-def _fill_holes_alpha(alpha: Image.Image, thr: int = 160) -> Image.Image:
+# ---------------------------------------------------------------------------
+# Matte repair (SPEC_MATTE_REPAIR_ORDER §2) — thresholds as NAMED constants
+# ---------------------------------------------------------------------------
+# Below this, a matte pixel counts as a hole candidate. Today's `_fill_holes_alpha`
+# default, promoted to the band and referenced as the signature default, so the value
+# exists once.
+_MATTE_HOLE_ALPHA_THR = 160
+# Below this, the premultiplying resample would have annihilated the pixel's colour
+# outright — a CONFIDENT matte miss rather than edge softness. The separation matters:
+# soft holes (alpha ≥ 120) only dim a pixel slightly and are routine, which is why the
+# otter shipped clean with 23% of its subject filled (§1.1).
+_MATTE_HARD_HOLE_ALPHA = 20
+# One frame having more than this fraction of its subject as HARD holes is a matte
+# failure worth a line in the log (§2.3). Calibrated against §1: the snow leopard's
+# idle #24 is 0.36 and trips; the otter's soft fill is 0.0 and stays quiet.
+_MATTE_HARD_HOLE_WARN_FRACTION = 0.10
+
+
+class _MatteRepair(NamedTuple):
+    """A repaired matte plus what the repair had to do — the stats F3's warning reads.
+
+    (§2.4 specifies a frozen dataclass; a NamedTuple is used for consistency with
+    `MatteDamage` above, which was added to this same band. Same immutability, same
+    field access, one struct idiom in the file instead of two.)"""
+    alpha: Image.Image      # the repaired matte
+    subject_px: int         # pixels the matte keeps, after the repair
+    filled_px: int          # holes closed
+    hard_px: int            # of those, pre-fill alpha < _MATTE_HARD_HOLE_ALPHA
+
+
+def _repair_matte_holes(alpha: Image.Image) -> _MatteRepair:
+    """Close interior holes in a birefnet matte — THE SHIPPED REPAIR (F1 + F2).
+
+    Identical in effect to `_fill_holes_alpha`, which stays below as the oracle test 4
+    compares against. Two differences, both required by moving the repair earlier:
+
+    F2 — VECTORIZED. This now runs on the matte at its native resolution (~704²) instead
+    of on a 256² cell, which is 7.6× the pixels. The interpreted BFS costs 21.4 ms at 256²
+    and 303.9 ms at 704² — ~39 s on a 128-frame build, against a cutout+pack band that is
+    46.7 s in total. `scipy.ndimage.binary_fill_holes` does the same work in 8.6 ms, so
+    F1+F2 together are CHEAPER than the shipped order (1.10 s vs 2.74 s per build). scipy
+    arrives with rembg; nothing new is depended on, and it stays inside this module,
+    behind the lazy `pet_factory.__init__` boundary, so the GPU-less web tier is untouched.
+
+    It RETURNS STATS rather than just an image because F3 needs them: once the repair
+    happens before the resample the damage becomes invisible, and invisible is exactly how
+    this defect shipped for months.
+    """
+    a = np.array(alpha.convert("L"))
+    transp = a < _MATTE_HOLE_ALPHA_THR
+    # `binary_fill_holes` fills regions of the input that the BORDER cannot reach — so
+    # running it on the SOLID mask marks every transparent pocket enclosed by the animal,
+    # and leaves real background (reachable from the border) alone. The default structure
+    # is 4-connectivity, matching the oracle's flood exactly.
+    holes = ndimage.binary_fill_holes(~transp) & transp
+    hard_px = int((holes & (a < _MATTE_HARD_HOLE_ALPHA)).sum())
+    if holes.any():
+        a = a.copy()
+        a[holes] = 255
+    return _MatteRepair(alpha=Image.fromarray(a, "L"),
+                        subject_px=int((a > 0).sum()),
+                        filled_px=int(holes.sum()),
+                        hard_px=hard_px)
+
+
+def _fill_holes_alpha(alpha: Image.Image, thr: int = _MATTE_HOLE_ALPHA_THR) -> Image.Image:
     """Make interior transparent regions (low alpha NOT connected to the image
     border) fully opaque — closes any hole the matting model punches inside the
-    animal. Real background (reachable from the border) stays transparent."""
+    animal. Real background (reachable from the border) stays transparent.
+
+    THE ORACLE, not dead code (§2.4). `_repair_matte_holes` above is what the pipeline
+    calls; this keeps its name, signature and body because test 4 asserts the two agree
+    byte-for-byte, and because SPEC_GPU_MEMORY_HYGIENE §9/§10 cite it by name."""
     a = np.array(alpha.convert("L"))
     h, w = a.shape
     transp = a < thr
@@ -756,6 +844,10 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
     def prep(pose_name, frames):
         nonlocal done_frames, fallbacks
         out = []
+        # F3 (§2.3): the worst (hard-hole fraction, frame index) over this pose's loop.
+        # Accumulated and reported ONCE, after the loop — a fully-broken matte would
+        # otherwise emit one line per frame and bury the signal the warning exists to give.
+        worst_hard = (0.0, -1)
         for i, fr in enumerate(frames):
             orig = fr.convert("RGB")
             try:
@@ -775,14 +867,33 @@ def pack_datsme_bundle(pose_frames, breed_id, display_name,
                             "%d/%d tolerated", pose_name, i, type(e).__name__, e,
                             fallbacks, _CUTOUT_MAX_FALLBACK_FRAMES)
                 a = Image.new("L", orig.size, 255)
+            # F1 (§2.1) — REPAIR THE MATTE HERE, at matte resolution, while the colour it
+            # is protecting is still intact. This used to run one line lower, on the alpha
+            # of the ALREADY-RESAMPLED cell: `_fit_square`'s LANCZOS premultiplies, so a
+            # pixel under alpha≈0 was already black by then, and making it opaque painted
+            # the animal's own body pure black. Everything below is geometry only; nothing
+            # touches alpha after the resample, and that is the fix.
+            repair = _repair_matte_holes(a)
+            if repair.subject_px:
+                frac = repair.hard_px / repair.subject_px
+                if frac > worst_hard[0]:
+                    worst_hard = (frac, i)
             result = orig.convert("RGBA")
-            result.putalpha(a)                                     # original colors + matte
-            cell = _fit_square(result, frame_size)
-            cell.putalpha(_fill_holes_alpha(cell.split()[3]))      # close interior holes
+            result.putalpha(repair.alpha)                          # original colors + repaired matte
+            cell = _fit_square(result, frame_size)                 # geometry only
             out.append(cell)
             done_frames += 1
             if on_frame:                                           # B: per-frame progress so the
                 on_frame(done_frames, total_frames)                # bar moves + the stall timer resets
+        # F3 (§2.3) — a QUALITY SIGNAL, never a failure. Post-F1 a matte that dropped a
+        # third of the frame is cosmetically perfect, so without this the pipeline would
+        # go back to hiding exactly what it hid for months: the repair is loud about what
+        # it had to cover for, or the next matte regression ships silently too.
+        if worst_hard[0] > _MATTE_HARD_HOLE_WARN_FRACTION:
+            log.warning("weak matte on pose %r: frame %d had %.0f%% of its subject as HARD "
+                        "interior holes (alpha < %d). The repair closed them, so the sprite "
+                        "looks right — the MATTE is what is weak here.",
+                        pose_name, worst_hard[1], worst_hard[0] * 100, _MATTE_HARD_HOLE_ALPHA)
         return out
 
     # Lay each pose on its own row band; compute its frame indices. Preserves the

@@ -1,5 +1,41 @@
 # SPEC — Repair the matte before the geometry: the opaque-black hole fill
 
+**F1 + F2 + F3 ARE BUILT AND THE FIX HOLDS — 2026-07-27, measured on the real defect.**
+The decisive A/B was run on the EXACT loop that produced the blob (the Lab's own idle
+`.webp`, repacked with the new code — same frames in, so nothing but the repair can account
+for the difference):
+
+| | hard-zero | per frame | glaring |
+|---|---|---|---|
+| before F1 | 157,296 px | 9,831 | 43.7% |
+| **after F1** | **53 px** | **3.3** | **2.7%** |
+
+**The 53 are the pet's own ink, not residual damage.** The raw ComfyUI frame contains 32
+near-black px of its own (eye pupil, nose), and the repaired sheet carries 3.3 px/frame —
+*fewer black pixels than the drawing it came from*. This is §7's warning arriving in
+practice: `alpha == 255` identified the fill only because the buggy path left the fill as
+the one thing writing an exact 255, and moving the repair onto the matte dissolves that
+signature. So the gate cannot be a raw count. `MATTE_DAMAGE_PX_PER_FRAME = 100` sits in
+the three-order-of-magnitude gap between the defect (9,831/frame) and a sprite's own ink
+(3.3/frame) and needs no tuning; the probe reads the per-frame column and still calls
+penguin (7,411), friendlypup (608) and the before-bundle (9,831) damaged while passing the
+fixed one and the otter (0).
+
+**F2 was underestimated, in the direction that matters.** On real mattes at 704² the
+interpreted BFS costs **444.8 ms/frame**, not the 303.9 estimated in §2.2 — so F1 without
+F2 would have been a **57 s** regression on a 128-frame build, not 39 s. `scipy` measures
+10.0 ms (est. 8.6) and is **byte-identical on 16/16 real alpha channels**. F1+F2 together
+remain cheaper than the shipped order.
+
+**F3 fired on its first real matte**, which is the point of it:
+`weak matte on pose 'idle': frame 3 had 56% of its subject as HARD interior holes
+(alpha < 20). The repair closed them, so the sprite looks right — the MATTE is what is
+weak here.` That frame's matte is genuinely broken; before F3 the repair would have hidden
+it perfectly, which is exactly how this defect shipped for months.
+
+**Not yet done:** §7 gate 2 (a full `./make_pet.sh "white snow leopard"` build) and §8
+(regenerating the baked bundles + rolling the pool fleet).
+
 **F4 IS BUILT AND THE INSTRUMENT WORKS — 2026-07-27, verified on real GPU.** §6 step 0
 (`factory.matte_fill_damage` + `scripts/probe_matte_fill.py`) and F4 (packing as the last
 stage of the Lab's animate job) are shipped, with D5's two tiles from
@@ -486,6 +522,8 @@ record. One row per attempt, newest last. Record the *measurement*, not the inte
 
 | # | date | attempt | measured result | verdict |
 |---|---|---|---|---|
+| A1 | 2026-07-27 | F1+F2+F3, A/B'd on the exact loop that produced the blob | hard-zero **157,296 → 53** px (9,831 → 3.3 per frame), glaring 43.7% → 2.7%; the 53 are the sprite's own eye/nose ink, and the raw ComfyUI frame contains 32 near-black px of its own — the repaired sheet is BLACKER NOWHERE than the drawing | the fix holds. The gate had to move from a raw count to px/frame, because §7's "alpha==255 means fill" inference dissolves with the fix — `MATTE_DAMAGE_PX_PER_FRAME = 100`, in the 3-orders gap |
+| A2 | 2026-07-27 | Is §2.2's 303.9 ms BFS estimate right on real mattes? | **No — 444.8 ms/frame** at 704². F1 alone would have been a 57 s regression, not 39 s. scipy: 10.0 ms, byte-identical on 16/16 real alpha channels | F2 was even less optional than the spec said |
 | A1 | 2026-07-27 | Read the sheet: is the damage real and where? | 240,889 px `RGB(0,0,0)/alpha=255`; 100% border-unreachable; `alpha==255` is the fill's fingerprint | defect confirmed, mechanism located |
 | A2 | 2026-07-27 | `_fit_square`: paste without the self-mask | hole `RGB=[3,3,3]` — still black | **rejected** → §4.1 |
 | A3 | 2026-07-27 | Probe where colour actually dies | `RGB=200/alpha=0` → LANCZOS → `[0,0,0,0]`; NEAREST preserves | root cause: the resample premultiplies (§0.2) |

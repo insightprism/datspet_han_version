@@ -452,3 +452,193 @@ def test_poll_budget_is_bounded_and_actually_polls():
     assert 0 < factory._FREE_POLL_INTERVAL_S < factory._FREE_POLL_TIMEOUT_S
     assert factory._FREE_POLL_TIMEOUT_S <= 60
     assert factory._COMFY_HTTP_TIMEOUT_S > 0
+
+
+# ── SPEC_MATTE_REPAIR_ORDER §5: repair the matte before the geometry ─────────────────────
+#
+# The defect these pin: `_fill_holes_alpha` ran ONE LINE AFTER `_fit_square`, so the fill
+# made holes opaque whose colour the premultiplying resample had already annihilated —
+# painting the animal's own body pure black at full opacity. Measured across every bundle
+# on the box (§1): the penguin lost 41% of its subject, the staging snow leopard's idle
+# frames 41%. It hid for months because a blacked-out belly on a black-and-white bird
+# reads as a stylistic choice (§1.2).
+#
+# FIXTURES ARE GENERATED, not committed: there is no precedent for binaries under
+# pet_factory/tests, and the obvious real-data fixture (friendlypup.zip) is scheduled for
+# regeneration in §8 — a test keyed to it would change inputs the moment the fix ships.
+# The real-matte equivalence run (128/128 channels) is §7's gate, against a bundle, where
+# it can be re-run rather than frozen.
+
+_PALE_FUR = (245, 244, 243)      # the colour the fill must NOT replace with black
+
+
+def _matte_with_hole(size=64, *, hole_alpha=0, hole=(24, 40)):
+    """A pale square subject on transparent background, with one INTERIOR hole in the
+    matte. `hole_alpha=0` is a hard miss (colour annihilated); 130 is a soft one."""
+    import numpy as np
+    a = np.zeros((size, size), np.uint8)
+    a[4:size - 4, 4:size - 4] = 255
+    lo, hi = hole
+    a[lo:hi, lo:hi] = hole_alpha
+    return Image.fromarray(a, "L")
+
+
+def _pale_frame(size=64):
+    return Image.new("RGB", (size, size), _PALE_FUR)
+
+
+def _pack_one_frame(monkeypatch, frame, matte, frame_size=256):
+    """Run ONE frame through the real packer with the cutout stubbed to return `matte`,
+    and hand back the packed cell. The seam is `_remove_bg`, so everything after it —
+    putalpha, the repair, _fit_square, the sheet paste — is the shipped code."""
+    import io
+    import zipfile
+
+    def fake_remove_bg(img):
+        out = img.convert("RGBA")
+        out.putalpha(matte.resize(img.size, Image.NEAREST))
+        return out
+
+    monkeypatch.setattr(factory, "_remove_bg", fake_remove_bg)
+    monkeypatch.setattr(factory._CUTOUT, "_session", object())
+    zip_bytes = factory.pack_datsme_bundle({"walk": [frame]}, "t", "T", frame_size=frame_size)
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+        name = next(n for n in z.namelist() if n.endswith("_sprite.png"))
+        sheet = Image.open(io.BytesIO(z.read(name))).convert("RGBA")
+    return sheet.crop((0, 0, frame_size, frame_size))
+
+
+def test_a_filled_hole_keeps_the_animals_colour(monkeypatch):
+    """§5 test 1 — THE REGRESSION TEST. A hard-zero interior hole in a pale animal must
+    come back as the animal's colour, not as opaque black."""
+    import numpy as np
+    cell = _pack_one_frame(monkeypatch, _pale_frame(), _matte_with_hole())
+    px = np.array(cell)
+    # The hole's centre, in cell coordinates: the 64² frame scales to fill the cell.
+    mid = px[px.shape[0] // 2, px.shape[1] // 2]
+    assert mid[3] == 255, "the hole must still be closed — the repair, not its removal"
+    assert max(int(mid[0]), int(mid[1]), int(mid[2])) > 200, (
+        f"the filled hole came back as {tuple(mid[:3])}, not the animal's fur — the repair "
+        "is running after the resample that already destroyed the colour")
+
+
+def test_no_opaque_pixel_is_black_that_the_matte_cannot_explain(monkeypatch):
+    """§5 test 2 — the sheet-wide version: nothing opaque may be near-black unless the
+    INPUT frame drew it dark. This is the property `scripts/probe_matte_fill.py` measures
+    on shipped bundles, asserted at build time on a frame with no dark pixels at all."""
+    import numpy as np
+    px = np.array(_pack_one_frame(monkeypatch, _pale_frame(), _matte_with_hole()))
+    unexplained = ((px[..., 3] > 200) & (px[..., :3].max(axis=-1) < 45)).sum()
+    assert unexplained == 0, f"{unexplained} opaque near-black px from an all-pale frame"
+
+
+def test_the_matte_is_repaired_before_any_resample(monkeypatch):
+    """§5 test 3 — STRUCTURAL, so the ordering cannot silently regress. Capture what
+    `_fit_square` is handed and assert its alpha has no border-unreachable transparent
+    region: by then the repair must already have happened."""
+    import numpy as np
+    seen = []
+    real_fit = factory._fit_square
+
+    def spy(img, size):
+        seen.append(img.copy())
+        return real_fit(img, size)
+
+    monkeypatch.setattr(factory, "_fit_square", spy)
+    _pack_one_frame(monkeypatch, _pale_frame(), _matte_with_hole())
+    assert seen, "_fit_square was never called"
+    a = np.array(seen[0].split()[3])
+    holes = np.array(factory._fill_holes_alpha(Image.fromarray(a, "L"))) != a
+    assert not holes.any(), (
+        "the matte handed to _fit_square still has interior holes — the repair is "
+        "downstream of the resample, which is the whole defect")
+
+
+def test_the_vectorized_fill_matches_the_reference_bfs():
+    """§5 test 4 — F2's equivalence, against the oracle `_fill_holes_alpha` keeps existing
+    for. Includes the case the naive vectorization gets wrong: transparency CONNECTED to
+    the border is real background and must stay transparent."""
+    import numpy as np
+    rng = np.random.default_rng(20260727)
+    cases = [
+        _matte_with_hole(hole_alpha=0),                      # hard hole
+        _matte_with_hole(hole_alpha=130),                    # soft hole
+        _matte_with_hole(hole_alpha=0, hole=(4, 20)),        # hole touching the subject edge
+        Image.fromarray(np.full((64, 64), 255, np.uint8), "L"),          # no holes at all
+        Image.fromarray(np.zeros((64, 64), np.uint8), "L"),              # all background
+        Image.fromarray(rng.integers(0, 256, (64, 64), dtype=np.uint8), "L"),   # noise
+    ]
+    # A donut: a bite out of the border must NOT be filled.
+    bite = np.zeros((64, 64), np.uint8)
+    bite[4:60, 4:60] = 255
+    bite[0:32, 28:36] = 0        # a channel from the border into the subject
+    cases.append(Image.fromarray(bite, "L"))
+
+    for i, m in enumerate(cases):
+        assert np.array_equal(np.array(factory._repair_matte_holes(m).alpha),
+                              np.array(factory._fill_holes_alpha(m))), f"case {i} diverged"
+
+
+def test_non_hole_pixels_are_unchanged_by_the_repair_move(monkeypatch):
+    """§5 test 5 — pins §2.1's byte-identical claim. The repair moves; the resample and
+    the paste do not, so every pixel outside a hole must be exactly what it was. Compared
+    against a matte with NO hole, where the two orders are trivially equivalent."""
+    import numpy as np
+    solid = _matte_with_hole(hole_alpha=255)          # subject, no hole
+    holed = _matte_with_hole(hole_alpha=0)
+    a = np.array(_pack_one_frame(monkeypatch, _pale_frame(), solid))
+    b = np.array(_pack_one_frame(monkeypatch, _pale_frame(), holed))
+    # Both cells describe the same silhouette; the repair closes the hole in `b`, and
+    # nothing else may differ — same alpha everywhere, same colours everywhere.
+    assert a.shape == b.shape
+    assert np.array_equal(a[..., 3], b[..., 3]), "alpha changed outside the hole"
+    assert np.array_equal(a[..., :3], b[..., :3]), "colour changed outside the hole"
+
+
+def test_the_hard_hole_warning_names_the_pose_and_frame(monkeypatch, caplog):
+    """§5 test 6 — F3. Post-repair a matte that dropped a third of the frame is
+    cosmetically perfect, which is how this shipped. One WARNING per POSE (not per frame:
+    128 lines buries the signal it exists to give), naming the pose and the worst frame,
+    and it must never fail the build."""
+    frames = [_pale_frame(), _pale_frame(), _pale_frame()]
+    with caplog.at_level(logging.WARNING, logger=factory.log.name):
+        _pack_one_frame(monkeypatch, frames[0], _matte_with_hole(hole=(10, 54)))
+    lines = [r.message for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(lines) == 1, f"expected exactly one warning per pose, got {lines}"
+    assert "walk" in lines[0], "the pose must be named"
+    assert "frame 0" in lines[0], "the worst frame must be named"
+
+
+def test_a_small_matte_miss_stays_quiet(monkeypatch, caplog):
+    """…and the other half of F3: a routine soft fill says nothing. The otter shipped
+    clean with 23% of its subject filled, so a warning on every build would be noise —
+    the signal is HARD holes above the threshold (§1.1)."""
+    with caplog.at_level(logging.WARNING, logger=factory.log.name):
+        _pack_one_frame(monkeypatch, _pale_frame(), _matte_with_hole(hole_alpha=130))
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_the_matte_thresholds_are_named_constants():
+    """§5 test 7 — no literal 160 / 20 / 0.10 at a call site, and the values are the
+    calibrated ones. `_fill_holes_alpha`'s default must BE the constant, or the oracle
+    and the shipped repair could drift on the one number they share."""
+    import inspect
+    assert factory._MATTE_HOLE_ALPHA_THR == 160
+    assert factory._MATTE_HARD_HOLE_ALPHA == 20
+    assert factory._MATTE_HARD_HOLE_WARN_FRACTION == 0.10
+    assert (inspect.signature(factory._fill_holes_alpha).parameters["thr"].default
+            is factory._MATTE_HOLE_ALPHA_THR)
+    src = inspect.getsource(factory._repair_matte_holes) + inspect.getsource(factory.pack_datsme_bundle)
+    for literal in ("160", "0.10", "0.1)"):
+        assert literal not in src, f"literal {literal!r} at a call site — use the constant"
+
+
+def test_an_opaque_fallback_matte_is_a_no_op_for_the_repair():
+    """§5 test 8 — the dead-session branch. When the cutout fails, `prep` falls back to an
+    all-opaque alpha; that matte has no holes, so the repair must do nothing to it and
+    must not report damage that would trip F3's warning."""
+    import numpy as np
+    opaque = Image.fromarray(np.full((64, 64), 255, np.uint8), "L")
+    r = factory._repair_matte_holes(opaque)
+    assert r.filled_px == 0 and r.hard_px == 0
+    assert np.array_equal(np.array(r.alpha), np.array(opaque))
