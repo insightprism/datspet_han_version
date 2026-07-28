@@ -279,24 +279,33 @@ Format: date · what broke · what the check said · what now catches it.
 | 2026-07-15 | live dev server poisoned by a build | guard: "no collision possible" | A1 |
 | 2026-07-15 | `git revert` of the knob would have undone a migration | git reported the conflict (loud) | A4 |
 | 2026-07-27 | prod deployed while staging stayed 32 commits behind | nothing — the procedure was per-target | **Rule 0** |
-| 2026-07-27 | C1 door 2 **504'd twice on a healthy deploy** (a false RED) | the same request succeeded 4/4 standalone in 19–45 s | C1's warm-up call |
+| 2026-07-27 | C1 door 2 **504'd twice on a healthy deploy** (a false RED) | the same request succeeded 4/4 standalone in 19–45 s | C1's warm-up call + the vhost.d fix below |
+| 2026-07-27 | users got a **504 on a cold typed-animal draw**, since launch | our vhost said `proxy_read_timeout 300` — which never applied | `vhost.d/pet*.datsme.me` (Known gaps) |
 | 2026-07-27 | C1's `--expect-max-poses 5` example vs the real cap of 8 | would have failed a good deploy | C1's ⚠️ note |
 
 ### Known gaps — not yet automated
 
-- ⚠️ **The 60 s outer-proxy timeout — this one reaches USERS, not just C1.** Measured
-  2026-07-27: a typed-animal draw (`POST /api/reference`, txt2img on the pool) takes **19–45 s
-  warm** and **over 60 s cold**, and comes back **`504` in exactly 60.2 s**. The cause is not
-  our vhost — `/var/www/datspet*/nginx-default.conf` correctly sets `proxy_read_timeout 300`.
-  It is the **outer `nginx-proxy`**: its generated server blocks for `pet.datsme.me` and
-  `pet-staging.datsme.me` set **no** `proxy_read_timeout`, so nginx's **60 s default** applies
-  and the outer layer gives up long before our 300 s does. A user who types an animal while the
-  pool is cold gets a gateway-timeout page.
-  **Fix (not applied — it touches shared infra serving other apps, so it needs a decision):**
-  add a `proxy_read_timeout 300;` override in `nginx-proxy`'s `vhost.d/pet.datsme.me` and
-  `vhost.d/pet-staging.datsme.me`. The pattern already exists on that box —
-  `vhost.d/staging.datsme.me` sets `86400`. Until then, C1's warm-up call is the workaround,
-  and it only hides the symptom for the deploy check.
+- ✅ **The 60 s outer-proxy timeout — FIXED 2026-07-27.** *(Kept here, not deleted: this is
+  infrastructure that lives OUTSIDE the repo, so it is invisible to `git` and will be silently
+  lost if the box is ever rebuilt.)*
+  A typed-animal draw (`POST /api/reference`, txt2img on the pool) takes **19–45 s warm** and
+  **over 60 s cold**, and used to come back **`504` in exactly 60.2 s** — reaching real users,
+  not just C1. The cause was never our vhost: `/var/www/datspet*/nginx-default.conf` has always
+  set `proxy_read_timeout 300`. The **outer `nginx-proxy`** emitted **no** `proxy_read_timeout`
+  for these hosts, so nginx's **60 s default** applied and cut the request before our 300 s
+  could. Long-standing — there was never a `vhost.d` entry for these hosts, so the 300 s added
+  in `016a109` had never once taken effect.
+  **Applied:** `/etc/docker/vhost.d/pet.datsme.me` and `/etc/docker/vhost.d/pet-staging.datsme.me`
+  (host path; mounted at `/etc/nginx/vhost.d` in the container), each containing
+  `proxy_read_timeout 300;` plus a comment. Same mechanism as `vhost.d/staging.datsme.me`.
+  **Regenerating without bouncing the shared proxy:** the include only appears when the file
+  exists at template time, and `docker-gen` regenerates on Docker **events** — so
+  `docker restart datspet-nginx` (our own container) is enough. Never restart `nginx-proxy`
+  itself; it fronts the other sites on the box.
+  **Proven behaviourally, not by config-reading:** three concurrent draws, one queued to
+  **82.85 s and returned HTTP 200**. Pre-fix that was a 504 at 60 s.
+  *(The `~3-minute pet BUILD was never affected either way — it is an async job + polling, so
+  no request is held open for it. Only the two synchronous still draws were at risk.)*
 
 - **`deploy/nginx-default.conf` is prod's file in a shared repo.** A5 is a human
   remembering. **Specced: [`docs/SPEC_PER_TARGET_NGINX_CONF.md`](../docs/SPEC_PER_TARGET_NGINX_CONF.md)**
