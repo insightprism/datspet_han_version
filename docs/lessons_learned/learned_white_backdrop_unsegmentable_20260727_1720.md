@@ -196,7 +196,7 @@ That is the verification that counts. Everything above is instrumentation agreei
 
 ## 7. Pointers
 
-- `docs/SPEC_MATTE_BACKDROP.md` — the spec: §3 the constant, §5 the backdrop matrix and the
+- `docs/archive/SPEC_MATTE_BACKDROP.md` — the spec: §3 the constant, §5 the backdrop matrix and the
   14-pet result table, §6.1 the design-axis regression, §8.1 the framing side-effect (assessed
   and accepted)
 - `pet_factory/prompt_templates.py` — the single owner

@@ -9,6 +9,12 @@ things settle.
 **This is an investigation brief, not a spec.** It asks a question and can answer "no". If it
 answers "no", the deliverable is a paragraph in `SPEC_MATTE_REPAIR_ORDER` §3.3 — not code.
 
+**Note (2026-07-28):** both parent specs are now **closed and archived** to
+`docs/archive/SPEC_MATTE_REPAIR_ORDER.md` and `docs/archive/SPEC_MATTE_BACKDROP.md`. This brief
+is the **only live document** on the question, which is precisely why it stays in `docs/` rather
+than following them. Write the §3.3 paragraph into the archived file — an executed spec whose
+recorded reasoning is now wrong is worse than one that is merely finished.
+
 **Code is cited by symbol, never by line number.**
 
 ---

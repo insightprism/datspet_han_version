@@ -1,5 +1,24 @@
 # SPEC — Stop drawing pets on white: the backdrop is what breaks the matte
 
+> **CLOSED & ARCHIVED — 2026-07-28. Shipped and fleet-rolled.**
+> `STILL_BACKDROP = "flat vivid cyan background"` and `STILL_BACKDROP_RGB = (100, 230, 215)`
+> live in `pet_factory/prompt_templates.py` (the one owner; `factory` re-exports rather than
+> redefining), and both pet nodes run it at `c603356`.
+>
+> **Measured payoff:** a full 3-pose `white snow leopard` build reports `hard-zero 0` on every
+> pose with **zero F3 warnings**, and `filled` fell **45.8% → 5.3%** — i.e. the matte stopped
+> leaning on the repair at all. That is the difference between fixing the *cause* and fixing
+> the *symptom*: `SPEC_MATTE_REPAIR_ORDER` F1 made the repair safe, this made it unnecessary.
+>
+> **⚠️ ONE OPEN QUESTION THIS SPEC CREATED, and it is why the investigation below exists:**
+> a cyan backdrop turns `SPEC_MATTE_REPAIR_ORDER` §3.3's accepted trade-off ("enclosed
+> background fills with background colour, which is far less jarring than black") into a
+> *saturated teal patch* on the pet — measured at 2,168 px, 0.10% of subject, worst in `eat`.
+> The damage metrics **cannot see it** (cyan luma 230 is neither hard-zero nor glaring), so
+> `probe_matte_fill.py` calls those bundles clean. **PARKED, not accepted:**
+> `docs/INVESTIGATE_CYAN_BACKDROP_ARTIFACT.md` — its first step is perceptual and is allowed
+> to close the question. Archiving this spec does not close that.
+
 **Status:** proposed, 2026-07-27. **Discharges `SPEC_MATTE_REPAIR_ORDER` §3.2** ("the matte
 quality itself"), which that spec deliberately deferred while it fixed a different bug.
 

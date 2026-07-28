@@ -188,7 +188,7 @@ judgement next to the number.
 
 - `scripts/probe_matte_fill.py` — the damage probe with the per-frame verdict column
 - `pet_factory/factory.py` — `matte_fill_damage()` / `MatteDamage`, the metric's one owner
-- `docs/SPEC_MATTE_BACKDROP.md` §5 (the 14-pet matrix), §8.1 (the framing side-effect, assessed
+- `docs/archive/SPEC_MATTE_BACKDROP.md` §5 (the 14-pet matrix), §8.1 (the framing side-effect, assessed
   and accepted)
 - `learned_matte_repair_after_resample_20260727_1720.md` and
   `learned_white_backdrop_unsegmentable_20260727_1720.md` — the two defects being investigated

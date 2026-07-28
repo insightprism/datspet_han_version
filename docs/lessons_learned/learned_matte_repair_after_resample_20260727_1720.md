@@ -185,8 +185,8 @@ the bug is not yet evidence about anything.
 
 ## 7. Pointers
 
-- `docs/SPEC_MATTE_REPAIR_ORDER.md` — the spec, §0 (the three facts), §2 (F1/F2/F3), §10 (attempt
+- `docs/archive/SPEC_MATTE_REPAIR_ORDER.md` — the spec, §0 (the three facts), §2 (F1/F2/F3), §10 (attempt
   log), §12 (F4, the instrument)
-- `docs/SPEC_MATTE_BACKDROP.md` — the *cause* of the holes F1 was repairing
+- `docs/archive/SPEC_MATTE_BACKDROP.md` — the *cause* of the holes F1 was repairing
 - `scripts/probe_matte_fill.py` — the damage metric, and `factory.matte_fill_damage` which owns it
 - `pet_factory/tests/test_cutout_hygiene.py` — the 8 guard tests

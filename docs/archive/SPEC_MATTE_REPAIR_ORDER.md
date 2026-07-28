@@ -1,5 +1,23 @@
 # SPEC — Repair the matte before the geometry: the opaque-black hole fill
 
+> **CLOSED & ARCHIVED — 2026-07-28. Executed in full; every acceptance gate green.**
+> F1 (repair before the resample) + F2 (scipy vectorization) + F3 (weak-matte warning) + F4
+> (the Lab packs what it animates) are shipped, and the pool fleet is rolled to `c603356` on
+> both pet nodes with a real `make_pet_zip` per node returning `alpha=(0, 255)`.
+>
+> **The measured result, on the exact loop that produced the defect:** hard-zero fill
+> **157,296 px → 53 px** (9,831 → 3.3 per frame), glaring **43.7% → 2.7%** — fewer black
+> pixels than the raw ComfyUI drawing carries of its own. A shipped 8-pose bundle probes at
+> **1.3 px/frame**, ~75× under the `MATTE_DAMAGE_PX_PER_FRAME = 100` gate.
+>
+> **Still live, do not delete:** `scripts/probe_matte_fill.py`, `factory.matte_fill_damage`,
+> the `_fill_holes_alpha` oracle (test 4 compares against it), and F4's pack stage in the
+> Motion Lab. Archiving this document does not retire any of them.
+>
+> **Successor / open thread:** `SPEC_MATTE_BACKDROP` fixed the *cause* this spec was
+> compensating for, and `docs/INVESTIGATE_CYAN_BACKDROP_ARTIFACT.md` (PARKED) carries the one
+> question that outlived both — see §3.3.
+
 **F1 + F2 + F3 ARE BUILT AND THE FIX HOLDS — 2026-07-27, measured on the real defect.**
 The decisive A/B was run on the EXACT loop that produced the blob (the Lab's own idle
 `.webp`, repacked with the new code — same frames in, so nothing but the repair can account
@@ -45,9 +63,22 @@ own importable engine, not just in git: the repair call precedes the resample an
 `putalpha` follows it on either node. So every pool-built pet now gets F1 + the cyan backdrop.
 The user's own production runs — primates and humanoids — were the go-ahead (§8).
 
-**Still open on this spec:** §7 gate 4's real-matte equivalence at full scale — the scipy/BFS
-agreement was verified on **16/16** real alpha channels from a Lab bundle, not the 128 a full
-build offers. §8's remaining baked bundles are both scratch/draft, neither ships.
+**CLOSED — 2026-07-28. Both remaining items discharged, nothing deferred.**
+
+- **§7 gate 4 — real-matte equivalence at full scale: DISCHARGED.** Re-run on the **128** real
+  alpha channels of a shipped 8-pose `white snow leopard` bundle (every frame, not a sample):
+  `_repair_matte_holes` (scipy, F2) and `_fill_holes_alpha` (the interpreted BFS oracle) are
+  **byte-identical on 128/128**. The earlier 16/16 was a Lab bundle; this is the full-build
+  scale the gate asked for. The oracle stays in the tree for exactly this reason — it is what
+  makes the claim checkable rather than asserted.
+- **§8 baked bundles: DISCHARGED as a no-op.** The remaining pre-fix bundles are scratch/draft
+  and neither ships, so there is nothing to regenerate. The two that *did* ship were replaced
+  when the fleet rolled.
+
+**One thing deliberately left open, and it is NOT this spec's:** the cyan backdrop introduced a
+new artifact class that §3.3's "background-coloured is far less jarring than black" no longer
+covers — see the note in §3.3 and `docs/INVESTIGATE_CYAN_BACKDROP_ARTIFACT.md` (PARKED). That
+question belongs to `SPEC_MATTE_BACKDROP`, not here.
 
 **F4 IS BUILT AND THE INSTRUMENT WORKS — 2026-07-27, verified on real GPU.** §6 step 0
 (`factory.matte_fill_damage` + `scripts/probe_matte_fill.py`) and F4 (packing as the last
