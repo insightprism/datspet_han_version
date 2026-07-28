@@ -14,7 +14,7 @@ also hosts DatsMe (prod + staging) and the pool dispatcher.
 | Piece | Where | Notes |
 |---|---|---|
 | Code | `/var/www/datspet` | plain git clone (deployed via git bundle; no remote) |
-| Backend | `datspet-backend.service` | uvicorn `app:app`, port **29954**, `--workers 1` (required — Finding 6) |
+| Backend | `datspet-backend.service` | uvicorn `app:app`, port **19954**, `--workers 1` (required — Finding 6) |
 | Env + secrets | `/var/www/datspet/webui/.env` (600) | `PET_GEN_BACKEND=pool`, the three byte-identical `https://pet.datsme.me` URLs (§C.5!), `DATSME_BASE_URL/PUBLIC_URL` → the host, `DATSME_HMAC_SECRET` from registration, `POOL_APP_KEY` |
 | Frontend | `/var/www/datspet/web/out` | static export; **build on the box** (R4-3/R4-4) |
 | Vhost + TLS | `datspet-nginx` container | nginx:alpine on `sales_ai_net`, `VIRTUAL_HOST`/`LETSENCRYPT_HOST=pet.datsme.me`; conf mounted from `/var/www/datspet/nginx-default.conf`, static from `web/out` |
@@ -45,7 +45,7 @@ import — which is exactly the GPU-less property the backend relies on.
 
 **UFW gotcha:** container→host traffic needs an explicit bridge rule or the
 proxy times out while the backend works locally:
-`ufw allow in on br-03ba34c7f8c0 to any port 29954 proto tcp`.
+`ufw allow in on br-03ba34c7f8c0 to any port 19954 proto tcp`.
 
 ## Update procedure (from the dev box)
 
@@ -95,7 +95,7 @@ Both halves of the `/design` redirect (`web/src/app/design/page.tsx` for dev, th
 `location =` for prod) must move together. The preflight fails if they drift apart.
 
 **⚠️ NEVER `cp deploy/nginx-default.conf nginx-default.conf` ON STAGING.** The repo conf is
-PROD's: it hardcodes `proxy_pass http://172.18.0.1:29954`. Staging's backend is **29964**, so
+PROD's: it hardcodes `proxy_pass http://172.18.0.1:19954`. Staging's backend is **29954**, so
 that copy silently points the staging vhost at the PRODUCTION backend — launches would verify
 against the wrong environment and writebacks would land on the wrong host, which is the exact
 failure the twin exists to prevent. Patch staging's own `nginx-default.conf` in place instead,
@@ -156,7 +156,7 @@ identity (`iss: "datsme"` only) and the partner holds a single
 `DATSME_HMAC_SECRET` + `DATSME_BASE_URL`, so launches/writebacks cannot be
 routed per-environment. Staging therefore runs a full twin (live since
 2026-07-13): `/var/www/datspet-staging`, `datspet-staging-backend.service` on
-port **29964**, `datspet-staging-nginx` vhost, own data dir, own secret,
+port **29954**, `datspet-staging-nginx` vhost, own data dir, own secret,
 `DATSME_BASE_URL=https://staging.datsme.me`. Update it the same way as prod
 (same bundle → `git pull` in `/var/www/datspet-staging`, the `--no-deps -e
 /var/www/datspet-staging` data-only `pet_factory` install, rebuild the static

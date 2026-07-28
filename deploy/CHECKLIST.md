@@ -22,6 +22,12 @@ sequence. Nothing stopped a prod-only deploy, and on 2026-07-27 one happened: pr
 `c603356` while staging sat at `2a95c8d`, 32 commits behind. No harm resulted, but the twin had
 stopped being a twin, so there was nothing to rehearse the next deploy in.)*
 
+**The one exception, and it must be argued, not assumed:** an *infrastructure* change whose
+sequencing is forced by the box itself. The 2026-07-28 port renumber is the only instance so
+far — staging's target port (`29954`) was held by production, so production had to vacate it
+first. That is a constraint of the machine, not a preference. A **code** deploy never
+qualifies.
+
 **The fleet is SHARED; the web tiers are NOT.** `omen-pet` + `dual-nvidia-pet` serve staging and
 production **both** — one roll covers each. But `/var/www/datspet` and `/var/www/datspet-staging`
 are two separate servers with separate venvs, builds, units, vhosts and ports, and each needs its
@@ -59,14 +65,22 @@ behaviour. Where you can exercise the real path, exercise it.
 | URL | `https://pet-staging.datsme.me` | `https://pet.datsme.me` |
 | Box | `ssh root@5.161.70.13` | same box |
 | Repo | `/var/www/datspet-staging` | `/var/www/datspet` |
-| Backend port | **29964** | **29954** |
+| Backend port | **29954** | **19954** |
 | systemd unit | `datspet-staging-backend.service` | `datspet-backend.service` |
 | Vhost container | `datspet-staging-nginx` | `datspet-nginx` |
 | nginx conf | **patch in place — see A5** | `cp deploy/nginx-default.conf` is correct |
 | DatsMe host | staging host | prod host |
 
-⚠️ **The repo's `deploy/nginx-default.conf` IS PRODUCTION'S** — it hardcodes `:29954`.
+⚠️ **The repo's `deploy/nginx-default.conf` IS PRODUCTION'S** — it hardcodes `:19954`.
 See **A5**. This is the sharpest edge in the whole procedure.
+
+**Ports follow the platform convention (renumbered 2026-07-28):** `[env]9[app][service]`,
+where the **first digit is the environment** — `1` = production (and dev), `2` = staging.
+So **19954 = production**, **29954 = staging**. Before that date production held `29954`
+and staging `29964`: production's port announced itself as staging, and the two
+environments were distinguished by the *app* digit instead of the *environment* digit.
+`29954` now means the opposite of what it meant — **any runbook, script or memory of the
+old numbers is actively dangerous**, which is the whole reason for the change.
 
 ---
 
@@ -108,11 +122,19 @@ See **A5**. This is the sharpest edge in the whole procedure.
 
 - [ ] **A5. Decide the nginx conf per target.** ⚠️ **The silent one.**
       - **Prod:** `cp deploy/nginx-default.conf nginx-default.conf` is correct.
-      - **Staging:** **NEVER `cp`.** The repo conf hardcodes `proxy_pass :29954`; staging
-        is **29964**. Copying it points the staging vhost at the **production backend** —
+      - **Staging:** **NEVER `cp`.** The repo conf hardcodes `proxy_pass :19954`; staging
+        is **29954**. Copying it points the staging vhost at the **production backend** —
         launches verify against the wrong environment and writebacks land on the wrong
         host, the exact failure the twin exists to prevent. **Patch staging's own conf in
         place**, then diff it against the repo's to confirm only the port differs.
+      - ⚠️ **Edit the live conf IN PLACE — never `sed -i`, never `mv` onto it.** Both live
+        confs are **single-file bind mounts**, so the container follows the *inode*, not the
+        path. `sed -i` writes a new file and swaps it in, leaving the container serving the
+        OLD content while the host file looks correct — `grep` on the host says you
+        succeeded and the site 502s. Use `sed … > tmp && cat tmp > conf` (truncate+rewrite,
+        same inode) or `cp`, both of which the container sees instantly. If you have already
+        done it the wrong way, `docker restart <vhost>` re-resolves the mount.
+        *(2026-07-28: this took production down for ~2 minutes during the port renumber.)*
       *(Fix forward: datsme_me already keeps `nginx.production.conf` + `nginx.staging.conf`
       as separate files. DatsPet should do the same and delete this hazard — see §E.)*
 
@@ -281,6 +303,8 @@ Format: date · what broke · what the check said · what now catches it.
 | 2026-07-27 | prod deployed while staging stayed 32 commits behind | nothing — the procedure was per-target | **Rule 0** |
 | 2026-07-27 | C1 door 2 **504'd twice on a healthy deploy** (a false RED) | the same request succeeded 4/4 standalone in 19–45 s | C1's warm-up call + the vhost.d fix below |
 | 2026-07-27 | users got a **504 on a cold typed-animal draw**, since launch | our vhost said `proxy_read_timeout 300` — which never applied | `vhost.d/pet*.datsme.me` (Known gaps) |
+| 2026-07-28 | prod down ~2 min: `sed -i` on the live conf left the container on the **old inode** | host `grep` showed the new port; nginx served the old one | A5's in-place-edit rule |
+| 2026-07-28 | production's port `29954` **announced itself as staging** (`2` = staging) | nothing — it worked, it just read as the wrong environment | the renumber; ports are now 19954/29954 |
 | 2026-07-27 | C1's `--expect-max-poses 5` example vs the real cap of 8 | would have failed a good deploy | C1's ⚠️ note |
 
 ### Known gaps — not yet automated

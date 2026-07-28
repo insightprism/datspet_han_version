@@ -45,9 +45,9 @@ npm run lint
 
 **Ports** follow the 1995x group: frontend ends in 5, backend in 4, ComfyUI in 3 (mirrors datsme_me's 19995/19994).
 
-**Deploy**: **`deploy/CHECKLIST.md` is the procedure — follow it top to bottom.** Every item on it exists because something broke; §E logs the incident behind each one and is where new ones get added. `deploy/README.md` is the reference (topology, one-off setup). Git bundle → Hetzner box; prod `pet.datsme.me` on :29954, staging twin `pet-staging.datsme.me` on :29964. Deploy only on explicit request.
+**Deploy**: **`deploy/CHECKLIST.md` is the procedure — follow it top to bottom.** Every item on it exists because something broke; §E logs the incident behind each one and is where new ones get added. `deploy/README.md` is the reference (topology, one-off setup). Git bundle → Hetzner box; prod `pet.datsme.me` on :19954, staging twin `pet-staging.datsme.me` on :29954 (first digit = environment: 1=prod, 2=staging — renumbered 2026-07-28). Deploy only on explicit request.
 
-Two things about this app's deploys that cost a day on 2026-07-15 and are not guessable: **the repo's `deploy/nginx-default.conf` is PRODUCTION's** (hardcoded `:29954`) — `cp`ing it onto staging silently points staging at the prod backend; and **every deploy failure so far has been a false green**, so `scripts/verify_deployment.sh <url>` (which submits real jobs to the real pool) is the gate that counts, not a status code.
+Two things about this app's deploys that cost a day on 2026-07-15 and are not guessable: **the repo's `deploy/nginx-default.conf` is PRODUCTION's** (hardcoded `:19954`) — `cp`ing it onto staging silently points staging at the prod backend; and **every deploy failure so far has been a false green**, so `scripts/verify_deployment.sh <url>` (which submits real jobs to the real pool) is the gate that counts, not a status code.
 
 ## Architecture
 

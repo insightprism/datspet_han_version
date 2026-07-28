@@ -4,7 +4,7 @@
 the two live vhosts. Written to be picked up cold: everything in §0 was verified, not assumed.
 
 **The problem in one line.** `deploy/nginx-default.conf` **is production's file** — it hardcodes
-`proxy_pass :29954` — but nothing in its name says so, and `deploy/README.md` tells you to
+`proxy_pass :19954` — but nothing in its name says so, and `deploy/README.md` tells you to
 `cp` it onto the box. Do that on staging and the staging vhost proxies to the **production
 backend**: DPP launches verify against the wrong environment and writebacks land on the wrong
 host, which is the precise failure the staging twin exists to prevent. It fails **silently** —
@@ -20,7 +20,7 @@ rendering step**, nothing more.
 
 | Fact | Evidence |
 |---|---|
-| **One conf in the repo, and it is prod's.** `deploy/nginx-default.conf` has `server_name pet.datsme.me` and `proxy_pass http://172.18.0.1:29954` ×2. | `grep proxy_pass deploy/nginx-default.conf` |
+| **One conf in the repo, and it is prod's.** `deploy/nginx-default.conf` has `server_name pet.datsme.me` and `proxy_pass http://172.18.0.1:19954` ×2. | `grep proxy_pass deploy/nginx-default.conf` |
 | **Staging's conf is NOT in git.** It exists only as a hand-patched file at `/var/www/datspet-staging/nginx-default.conf`. No history, no review, no restore if the box dies. | `find . -name '*.conf' -path '*deploy*'` returns exactly one file |
 | **The two confs have already drifted, today.** Staging is **missing** the 2026-07-15 cache fix (`location ^~ /_next/static/` + `Cache-Control: no-cache`). The fix was written in the repo conf, `cp`'d to prod, and never reached staging — because they are unrelated files that merely resemble each other. | `diff` of repo conf vs staging's live conf |
 | **Only THREE values actually differ per target**, at **7 sites**: `server_name` (1), backend port (2), rate-limit zone prefix (4). Everything else is byte-identical and changes for product reasons, not environment reasons. | line-by-line diff, ignoring comments |
@@ -34,7 +34,7 @@ rendering step**, nothing more.
 | | **Production** | **Staging** |
 |---|---|---|
 | `SERVER_NAME` | `pet.datsme.me` | `pet-staging.datsme.me` |
-| `BACKEND_PORT` | `29954` | `29964` |
+| `BACKEND_PORT` | `19954` | `29954` |
 | `ZONE_PREFIX` | `datspet` | `datspet_stg` |
 | Repo on box | `/var/www/datspet` | `/var/www/datspet-staging` |
 | Vhost container | `datspet-nginx` | `datspet-staging-nginx` |
@@ -67,8 +67,8 @@ One template, one target table, one renderer.
 deploy/
   nginx-site.conf.template      # the vhost, with @@PLACEHOLDERS@@ — the ONLY copy
   targets/
-    production.env              # SERVER_NAME=pet.datsme.me  BACKEND_PORT=29954  ZONE_PREFIX=datspet
-    staging.env                 # SERVER_NAME=pet-staging.datsme.me  BACKEND_PORT=29964  ZONE_PREFIX=datspet_stg
+    production.env              # SERVER_NAME=pet.datsme.me  BACKEND_PORT=19954  ZONE_PREFIX=datspet
+    staging.env                 # SERVER_NAME=pet-staging.datsme.me  BACKEND_PORT=29954  ZONE_PREFIX=datspet_stg
   render_nginx_conf.sh <target> # template + target -> stdout; exits non-zero on any
                                 # unsubstituted placeholder
 ```
@@ -163,7 +163,7 @@ placeholder must never reach `nginx -t`.
      docker run --rm -v /tmp/$t.conf:/etc/nginx/conf.d/default.conf:ro nginx:alpine nginx -t
    done
    ```
-3. **Cross-wiring is impossible.** `deploy/render_nginx_conf.sh staging | grep -c 29954` → **0**.
+3. **Cross-wiring is impossible.** `deploy/render_nginx_conf.sh staging | grep -c 19954` → **0**.
    This is the landmine, gated.
 4. **Fails closed.** Remove a target file's `BACKEND_PORT` → renderer exits non-zero, emits
    nothing usable.

@@ -1,0 +1,23 @@
+[Unit]
+Description=DatsPet (Pet Maker) Backend (STAGING twin) — GPU-less, generation via the shared_gpu_cpu pool
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/var/www/datspet-staging/webui
+# --workers 1 is REQUIRED, not tuning (spec Finding 6): JOBS/JOBS_LOCK are
+# in-memory and the SQLite store uses a single module-level connection.
+#
+# PORT 29954 = STAGING (2 = staging under the platform convention, see
+# deploy/README.md). Production is 19954. Renumbered 2026-07-28 — before that
+# production held 29954 and staging 29964, i.e. production's port announced
+# itself as staging. This file was hand-authored on the box until that change;
+# it is tracked now so the twin's unit can never silently diverge again.
+ExecStart=/var/www/datspet-staging/webui/venv/bin/uvicorn app:app --host 0.0.0.0 --port 29954 --workers 1 --log-level info
+EnvironmentFile=/var/www/datspet-staging/webui/.env
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
