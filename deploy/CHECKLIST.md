@@ -7,6 +7,30 @@
 > `deploy/README.md` is the *reference* (topology, one-off setup, why the box looks like
 > it does). **This file is the procedure.** When they disagree, fix both.
 
+## Rule 0 — STAGING FIRST, ALWAYS. Production may never be ahead of staging.
+
+**Every production deploy goes through staging first.** Deploy staging, verify it (Phase C),
+*then* deploy production with the same commit. There is no exception, no "it's a small change",
+no "staging is behind anyway".
+
+**Production must never be at a commit staging does not already have.** If you find it is, that
+is a defect to correct, not a state to work from — bring staging up before the next prod deploy.
+
+*(Added 2026-07-27, user policy. Until then this file described a **per-target** procedure — pick
+a target, run A→B→C — and C2's "check the one you did *not* deploy" assumed you deploy one, not a
+sequence. Nothing stopped a prod-only deploy, and on 2026-07-27 one happened: prod went to
+`c603356` while staging sat at `2a95c8d`, 32 commits behind. No harm resulted, but the twin had
+stopped being a twin, so there was nothing to rehearse the next deploy in.)*
+
+**The fleet is SHARED; the web tiers are NOT.** `omen-pet` + `dual-nvidia-pet` serve staging and
+production **both** — one roll covers each. But `/var/www/datspet` and `/var/www/datspet-staging`
+are two separate servers with separate venvs, builds, units, vhosts and ports, and each needs its
+own Phase B. **Rolling the fleet is not deploying anything.** So the full order is:
+
+    fleet (once)  ->  staging Phase B + C  ->  production Phase B + C
+
+---
+
 ## The one thing to understand before deploying this app
 
 The 2026-07-15 designer deploy produced **nine distinct failures. Every single one was a
@@ -191,8 +215,13 @@ See **A5**. This is the sharpest edge in the whole procedure.
 - [ ] **C1. Run the real verification.** It submits real jobs to the real pool, because a
       fleet where every job dies cannot survive a check that submits a job.
       ```bash
-      scripts/verify_deployment.sh https://pet.datsme.me --expect-max-poses 5
+      # WARM THE POOL FIRST — see §E 2026-07-27. A cold typed-animal draw exceeds the
+      # 60 s outer-proxy timeout and door 2 comes back 504 on a perfectly good deploy.
+      curl -s -o /dev/null -m 200 -X POST https://pet.datsme.me/api/reference -F "animal=a blue jay"
+      scripts/verify_deployment.sh https://pet.datsme.me --expect-max-poses 8
       ```
+      ⚠️ `--expect-max-poses` must match `pet_factory/tiers/*.json`'s `default_tier` cap —
+      **8** as of 2026-07-27. The old `5` in this example was stale and would fail a good deploy.
       **Exit 0 or you are not deployed.** Everything it checks is a scar: the DPP deep
       link 307s for real and keeps `?from=datsme`; the designer's *content* renders (a 200
       proves nothing — `try_files` serves `index.html` for missing routes); HTML
@@ -249,8 +278,25 @@ Format: date · what broke · what the check said · what now catches it.
 | 2026-07-15 | users served a **deleted page** after a correct deploy | every curl **307** | C1 (cache headers), C3 |
 | 2026-07-15 | live dev server poisoned by a build | guard: "no collision possible" | A1 |
 | 2026-07-15 | `git revert` of the knob would have undone a migration | git reported the conflict (loud) | A4 |
+| 2026-07-27 | prod deployed while staging stayed 32 commits behind | nothing — the procedure was per-target | **Rule 0** |
+| 2026-07-27 | C1 door 2 **504'd twice on a healthy deploy** (a false RED) | the same request succeeded 4/4 standalone in 19–45 s | C1's warm-up call |
+| 2026-07-27 | C1's `--expect-max-poses 5` example vs the real cap of 8 | would have failed a good deploy | C1's ⚠️ note |
 
 ### Known gaps — not yet automated
+
+- ⚠️ **The 60 s outer-proxy timeout — this one reaches USERS, not just C1.** Measured
+  2026-07-27: a typed-animal draw (`POST /api/reference`, txt2img on the pool) takes **19–45 s
+  warm** and **over 60 s cold**, and comes back **`504` in exactly 60.2 s**. The cause is not
+  our vhost — `/var/www/datspet*/nginx-default.conf` correctly sets `proxy_read_timeout 300`.
+  It is the **outer `nginx-proxy`**: its generated server blocks for `pet.datsme.me` and
+  `pet-staging.datsme.me` set **no** `proxy_read_timeout`, so nginx's **60 s default** applies
+  and the outer layer gives up long before our 300 s does. A user who types an animal while the
+  pool is cold gets a gateway-timeout page.
+  **Fix (not applied — it touches shared infra serving other apps, so it needs a decision):**
+  add a `proxy_read_timeout 300;` override in `nginx-proxy`'s `vhost.d/pet.datsme.me` and
+  `vhost.d/pet-staging.datsme.me`. The pattern already exists on that box —
+  `vhost.d/staging.datsme.me` sets `86400`. Until then, C1's warm-up call is the workaround,
+  and it only hides the symptom for the deploy check.
 
 - **`deploy/nginx-default.conf` is prod's file in a shared repo.** A5 is a human
   remembering. **Specced: [`docs/SPEC_PER_TARGET_NGINX_CONF.md`](../docs/SPEC_PER_TARGET_NGINX_CONF.md)**
