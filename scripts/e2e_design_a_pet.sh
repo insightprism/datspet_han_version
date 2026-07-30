@@ -45,10 +45,24 @@ die_early() { printf '   \033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 JAR="$(mktemp)"
 trap 'rm -f "$JAR"' EXIT
 
-# host python with SDK + api on the path (for mint + DB reads)
+# Host python with the SDK + api on the path, for minting and for reading the
+# RESULT out of the host's own DB.
+#
+# `;` after sourcing .env, NEVER `&&`. On a deployed box `. .env` exits 2 (a
+# harmless parse of a line `set -a` does not like), and with `&&` that silently
+# skipped the python entirely — every host query returned an empty string and the
+# script blamed whatever it was reading. A diagnostic that accuses the wrong thing
+# is worse than no diagnostic; the exit code of sourcing config is not a signal we
+# want to act on.
+#
+# DATSME_PY defaults to the repo's venv when there is one (deployed boxes keep the
+# host's deps there, and bare python3 has none of them) and falls back to python3.
+DATSME_PY="${DATSME_PY:-}"
 PYRUN() {
-  ( cd "$DATSME_API" && set -a && . .env 2>/dev/null && set +a \
-    && PYTHONPATH="$DATSME_API/sdk:$DATSME_API" python3 -c "$1" )
+  local py="$DATSME_PY"
+  [ -z "$py" ] && { [ -x "$DATSME_API/venv/bin/python" ] && py="$DATSME_API/venv/bin/python" || py=python3; }
+  ( cd "$DATSME_API"; set -a; . .env 2>/dev/null; set +a
+    PYTHONPATH="$DATSME_API/sdk:$DATSME_API" "$py" -c "$1" )
 }
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
