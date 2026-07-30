@@ -24,7 +24,10 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { generatePet, getJob, stopJob, type JobStatus } from "@/lib/api";
+import {
+  generatePet, getJob, listUnsavedPets, stopJob,
+  type JobStatus, type UnsavedPet,
+} from "@/lib/api";
 
 const TERMINAL = new Set(["done", "error", "canceled"]);
 
@@ -46,9 +49,24 @@ function jobFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get(JOB_URL_PARAM);
 }
 
+/** A finished pet, presented as the job that made it. The pet id IS the job id
+ *  (app.py inserts with pet_id=job.id), so the result panel and every asset URL
+ *  work from this exactly as they do from a live build — which is what makes
+ *  resuming independent of the in-memory job that may be long gone. */
+function asFinishedJob(pet: UnsavedPet): JobStatus {
+  return {
+    id: pet.id, name: pet.display_name, status: "done", progress: 1,
+    message: "Ready.", breed_id: pet.breed_id, error: null,
+  };
+}
+
 export function usePetJob() {
   const [job, setJob] = useState<JobStatus | null>(null);
   const [error, setError] = useState("");
+  // A finished build this user never answered, offered rather than forced: they
+  // may well have moved on, and silently reopening an old pet would be its own
+  // surprise. Null once resumed or dismissed.
+  const [unsaved, setUnsaved] = useState<UnsavedPet | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const jobIdRef = useRef<string | null>(null);
 
@@ -81,9 +99,14 @@ export function usePetJob() {
   // Reattach to a build already in flight — the mid-build sign-in case (see the
   // module docstring). Fetches ONCE immediately rather than waiting out a poll
   // interval, so the page paints the real state instead of a blank step 3.
+  async function offerUnsaved() {
+    const pets = await listUnsavedPets().catch(() => []);
+    if (pets.length > 0) setUnsaved(pets[0]);   // newest; the rest will purge
+  }
+
   useEffect(() => {
     const jobId = jobFromUrl();
-    if (!jobId) return;
+    if (!jobId) { void offerUnsaved(); return; }
     let cancelled = false;
     getJob(jobId)
       .then((j) => {
@@ -95,9 +118,12 @@ export function usePetJob() {
       })
       .catch(() => {
         // Unknown or long-gone id (JOBS is in-memory, so a backend restart clears
-        // it). Drop it quietly and show the designer's normal empty state — an
-        // error banner about a job the user did not ask to resume is noise.
-        if (!cancelled) setJobInUrl(null);
+        // it). Drop it quietly — an error banner about a job the user did not ask
+        // to resume is noise — and fall back to the pet itself, which outlives the
+        // job and is the durable route back.
+        if (cancelled) return;
+        setJobInUrl(null);
+        void offerUnsaved();
       });
     return () => { cancelled = true; };
     // Mount only: the URL is read once, and every later change goes through
@@ -160,7 +186,19 @@ export function usePetJob() {
     setJobInUrl(null);
   }
 
+  /** Pick the offered pet back up. Puts it in the URL too, so the recovered build
+   *  is itself recoverable — a reload from here lands on the same pet. */
+  function resumeUnsaved() {
+    if (!unsaved) return;
+    setJob(asFinishedJob(unsaved));
+    setJobInUrl(unsaved.id);
+    setUnsaved(null);
+  }
+
   const busy = job !== null && (job.status === "queued" || job.status === "running");
   const done = job !== null && job.status === "done";
-  return { job, error, setError, submit, reset, stop, busy, done };
+  return {
+    job, error, setError, submit, reset, stop, busy, done,
+    unsaved, resumeUnsaved, dismissUnsaved: () => setUnsaved(null),
+  };
 }

@@ -74,6 +74,22 @@ export interface PetSummary {
 
 // Bind unclaimed local pets to the launched caller. Called with the ids the user
 // selected before linking out to the import page — never speculatively.
+/** A finished build the caller never answered — the way back to a pet that a
+ *  navigation interrupted. Newest first; the designer offers the newest.
+ *  See GET /api/pets/unsaved for why this is not merged into listPets(). */
+export interface UnsavedPet {
+  id: string;
+  breed_id: string;
+  display_name: string;
+  created_at: number;
+}
+
+export async function listUnsavedPets(): Promise<UnsavedPet[]> {
+  const r = await apiFetch(`${API_URL}/api/pets/unsaved`, { credentials: "include" });
+  if (!r.ok) return [];   // never block the designer on this — it is an offer, not a gate
+  return r.json();
+}
+
 export async function claimPets(petIds: string[]): Promise<{ claimed: string[] }> {
   const r = await apiFetch(`${API_URL}/api/pets/claim`, {
     method: "POST",

@@ -51,7 +51,8 @@ import PoseStep from "./PoseStep";
 export default function Designer() {
   const flow = useDesignFlow();
   const { state, dispatch, axes, entitlement, maxPoses, fillReference, makePreview, pickRoll } = flow;
-  const { job, error: jobError, submit, reset, stop, busy, done } = usePetJob();
+  const { job, error: jobError, submit, reset, stop, busy, done,
+          unsaved, resumeUnsaved, dismissUnsaved } = usePetJob();
   const [options, setOptions] = useState<CatalogBaseOption[] | null>(null);
   // The pending pick and the typed draft live HERE, not in the surfaces that show them.
   // <Step> unmounts its children on collapse (Step.tsx:111) and <ModalOverlay> unmounts
@@ -324,6 +325,45 @@ export default function Designer() {
 
   return (
     <div>
+      {/* An unanswered build, offered back (SPEC_PET_DESIGNER_FLOW resume).
+
+          Between a build finishing and the user pressing Save there is a window, and
+          any navigation used to end it with the pet reachable from nowhere: the house
+          shows only saved pets, and the only other route was a job id in the URL that
+          the navigation itself discarded. Signing out is how this was found — the
+          sign-out chain lands on the landing page — but a closed tab or a stray link
+          does exactly the same thing, which is why the route back is to the PET rather
+          than a way to carry a job id through one particular hop.
+
+          An OFFER, not an automatic reopen: the user may well have moved on, and
+          silently resurrecting an old pet on top of a fresh design is its own surprise.
+          Hidden entirely once a build is on screen — `!job` — so it can never compete
+          with the thing the user is actually looking at. */}
+      {unsaved && !job && (
+        <div
+          className="card mb-5 flex flex-wrap items-center gap-3 p-3"
+          style={{ borderColor: "rgba(52,211,153,0.4)", background: "rgba(52,211,153,0.08)" }}
+        >
+          <span className="mono text-sm" style={{ color: "var(--green)" }}>
+            🐾 You have an unsaved pet — <strong>{unsaved.display_name}</strong>
+          </span>
+          <button
+            onClick={resumeUnsaved}
+            className="mono rounded-lg border px-3 py-1.5 text-sm font-bold"
+            style={{ background: "linear-gradient(135deg, #10b981, #059669)", color: "var(--heading)", borderColor: "transparent" }}
+          >
+            Pick it up →
+          </button>
+          <button
+            onClick={dismissUnsaved}
+            className="mono text-sm hover:opacity-80"
+            style={{ color: "var(--faint)" }}
+          >
+            Not now
+          </button>
+        </div>
+      )}
+
       {/* STEP 1 — pick your base animal. A WORKSHOP, not a menu: the controls sit on
           the left and the animal they produce sits on the right, so try → look → try
           again is one glance instead of a scroll. It stays open until the user says

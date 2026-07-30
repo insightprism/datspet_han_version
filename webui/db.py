@@ -272,6 +272,33 @@ def get_pet(pet_id: str) -> Optional[sqlite3.Row]:
             "SELECT * FROM pets WHERE id=?", (pet_id,)).fetchone()
 
 
+def list_unsaved_pets(external_user_id: Optional[str] = None) -> list[dict]:
+    """Finished builds the caller never decided on — drafts, newest first.
+
+    A draft is "scratch the user never saved", and purge_drafts is right to sweep
+    it. But a build that FINISHED and simply hasn't been answered yet is not
+    scratch: it is three minutes of GPU and the thing the user asked for. Between
+    the build finishing and the user pressing Save there is a window, and anything
+    that navigates the page — signing out, closing the tab, a stray link, a crash —
+    used to end that window with the pet reachable from nowhere. The house excludes
+    drafts, and the only other route was a job id that lives in memory and dies with
+    the backend. This is the route back (SPEC_PET_DESIGNER_FLOW resume).
+
+    `bundle_zip != x''` is what makes it FINISHED rather than merely started: a row
+    is inserted only at finalize, but the guard states the requirement instead of
+    relying on that, since a partial row would render an empty result panel.
+
+    Same scope rule as everything else — you see your own, and only your own.
+    """
+    clause, params = _scope_clause(external_user_id)
+    with _lock:
+        rows = _connect().execute(
+            f"""SELECT id, breed_id, display_name, created_at FROM pets
+                WHERE draft=1 AND length(bundle_zip) > 0 AND {clause}
+                ORDER BY created_at DESC""", params).fetchall()
+    return [dict(r) for r in rows]
+
+
 def list_saved_pets(external_user_id: Optional[str] = None) -> list[dict]:
     """Saved (non-draft) pets, newest first, scoped to the caller's identity.
     Uses the SAME visibility rule as keep/delete/access (_scope_clause): a

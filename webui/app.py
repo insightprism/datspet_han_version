@@ -1747,6 +1747,26 @@ def list_pets(request: Request):
     return db.list_saved_pets(external_user_id=owner)
 
 
+@app.get("/api/pets/unsaved")
+def list_unsaved_pets(request: Request):
+    """Finished builds this caller never answered — the way back to one.
+
+    The designer asks on mount, so a user who was navigated away mid-decision is
+    offered their pet instead of an empty page. Signing out is the case that
+    surfaced this (the sign-out chain lands on the landing page, which discards the
+    `?job=` the designer was carrying), but the same window opens for a closed tab,
+    a stray link, or a crash — so the answer is a route back to the PET, not a way
+    to carry a job id through one particular navigation.
+
+    Newest first; the designer offers the newest and ignores the rest. Deliberately
+    NOT merged into /api/pets: the house is "pets I decided to keep", and an
+    undecided build appearing there would make Adopt and the house cap mean
+    something different. Different question, different endpoint.
+    """
+    owner = owner_scope.require_owner(request)
+    return db.list_unsaved_pets(external_user_id=owner)
+
+
 @app.post("/api/pets/claim")
 def claim_pets(request: Request, body: dict = Body(...)):
     """Move this browser's still-anonymous work onto the launched caller — the
