@@ -160,17 +160,73 @@ while :; do
 done
 echo
 
-# --- 5. Accept → writeback → host fetches + adopts --------------------------
-say "Step 6/6 — Accept: DatsPet posts the writeback; DatsMe fetches the bundle + adopts"
-ACC=$(curl -s -m 90 -H "Cookie: datsme_launch=$COOKIE" -X POST -H "Content-Type: application/json" \
-        -d "{\"pet_id\":\"$JOB\"}" "$DATSPET_BACKEND/api/datsme/accept" 2>/dev/null)
-if echo "$ACC" | grep -q '"redirect_url"'; then
-  ok "Accept OK → redirect: $(echo "$ACC" | python3 -c 'import sys,json;print(json.load(sys.stdin)["redirect_url"])')"
-elif echo "$ACC" | grep -q '"queued":true\|"queued": true'; then
-  die "Accept was QUEUED (host unreachable at write time): $ACC"
-else
-  die "Accept failed: $ACC"
-fi
+# --- 5. Adopt → the PULL checkout → host fetches + adopts -------------------
+# The pull authenticates as the USER, not as the partner — that is the whole point
+# of the consolidation — so this needs a real host session cookie. PYRUN has the
+# host's own code and DB, so it mints one the way login does, with no password.
+HOST_JAR="$(mktemp -t datspet_e2e_host.XXXXXX)"
+trap 'rm -f "$HOST_JAR"' EXIT
+HOST_TOKEN=$(PYRUN "
+from social_db import SocialSessionLocal
+from social_models import User
+from session_store import create_user_session
+class _Req:                      # create_user_session only reads headers/client
+    headers = {'user-agent': 'e2e'}
+    client = None
+with SocialSessionLocal() as db:
+    u = db.query(User).filter(User.id=='$DATSME_USER_ID').first()
+    print(create_user_session(db, u, _Req()))
+    db.commit()
+" 2>/dev/null | tail -1)
+[ -z "$HOST_TOKEN" ] && die "could not mint a host session for $DATSME_USER_ID"
+HOST_DOMAIN=$(echo "$DATSME_HOST" | sed -E 's#https?://##; s#:.*##')
+printf '%s\tFALSE\t/\tFALSE\t0\ttoken\t%s\n' "$HOST_DOMAIN" "$HOST_TOKEN" > "$HOST_JAR"
+
+# --- 5. Adopt → the PULL checkout → host fetches + adopts -------------------
+# The push (POST /api/datsme/accept) is retired: DatsPet no longer holds a
+# credential that can trigger a charge (SPEC_DATSPET_FEDERATED_SESSION §6). The pet
+# now reaches DatsMe the way the browser sends it — claim + keep here, then the
+# host's own checkout, authenticated by the user's session, quoting before charging.
+say "Step 6/6 — Adopt: claim + keep, then the host checkout pulls the bundle"
+
+# 5a. What the hand-off helper does before navigating (handOffToDatsme, api.ts).
+curl -s -m 20 -H "Cookie: datsme_launch=$COOKIE" -X POST -H "Content-Type: application/json" \
+     -d "{\"pet_ids\":[\"$JOB\"]}" "$DATSPET_BACKEND/api/pets/claim" >/dev/null 2>&1
+KEPT=$(curl -s -m 20 -H "Cookie: datsme_launch=$COOKIE" -X POST \
+        "$DATSPET_BACKEND/api/pets/$JOB/keep" 2>/dev/null)
+echo "$KEPT" | grep -q '"id"' || die "keep failed (the host skips drafts, so this is required): $KEPT"
+ok "claimed + kept — the pet is now offerable to the host"
+
+# 5b. The host QUOTES from the declared pose_count, without fetching any bytes.
+QUOTE=$(curl -s -m 30 -b "$HOST_JAR" "$DATSME_HOST/api/integrations/import/datspet" 2>/dev/null)
+CREDITS=$(echo "$QUOTE" | python3 -c "
+import sys,json
+items=[i for e in json.load(sys.stdin).get('exports',[]) for i in e.get('items',[])]
+m=[i for i in items if i['id']=='$JOB']
+print(m[0]['credits'] if m else 'MISSING')" 2>/dev/null)
+[ "$CREDITS" = "MISSING" ] && die "the host does not offer this pet — check pose_count / the transfer block"
+ok "host quotes $CREDITS credits for it (declared basis, no bytes fetched)"
+
+# 5c. The BINDING checkout: echo the sha + the quoted price. The host refuses to
+# charge more than it quoted, and charges at-most-once per (partner, item).
+SHA=$(echo "$QUOTE" | python3 -c "
+import sys,json
+items=[i for e in json.load(sys.stdin).get('exports',[]) for i in e.get('items',[])]
+print([i for i in items if i['id']=='$JOB'][0].get('sha256',''))" 2>/dev/null)
+IMP=$(curl -s -m 120 -b "$HOST_JAR" -X POST -H "Content-Type: application/json" \
+      -d "{\"export_type\":\"pets\",\"items\":[{\"id\":\"$JOB\",\"sha256\":\"$SHA\",\"quoted_credits\":$CREDITS}]}" \
+      "$DATSME_HOST/api/integrations/import/datspet" 2>/dev/null)
+echo "$IMP" | grep -q '"imported"' || die "checkout failed: $IMP"
+ok "checkout charged $(echo "$IMP" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("credits_charged","?"))') credits"
+
+# 5d. At-most-once: the SAME pet checked out again must quote and charge ZERO.
+AGAIN=$(curl -s -m 60 -b "$HOST_JAR" "$DATSME_HOST/api/integrations/import/datspet" 2>/dev/null | python3 -c "
+import sys,json
+items=[i for e in json.load(sys.stdin).get('exports',[]) for i in e.get('items',[])]
+m=[i for i in items if i['id']=='$JOB']
+print(m[0]['credits'] if m else 0)" 2>/dev/null)
+[ "${AGAIN:-0}" = "0" ] || die "re-checkout would charge $AGAIN — the at-most-once key is broken"
+ok "re-checkout quotes 0 — charged at most once"
 
 # --- 6. verify the RESULT in the DatsMe user's DB ---------------------------
 say "Verify — in the DatsMe user's SQLite + ledger (not just HTTP)"

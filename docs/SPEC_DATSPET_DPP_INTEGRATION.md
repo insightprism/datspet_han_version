@@ -1,5 +1,15 @@
 # SPEC — DatsPet as a DatsMe Partner App (DPP Integration)
 
+> **RETIRED IN PART, 2026-07-30 — `POST /api/datsme/accept` and the push writeback no longer
+> exist.** `SPEC_DATSPET_FEDERATED_SESSION` §6 consolidated the two purchase paths onto the
+> PULL checkout: the user checks out on the host's own import page, authenticated by their own
+> DatsMe session, and the host fetches the bundle server-to-server. DatsPet holds no credential
+> that can trigger a charge. **Everything below describing `/api/datsme/accept`, the writeback
+> POST, the SDK retry queue, or the resync (`rsx`) launch is history, not current behaviour** —
+> notably the flow diagram, the endpoint table's accept row, and the frontend note. The
+> manifest, `/launch`, `/partner/export`, `/partner/revoke` and the bundle-token endpoint are
+> unaffected and still current.
+
 **Status:** ✅ IMPLEMENTED + E2E-verified live · 2026-07-11 (Phases 0–3 done, both repos)
 **Repos touched:** `datsme-pet-factory` (this repo — the partner) and `datsme_me` (the host)
 **Reference partner:** `datsme_personality` (imitate `app/api/datsme_integration.py`)

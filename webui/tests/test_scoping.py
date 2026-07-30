@@ -99,14 +99,25 @@ def test_user_cannot_read_or_delete_another_users_pet(app_client, dpp_env):
     assert app_client.post("/api/pets/petA00000002/keep", cookies=cookieB).status_code == 404
 
 
-def test_accept_rejects_another_users_pet(app_client, dpp_env):
+def test_the_export_never_offers_another_users_pet(app_client, dpp_env):
+    """B cannot get A's pet into their DatsMe house.
+
+    This used to POST /api/datsme/accept and assert 404. That endpoint is gone
+    (SPEC_DATSPET_FEDERATED_SESSION §6.2), so the test kept passing while asserting
+    nothing about scoping — a 404 from a deleted route looks exactly like a 404 from
+    an ownership check. Rewritten against the path that actually carries pets now:
+    the host's pull reads /partner/export/{user_id}, which is exact-match, so A's
+    pet is simply not in B's export and there is nothing for B to check out.
+    """
     db = dpp_env["db"]
     make_pet(db, pet_id="petA00000003", external_user_id="user-A", draft=False)
-    # user B tries to Accept user A's pet_id → 404, no writeback attempted.
-    r = app_client.post("/api/datsme/accept", json={"pet_id": "petA00000003"},
-                        cookies={"datsme_launch": _cookie_for("user-B")})
-    assert r.status_code == 404, r.text
-    # A's pet is untouched (still A's, not acked).
+
+    assert [p["id"] for p in db.export_pets("user-A")] == ["petA00000003"]
+    assert db.export_pets("user-B") == []
+
+    # And B cannot reach it directly either — 404, no existence leak.
+    cookieB = {"datsme_launch": _cookie_for("user-B")}
+    assert app_client.get("/api/pets/petA00000003/zip", cookies=cookieB).status_code == 404
     row = db.get_pet("petA00000003")
     assert row["external_user_id"] == "user-A"
     assert row["writeback_acked_at"] is None

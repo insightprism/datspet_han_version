@@ -152,7 +152,7 @@ mint the token directly.
 | `capabilities.known` fails conformance | host missing `pets.write` | Phase 2 not deployed |
 
 Retry-queue drain (Phase 4) is not automatic yet: to flush queued writebacks,
-call `datsme_integration.drain_retry_queue()` (wire to a scheduler in prod).
+(RETIRED 2026-07-30 — there is no retry queue. The push writeback and its drain were deleted with the purchase consolidation; a pull has no queued delivery to retry. See `SPEC_DATSPET_FEDERATED_SESSION` §6.2.)
 
 ---
 
