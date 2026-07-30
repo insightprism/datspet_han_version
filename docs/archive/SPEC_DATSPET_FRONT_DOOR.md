@@ -1,6 +1,53 @@
 # SPEC — DatsPet Front Door (public landing + "Sign in with DatsMe")
 
-**Status:** Design — **Rev.2** (2026-07-14), for review. A public landing page at the DatsPet
+> **CLOSED & ARCHIVED — 2026-07-30. Built in full, deployed to production and staging, and
+> re-verified live at closeout.**
+>
+> **Every build-order step in §8 shipped**, host first as §8 requires: DatsPet `/launch`'s
+> validated `return` param (§3.1, `_safe_return_path`), the session additions and logout (§3.2,
+> §3.3), the public landing (§4, `web/src/app/page.tsx` → `components/PublicLanding.tsx`), the
+> host's shared `resolve_and_mint_launch` helper + `GET /login-launch` (§2.1,
+> `apps/dpp/service.py:667`, `apps/dpp/routes.py:197`), `mint_launch_token(extra_claims=…)`
+> (§2.1, `service.py:464`), the partner-generic consent page (§2.2,
+> `datsme_me/web/src/app/integrations/consent/page.tsx`), and the dev-only `/api` rewrite (§6,
+> `next.config.mjs:64`). Guarded by `webui/tests/test_front_door.py` (14) and
+> `datsme_me/api/tests/test_front_door_launch.py` (3).
+>
+> **Verified against the running deployments on 2026-07-30, not inferred from the diff:**
+> `pet.datsme.me` and `pet-staging.datsme.me` both answer `/api/datsme/session` with the §3.2
+> shape — `integrated: true` plus a `signin_url` and `signup_url` pointing at their own host
+> (`datsme.me` / `staging.datsme.me`), so neither environment has the standalone/no-buttons
+> posture. `GET /api/integrations/login-launch?activity=design_a_pet&return=/design` on **both**
+> hosts 302s to `/login?next=<urlencoded self URL>` — §1.2's signed-out leg, live. The §8 hard
+> constraint (host before partner) therefore holds in both environments.
+>
+> **What shipped after Rev.2, in this spec's shape rather than around it:** the admin bounce
+> (`GET /admin-launch`, `SPEC_MOTION_PROFILE_ADMIN`) as the thin sibling §2.1 designed it —
+> proof the shared helper was the right seam; `POST /launch`'s `return_path` (the §2.1
+> amendment); the signed-in nav chip that §9.4 left open (`components/NavAuth.tsx`); and the
+> catalog's "Browse ready-made pets" entrance on the landing (`SPEC_DATSPET_CATALOG_PURCHASE`).
+>
+> **What changed under it since:** sign-out. §3.3's `POST /api/datsme/logout` could only ever
+> clear DatsPet's cookies, which left the host session live and let the next sign-in silently
+> re-mint the same user — the bug `SPEC_DATSPET_FEDERATED_SESSION` §4.1 was written to kill.
+> The real sign-out is now `GET /api/datsme/signout` (a navigation to the host's
+> `logout-launch`); the POST survives as the local primitive. Read §3.3 and §5's last bullet
+> with that correction. Decision 1's "same Accept/adopt flow" is likewise stale — Accept was
+> retired (`docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md`) — but the sentence's actual claim,
+> *one session model, two entrances*, is exactly what still holds.
+>
+> **Deliberately still open, both re-affirmed as deferrals rather than debt:** §9.2 (threading
+> `next` through signup → verify-email; a fresh account still returns and clicks Sign in) and
+> §9.3 (whether anonymous generation on the public host should require sign-in — a tier-gating
+> decision, still unmade).
+>
+> **Living successors:** `docs/archive/SPEC_DATSPET_FEDERATED_SESSION.md` (sign-out, renewal,
+> owner scope — it extends this spec's bounce), `docs/SPEC_MOTION_PROFILE_ADMIN.md` (the admin
+> sibling of §2.1), `docs/SPEC_DATSPET_HOUSE_ADOPT.md` and
+> `docs/SPEC_DATSPET_CATALOG_PURCHASE.md` (what a signed-in user does next).
+
+**Status:** ~~Design — **Rev.2** (2026-07-14), for review.~~ **SHIPPED + LIVE · CLOSED 2026-07-30**
+(original Rev.2 text follows). A public landing page at the DatsPet
 root URL with **Sign in with DatsMe** (a launch-token bounce — no DatsPet accounts, ever) and
 **Create a DatsMe account** (routes out to DatsMe's own signup). The landing also explains what
 DatsPet is and how it relates to DatsMe. Builds on **`docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md`**
@@ -39,7 +86,9 @@ No SDK change.
    normal `design_a_pet` launch token and redirects back to DatsPet's existing `/launch`. After
    the bounce, the user is in **exactly the state a DatsMe-initiated "Design a pet" launch
    produces** — same cookie, same capabilities, same Accept/adopt flow. One session model, two
-   entrances.
+   entrances. *(**[2026-07-30]** There is no Accept any more — purchases run on the host's pull
+   checkout. The decision's substance is untouched: the two entrances still converge on one
+   identical state, which is why nothing downstream had to learn about the front door.)*
 
 2. **Sign-up lives on DatsMe, full stop.** The landing's "Create a DatsMe account" link goes to
    DatsMe's `/signup`. DatsPet never proxies, brands, or wraps the signup form — one account,
@@ -209,7 +258,26 @@ Today it returns `{launched, user_id, capabilities, cost}` / `{launched: false}`
 The frontend never hardcodes a DatsMe origin — it renders the URLs this endpoint hands it
 (per the one-adapter-per-backend rule; `web/src/lib/api.ts` is that adapter).
 
+**[2026-07-30] All four fields shipped and are live in both environments** (probed at
+closeout). The rule in the paragraph above is what made the endpoint grow the way it did: every
+later spec that needed a host URL added it *here* rather than in the browser — `import_url`
+(the pull checkout), `signout_url` (the host logout bounce), plus `display_name`, `cost`,
+`stale` and `token_expires_in`. One consequence worth carrying forward: because the landing
+depends on this call, it is **the one endpoint that must never 401 on a stale session** — a
+lapsed cookie answers `{launched: false, stale: true}` (federated §4.7).
+
 ### 3.3 `POST /api/datsme/logout` (new, small)
+
+> **[2026-07-30] Superseded as "sign out", kept as the primitive.** This endpoint shipped
+> exactly as written and was then found insufficient: clearing DatsPet's cookies cannot touch
+> the DatsMe session on the other origin, so a "signed out" user's next click silently re-minted
+> them — and a second person on the same browser inherited the first one's pets. `GET
+> /api/datsme/signout` (federated §4.1) is the real thing: it clears our cookies on the **same
+> response** that redirects to the host's `logout-launch`, so the clear and the hop cannot
+> half-fail. The POST survives for standalone mode and the tests. One clause below got stronger
+> rather than weaker: "logout owns clearing every DatsPet-issued cookie" now covers a **third**
+> cookie, the anonymous owner id — and that one is not housekeeping, it is the difference
+> between an empty house and the previous user's pets.
 Clears the `datsme_launch` cookie **and the `datspet_admin` cookie** (`delete_cookie` with the same
 samesite/secure attributes) and returns `{ok: true}`. This ends the **DatsPet** session only — the
 landing labels it "Sign out of DatsPet" and the copy notes the DatsMe session itself is managed on
@@ -242,6 +310,14 @@ the existing app tokens (`globals.css`), toasts + `ConfirmModal` per the project
 
 `?signin=unavailable` / `?signin=declined` in the URL → the matching toast, then param is
 cleaned from the URL (replaceState).
+
+**[2026-07-30] All four states shipped as specified** (`PublicLanding.tsx`), including both
+toasts — the host raises them from the two places §1.5 and §2.2 said it would (`routes.py:179`
+for `unavailable`, the consent page for `declined`). Two rows gained a third action since: the
+landing also offers **Browse ready-made pets** (`/catalog`, the zero-GPU entrance —
+`SPEC_DATSPET_CATALOG_PURCHASE`), and a `?signedout=1` toast joined the two above (federated
+§4.4). The signed-in chip §4.3 deferred and §9.4 left open is now `components/NavAuth.tsx`,
+which renders the DatsMe display name, the admin links, and Sign out.
 
 ### 4.2 Content (draft copy — edit freely, structure is the spec)
 - **Hero:** "Design your own animated pet." Sub: "Describe it or pick a breed — DatsPet builds
@@ -276,6 +352,11 @@ sign-in UX (§9.4 for the optional signed-in chip).
 - **No enumeration change:** the landing is public and states nothing about any account.
 - **Logout is cookie-clearing only** — no server session exists on DatsPet to invalidate; the
   JWT expiring (~60 min) remains the backstop, exactly as today.
+  **[2026-07-30] Half of this aged badly, and it is the interesting half.** "No server session
+  to invalidate" is still true *of DatsPet* — and that is exactly why cookie-clearing was not
+  enough: the session that mattered lived on the host, so signing out had to become a
+  navigation there (§3.3). The JWT expiry is no longer even a backstop for the user's benefit —
+  a long design session now *renews* silently rather than lapsing (federated §4.2).
 
 ---
 
@@ -333,7 +414,16 @@ simpler and has no failure window (§9.1).
 
 ---
 
-## 9. Open questions for review
+## 9. Open questions for review — **dispositions at closeout [2026-07-30]**
+
+> #1 and #5 were already resolved in-spec and shipped that way (host-first ordering held in both
+> environments; `login-launch` and `admin-launch` are two thin siblings over one helper).
+> **#4 is DONE** — the signed-in chip exists as `NavAuth.tsx`. **#2 and #3 remain deliberately
+> open**: signup still hard-routes to `/verify-email` with no `next` threading (a fresh account
+> returns to DatsPet and clicks Sign in, which is instant), and anonymous generation on the
+> public host is still open — every spec since has re-affirmed the deferral rather than quietly
+> closing it (federated §"not changed"). Neither is debt this spec owes; both are product
+> decisions with a known, working default.
 
 1. ~~**Rollout coupling**~~ — **RESOLVED (Rev.3): deploy the HOST first, no readiness flag.**
    `signin_url` is always non-null when integrated (no host-readiness gate), so an integrated
@@ -354,6 +444,9 @@ simpler and has no failure window (§9.1).
 ---
 
 ### Appendix — grounding (verified 2026-07-14)
+
+> **[2026-07-30]** Line numbers here are pre-build coordinates and have all moved; the file
+> paths and symbol names are still right, and are the reliable way to find each item.
 - DatsPet identity = launch JWT only; verify-don't-parse: `webui/datsme_integration.py`
   (`/launch` :196, `resolve_launch_identity` :262, session endpoint :305, cookie attrs :81).
 - Host mint machinery (nonce, cap claim, consent gate, health gate):

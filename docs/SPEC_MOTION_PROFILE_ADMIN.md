@@ -6,7 +6,7 @@ through a UI, gated by DatsMe's existing `system_admin` role. Builds on
 **`docs/SPEC_MOTION_PROFILES.md`** (the movement layer this edits) and reuses the DPP launch
 mechanism from **`docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md`**. Grounded against the working tree.
 
-**Rev.2 — reconciled with `docs/SPEC_DATSPET_FRONT_DOOR.md`.** That spec is now the **owner of the
+**Rev.2 — reconciled with `docs/archive/SPEC_DATSPET_FRONT_DOOR.md`.** That spec is now the **owner of the
 shared bounce/mint plumbing** (the DatsPet `/launch` `return` param and the host mint-and-redirect
 helper); this spec **consumes** it and is a thin sibling: `require_system_admin` + an `adm` claim
 over the same helper. Build the front door first (§8 note). Also corrected: the host dependency is
@@ -23,7 +23,9 @@ should be accessible to people with admin role."
 `adm` claim for `system_admin` users — a thin wrapper over the shared mint helper the front-door
 spec builds). No change to the partner SDK.
 
-**Dependency:** this spec assumes **`docs/SPEC_DATSPET_FRONT_DOOR.md` ships first**. It provides
+**Dependency:** this spec assumes **`docs/archive/SPEC_DATSPET_FRONT_DOOR.md` ships first** — it did,
+and that spec is now closed and archived (2026-07-30); its §2.1/§3.1 remain the definition of the
+plumbing described here. It provides
 (a) DatsPet `/launch`'s validated `return` path param (the admin bounce sets `return=/admin/motions`),
 and (b) the host shared mint-and-redirect helper (`login-launch` and `admin-launch` are two thin
 wrappers over it). Building the admin bounce before the front door would mean building that plumbing
@@ -340,7 +342,8 @@ A two-pane admin, styled with the existing app tokens (not a separate visual sys
 
 ## 8. Build order
 
-**Prerequisite — `docs/SPEC_DATSPET_FRONT_DOOR.md` steps 0 + 3 shipped:** DatsPet `/launch` honors a
+**Prerequisite — `docs/archive/SPEC_DATSPET_FRONT_DOOR.md` steps 0 + 3 shipped** (satisfied; that spec
+is closed + archived and live in prod and staging)**:** DatsPet `/launch` honors a
 validated `return` path (front-door §3.1), and the host has the shared mint-and-redirect helper +
 `extra_claims` on `mint_launch_token` (front-door §2.1). This spec's auth is a thin addition on top.
 

@@ -28,7 +28,7 @@
 > questions. Corrections are marked **[2026-07-30]**; the original text is left in place
 > wherever it is still the reason a thing is the way it is.
 >
-> **Living successors:** `docs/SPEC_DATSPET_FRONT_DOOR.md` (sign-in, the bounce/mint plumbing),
+> **Living successors:** `docs/archive/SPEC_DATSPET_FRONT_DOOR.md` (sign-in, the bounce/mint plumbing),
 > `docs/archive/SPEC_DATSPET_FEDERATED_SESSION.md` (session lifetimes, sign-out, owner scope,
 > the purchase consolidation), `docs/SPEC_DATSPET_HOUSE_ADOPT.md` (the pull checkout and the
 > export's `transfer` block), `docs/SPEC_DATSPET_CATALOG_PURCHASE.md` (the catalog surface),

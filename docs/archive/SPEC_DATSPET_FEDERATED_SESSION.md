@@ -48,7 +48,7 @@ to leave, signs out for real, and a *second* user can then sign in on the same b
 **nothing of the first**. Along the way it removes the reason the session was ever load-bearing
 for money, by consolidating **two** purchase paths into **one**.
 
-Builds on **`docs/SPEC_DATSPET_FRONT_DOOR.md`** (which owns the bounce/mint plumbing this
+Builds on **`docs/archive/SPEC_DATSPET_FRONT_DOOR.md`** (which owns the bounce/mint plumbing this
 extends) and **`docs/SPEC_DATSPET_HOUSE_ADOPT.md`** (which owns the pull checkout this
 consolidates onto). Grounded against both working trees — see the appendix.
 
