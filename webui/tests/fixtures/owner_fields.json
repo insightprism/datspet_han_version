@@ -1,0 +1,113 @@
+{
+  "_owner": "datsme-pet-factory_wu — webui/tests/fixtures/owner_fields.json",
+  "_spec": "SPEC_PET_OWNER_FIELD §2.3, §2.3a",
+  "_contract": [
+    "THIS REPO OWNS THIS FILE. DatsMe vendors it verbatim to",
+    "api/tests/fixtures/owner_fields.json and pins its sha256 in the test that",
+    "reads it, so a drifted copy fails loudly and names this repo instead of",
+    "silently testing something else. Two repos cannot share a file, and two",
+    "independently-maintained copies drift exactly like the code they police.",
+    "DatsPet mints bundles, so DatsPet owns the wire cases: a new case lands",
+    "here first and is re-vendored — the same direction the bundle itself flows.",
+    "",
+    "NOTE for the DatsMe side: DatsPet only ever WRITES the factory and public",
+    "cases (§2.4). The individual and group cases are here because the HOST",
+    "writes them at checkout and gift (§2.5), and both repos must agree on the",
+    "wire shape."
+  ],
+
+  "cases": [
+    {
+      "case": "factory — minted, not yet sold. The only thing DatsPet exports",
+      "write": {
+        "category": "factory",
+        "name": "datspet",
+        "at": "2026-07-30T14:22:05Z"
+      }
+    },
+    {
+      "case": "individual — the DatsMe slug, written by the host at checkout",
+      "write": {
+        "category": "individual",
+        "name": "sara.1",
+        "at": "2026-07-30T15:01:44Z"
+      }
+    },
+    {
+      "case": "individual — re-stamped to a recipient after a gift",
+      "write": {
+        "category": "individual",
+        "name": "wu.1",
+        "at": "2026-07-30T16:12:09Z"
+      }
+    },
+    {
+      "case": "group — the normalized tag, a different namespace from a slug",
+      "write": {
+        "category": "group",
+        "name": "#black#zebra",
+        "at": "2026-07-30T16:30:00Z"
+      }
+    },
+    {
+      "case": "public — the only category with no subject, so the name is empty",
+      "write": {
+        "category": "public",
+        "name": "",
+        "at": "2026-07-30T17:00:00Z"
+      }
+    }
+  ],
+
+  "preserved_manifest": {
+    "_why": [
+      "Every key here must survive a transfer untouched. `fingerprint` is the",
+      "one the spec cares about (§1.7 — DatsPet stamps it once at mint and the",
+      "HOST's later stamps must not lose it, which is a cross-repo promise);",
+      "`an_unknown_key_from_a_future_spec` is the generalization, and is",
+      "deliberately nested so a shallow copy that flattens or drops structure",
+      "is caught too."
+    ],
+    "schema_version": "pet_manifest.v1",
+    "fingerprint": "datspet",
+    "columns": 8,
+    "rows": 4,
+    "frame_width": 256,
+    "frame_height": 256,
+    "animations": {
+      "walk": {"row": 0, "frames": 8, "loop": true},
+      "idle": {"row": 1, "frames": 8, "loop": true}
+    },
+    "view_kind": "side",
+    "native_facing": "right",
+    "mirroring_policy": "flip",
+    "movement_class": "mammalian_quadruped",
+    "an_unknown_key_from_a_future_spec": {
+      "nested": [1, 2, 3],
+      "deeper": {"still": "here"}
+    }
+  },
+
+  "rejected": [
+    {
+      "case": "an unknown category must be refused, never treated as public",
+      "write": {"category": "enterprise", "name": "acme",
+                "at": "2026-07-30T14:22:05Z"}
+    },
+    {
+      "case": "every category except public needs a subject",
+      "write": {"category": "individual", "name": "",
+                "at": "2026-07-30T14:22:05Z"}
+    },
+    {
+      "case": "public has no subject, so a name is a contradiction",
+      "write": {"category": "public", "name": "sara.1",
+                "at": "2026-07-30T14:22:05Z"}
+    },
+    {
+      "case": "the timestamp is the wire format — UTC with a Z suffix",
+      "write": {"category": "factory", "name": "datspet",
+                "at": "2026-07-30T14:22:05+00:00"}
+    }
+  ]
+}

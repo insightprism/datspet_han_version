@@ -46,6 +46,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
 import db
+import pet_ownership
 import pool_client
 # design_calibration owns the design redraw's denoise band (effective_strength) and the
 # calibration-staleness predicate. Safe at module top DESPITE the cycle: it imports `app`
@@ -594,6 +595,21 @@ def _finalize_pet_from_zip(job: Job, *, description: str, breed_id: str,
     value agrees with package.json anyway."""
     sheet_png, manifest_json, package_json, display_name, breed_id = _unpack_bundle(
         zip_bytes, default_display_name=description.title(), breed_id=breed_id)
+
+    # SPEC_PET_OWNER_FIELD §2.4 — stamp BEFORE insert_pet, which DERIVES
+    # bundle_sha256/size_bytes from whatever bytes it is handed, so the digest
+    # covers the stamped bytes by construction and nothing ever restamps a stored
+    # row. A fresh pet is `factory`: it has to be somebody's before it is sold,
+    # and it cannot be `individual` because "datspet" is not a DatsMe user — the
+    # host would attempt that lookup for every pet in the pull channel (§1.1).
+    # DatsPet writes ONLY this unsold state; the owner is stamped by the HOST at
+    # the two places a transfer happens, checkout and gift (§2.5).
+    zip_bytes, _ = pet_ownership.stamp_bundle_fingerprint(zip_bytes)
+    zip_bytes, manifest_json = pet_ownership.transfer_pet_ownership(
+        zip_bytes,
+        category=pet_ownership.FACTORY_CATEGORY,
+        name=pet_ownership.FACTORY_OWNER_NAME,
+        at=pet_ownership.epoch_to_utc_iso(job.created_at))
 
     db.insert_pet(
         pet_id=job.id, breed_id=breed_id, display_name=display_name,
@@ -1495,10 +1511,23 @@ def adopt_sample(animal: str, sample: str, request: Request):
     if sheet_png is None or manifest_json is None:
         raise HTTPException(500, "sample bundle is malformed")
 
+    # SPEC_PET_OWNER_FIELD §2.4 — same position and same reason as the mint
+    # stamp: upstream of insert_pet, so the derived digest covers stamped bytes.
+    # A curated sample is `public` — the one category with no subject, so its
+    # name is empty and anyone may bring it to life. This matters only for a
+    # RE-UPLOAD of a store bundle; storefront adoption on the host goes through
+    # create_my_pet from the platform catalog, not the upload door.
+    created_at = time.time()
+    zip_bytes, _ = pet_ownership.stamp_bundle_fingerprint(zip_bytes)
+    zip_bytes, manifest_json = pet_ownership.transfer_pet_ownership(
+        zip_bytes,
+        category=pet_ownership.PUBLIC_CATEGORY, name="",
+        at=pet_ownership.epoch_to_utc_iso(created_at))
+
     pet_id = uuid.uuid4().hex[:12]
     db.insert_pet(
         pet_id=pet_id, breed_id=breed_id or sample, display_name=display_name,
-        created_at=time.time(), draft=True,
+        created_at=created_at, draft=True,
         sheet_png=sheet_png, manifest_json=manifest_json,
         package_json=package_json, bundle_zip=zip_bytes,
         external_user_id=owner,

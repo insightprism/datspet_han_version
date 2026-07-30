@@ -13,9 +13,10 @@ the zip and stores that exact string as the `manifest_json` column, which is wha
 stops being true when someone rewrites a bundle without rewriting the column, so
 it is pinned here rather than trusted.
 
-These tests build REAL zips. conftest's `make_pet` deliberately does not
-(`bundle_zip=b"PK\\x03\\x04zip"` with an unrelated manifest column), which is fine
-for scoping tests and useless for this one — a fake zip cannot be counted.
+These tests build REAL zips, with the pose sets they need. conftest's `make_pet`
+also builds one now (it must — `keep` stamps the owner fields inside the bundle,
+SPEC_PET_OWNER_FIELD §2.4c), but always with an empty animation set; `_bundle`
+below is the parameterized version this file's pricing-basis cases need.
 """
 import importlib
 import io
@@ -32,19 +33,14 @@ for p in (WEBUI, REPO):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from conftest import ANON_OWNER, TEST_SECRET, anon_cookies, make_pet  # noqa: E402
+from conftest import (ANON_OWNER, TEST_SECRET, anon_cookies,  # noqa: E402
+                      make_bundle_zip, make_pet)
 
 
 def _bundle(poses=("walk", "idle"), breed_id="phoenix_red"):
-    """A real pet bundle .zip, shaped like the pipeline's output."""
-    manifest = {"animations": {p: {"frames": 4} for p in poses}}
-    package = {"breed_id": breed_id, "display_name": breed_id.replace("_", " ").title()}
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w") as z:
-        z.writestr("manifest.json", json.dumps(manifest))
-        z.writestr("package.json", json.dumps(package))
-        z.writestr(f"{breed_id}_sprite.png", b"\x89PNG\r\n\x1a\nDATA")
-    return buf.getvalue(), json.dumps(manifest)
+    """A real bundle with a chosen pose set. One zip builder, kept in conftest."""
+    return make_bundle_zip(breed_id=breed_id,
+                           animations={p: {"frames": 4} for p in poses})
 
 
 def _zip_with_manifest(manifest_text):

@@ -5,9 +5,11 @@ instance, so tests never touch the real pet house and don't depend on ordering.
 The DPP env is set to known test values before webui modules import.
 """
 import importlib
+import io
+import json
 import os
 import sys
-import tempfile
+import zipfile
 
 import pytest
 
@@ -89,14 +91,48 @@ def anon_cookies(owner_id=ANON_OWNER):
     return {"datspet_anon": owner_id}
 
 
+def make_bundle_zip(breed_id="test_breed", animations=None, **extra_manifest):
+    """A REAL pet bundle .zip, shaped like the pipeline's output.
+
+    Returns `(zip_bytes, manifest_json)` — the pair `insert_pet` wants, and the
+    pair that must agree: `db.pose_count` reads the COLUMN while the host counts
+    the poses in the BYTES, so a row whose two halves disagree is an import that
+    409s `pricing_basis_mismatch` (SPEC_DPP_DATA_TRANSFER_CHANNEL §0.6).
+
+    Not deterministic across calls — `zipfile.writestr` stamps each member with
+    the current local time. Assert against what was STORED, never against a
+    recomputed zip.
+    """
+    manifest = {"animations": animations if animations is not None else {},
+                **extra_manifest}
+    manifest_json = json.dumps(manifest)
+    package = {"breed_id": breed_id,
+               "display_name": breed_id.replace("_", " ").title()}
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("manifest.json", manifest_json)
+        z.writestr("package.json", json.dumps(package))
+        z.writestr(f"{breed_id}_sprite.png", b"\x89PNG\r\n\x1a\nDATA")
+    return buf.getvalue(), manifest_json
+
+
 def make_pet(db_mod, pet_id="testpet00001", external_user_id=None, draft=False,
-             breed_id="test_breed", display_name="Test Pet"):
-    """Insert a minimal valid pet row for tests."""
+             breed_id="test_breed", display_name="Test Pet", animations=None):
+    """Insert a minimal valid pet row for tests.
+
+    The bundle is a REAL zip (SPEC_PET_OWNER_FIELD §2.4c). It used to be the
+    stub `b"PK\\x03\\x04zip"`, which was fine while nothing opened it — but `keep`
+    now stamps the owner fields INSIDE the bundle, so a row whose blob is not a
+    zip is a row no endpoint can handle. A fixture that lies about its shape only
+    postpones the failure to whichever test first exercises the real path.
+    """
+    zip_bytes, manifest_json = make_bundle_zip(breed_id=breed_id,
+                                               animations=animations)
     db_mod.insert_pet(
         pet_id=pet_id, breed_id=breed_id, display_name=display_name,
         created_at=1783800000.0, draft=draft,
-        sheet_png=b"\x89PNG\r\n\x1a\nDATA", manifest_json='{"animations":{}}',
-        package_json=None, bundle_zip=b"PK\x03\x04zip",
+        sheet_png=b"\x89PNG\r\n\x1a\nDATA", manifest_json=manifest_json,
+        package_json=None, bundle_zip=zip_bytes,
         external_user_id=external_user_id,
     )
     return pet_id

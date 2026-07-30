@@ -72,7 +72,11 @@ def test_bundle_token_single_successful_download(client, dpp_env):
 
     r = client.get("/api/datsme/bundle/tok-abc")
     assert r.status_code == 200
-    assert r.content == b"PK\x03\x04zip"
+    # Against the STORED bytes, not a literal: this is the endpoint the host
+    # fetches from and verifies against `bundle_sha256`, so "serves exactly what
+    # we stored" is the property that matters. A literal would also have to be
+    # updated every time the fixture's bundle shape changes.
+    assert r.content == db.get_pet("bundlepet001")["bundle_zip"]
     r2 = client.get("/api/datsme/bundle/tok-abc")
     assert r2.status_code == 404, "token should be burned after a successful download"
 
