@@ -10,6 +10,12 @@ three-step designer, rewritten from it after many rounds of review against a run
 > is on screen" no longer describes the screen** — see §3.10, which is the as-built account,
 > and §13's last two rows. First paint 2 → **6** (§1.1).
 
+> **Amended 2026-07-30 — the build survives leaving the page (built).** A three-minute build
+> used to live only in React state, so any navigation away from the designer destroyed the
+> user's pet: the build finished on the server, landed as a draft, and was reachable from
+> nowhere until the next build purged it. **See §8.3.** Found by the federated-session work —
+> signing out mid-build is one way to do it, a closed tab is another.
+
 **Implementation: build steps 0–3 and 5–8 are DONE and green** — 208 tests, `tsc` clean.
 The designer is live at `/design/general`; `/design` 307s to it. **There is one designer and
 one contract**: the legacy `/api/generate` params, `_legacy_resolve_base`, `_legacy_preview`
@@ -1562,6 +1568,66 @@ One colour, one meaning: **green = this pose gets built.** The shade carries the
 distinction that matters — the floor you always get versus what you added on top. The
 always-pills are `<span>`s with `cursor: default`, not disabled buttons: they are not
 unavailable, they are not negotiable.
+
+
+### 8.3 The build survives leaving the page (2026-07-30, as-built)
+
+**A build takes about three minutes, and until now it lived only in React state.** Any
+navigation away from the designer destroyed it — not the pet, the *route to* the pet. The
+build carried on server-side, finished, and inserted a row with `draft=1`. The house shows
+only saved pets (`app.py` `list_saved_pets`, `WHERE draft=0`), so it appeared nowhere; and
+the next build's `purge_drafts` deleted it. Three minutes of GPU, gone, with no error
+anywhere and nothing in any log that looked wrong.
+
+It was found through the federated-session work (`SPEC_DATSPET_FEDERATED_SESSION`): a user
+designing anonymously signs in to adopt — the front door's whole invitation — and the sign-in
+bounce is a full-page navigation. But **sign-out, a closed tab, a stray link and a crash open
+exactly the same window**, which is why the answer is not "carry the job through the sign-in
+hop".
+
+Three parts, and the order they were built in is the order they were wrong in:
+
+**(a) The running job lives in the URL** (`usePetJob`). `?job=<id>`, written with
+`history.replaceState` — no remount, no history entry — and read back on mount, which
+reattaches. `GET /api/job/{id}` is deliberately unscoped, so it survives the *identity*
+changing underneath it, which is precisely what a mid-build sign-in does. A reload and a
+bfcache restore recover the same way, for free. Deliberately not `localStorage`:
+`SPEC_DATSPET_FEDERATED_SESSION` §5.4 forbids browser-persisted user state, and the URL is
+where a resumable thing belongs anyway.
+
+**(b) Sign-in returns to HERE, resolved at click time** (`datsmeSignInUrlForHere`). The
+server hands the browser a `signin_url` prebuilt with `return=/design`, which is right from
+the landing page and wrong from the designer. The subtle half: the href must be computed **in
+the click handler, never during render**. `NavAuth` renders once, when the session resolves,
+which is *before* any build has started; `replaceState` deliberately does not re-render React,
+so an href computed at render time is frozen at the job-less URL. That mistake shipped once
+and passed every test, because every test called the pure function directly.
+
+**(c) An unanswered build is offered back** (`GET /api/pets/unsaved`). (a) and (b) together
+still lose the pet if the navigation is a *sign-out*, because the sign-out chain lands on the
+landing page and discards the query before the user can return. So the durable route back is
+to the PET, not to a job id: the designer asks on mount and offers the newest — "you have an
+unsaved pet", pick it up or not now.
+
+  - **An offer, not an automatic reopen.** The user may well have moved on, and resurrecting
+    an old pet on top of a fresh design is its own surprise. Hidden entirely once a build is
+    on screen, so it can never compete with what the user is looking at.
+  - **Not merged into `/api/pets`.** The house means "pets I decided to keep"; an undecided
+    build appearing there would change what Adopt and the house cap mean. Different question,
+    different endpoint.
+  - **Resuming needs only the pet row.** The pet id IS the job id (`app.py` inserts with
+    `pet_id=job.id`), so the result panel and every asset URL work unchanged, and recovery
+    outlives the in-memory job — and the backend restart that clears it.
+  - **The draft-purge rule is untouched.** Starting a new build still means you moved on.
+
+*Route ordering matters:* `/api/pets/unsaved` must be declared before
+`DELETE /api/pets/{pet_id}`, which otherwise matches the path and answers 405.
+
+*Verified on staging end to end*, because reasoning about it is what got (b) wrong: signed in,
+started a build, signed out mid-build (job id gone from the URL, landed on the signed-out
+landing), let the build finish, signed back in to a bare `/design/general` — the offer
+appeared, picking it up loaded the pet with its sprite (200, 1.08 MB) and its Save button, and
+saving put it in the house.
 
 ---
 
