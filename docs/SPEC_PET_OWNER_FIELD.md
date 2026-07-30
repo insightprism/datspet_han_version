@@ -6,9 +6,10 @@
 transfer.** One field carries the owner, and it is the DatsMe **slug** (or group tag) — the thing a
 human can look up.
 
-**Phase 1 — DatsPet's mint stamp — is BUILT and green at Rev.12** (2026-07-30). 583 tests pass.
-Phases 2 and 3 are unstarted; nothing reads these fields until Phase 2, so the stamp is inert in
-production by design. Not deployed anywhere yet. See §9.
+**Phases 1 and 2 are BUILT and green** (2026-07-30) — DatsPet `71f3632` (584 pass), DatsMe
+`325b6909` (38/38 new, in-process). Verified end to end across both repos on a real 3.58 MB bundle.
+**The host's gate ships observe-first (`PET_OWNER_ENFORCEMENT=observe`) and nothing is deployed**;
+flipping to `enforce` is its own step, gated on §6.16. Phase 3 is unstarted and optional. See §9.
 
 > ## Rev.12 — the owner is a slug, and the HOST writes it
 >
@@ -698,7 +699,8 @@ Anonymous use stays fully supported: base-tier pet making with no login keeps wo
 | Phase | Scope | Repo | Depends on | State |
 |---|---|---|---|---|
 | **1** | `pet_ownership.py`, `fingerprint`, the two mint stamps (§2.4), the owned fixture, tests 1–11 | **DatsPet only** | **nothing** | **BUILT** 2026-07-30 |
-| **2** | The two transfer stamps (§2.5), the access ladder + the two doors (§4), tests 12–15b, the warn-only→enforcing deploy step | DatsMe | Phase 1 live in the same environment (§6.16) | not started, ~2 days |
+| **2** | The two transfer stamps (§2.5), the access ladder + the two doors (§4), tests 12–15b | DatsMe | — | **BUILT** 2026-07-30 (`325b6909`) |
+| **2b** | Flip `PET_OWNER_ENFORCEMENT=observe` → `enforce`, staging then prod | DatsMe (config) | Phase 1 **deployed** in that environment (§6.16) | **not done** — see §9.2 |
 | **3** | The group chooser on the host's checkout page (§5.2) | DatsMe | Phase 2; **only if group licensing becomes a product** | not started, ~1 day |
 
 ### 9.1 What Phase 1 shipped, for whoever picks up Phase 2
@@ -729,7 +731,44 @@ the reasons are in §2.4 and §0.5. Test
 `test_keeping_a_pet_does_not_touch_the_bundle` pins `keep`'s return to being a pure draft-flag
 clear, so the stamp cannot creep back in unnoticed.
 
-### 9.2 Why Phase 1 is worth shipping alone
+### 9.1a What Phase 2 shipped (DatsMe `325b6909`)
+
+- **`api/apps/pets/pet_ownership.py`** — the vendored primitive (`set_pet_ownership`,
+  `read_pet_ownership`) plus the ladder (`check_bundle_access`), the checkout-door variant
+  (`enforce_transfer_access`), `buying_assigns_owner`, and the rollout gate
+  (`enforcement_mode`). Manifest-level throughout — it never opens a zip.
+- **`pet_writeback.handle_target_user_pet`** — the checkout gate + the purchase stamp, with
+  `_ownership_started_at` deriving `at` from `PetOwnership.created_at`.
+- **`pet_gift_service.accept_offer`** — the gift stamp, using accept time, with `_name_slug`.
+- **`pet_routes.upload_my_pet`** — the access gate, placed **before** `_charge_adoption`.
+- **`api/tests/fixtures/owner_fields.json`** — vendored, sha256 pinned in `test_pet_ownership.py`.
+- **`api/tests/test_pet_ownership.py`** — 38 in-process checks, registered in `test_all.py`.
+
+### 9.2 The remaining step is a config flip, not code
+
+`PET_OWNER_ENFORCEMENT` defaults to `observe`: the ladder logs a self-identifying refusal and
+**admits**. That is the host repo's own rule (`CLAUDE.md`, *"gates ship observe-first with
+self-identifying failure logs"*) and it is what makes §6.16 safe by construction rather than by
+remembering.
+
+The order, and the reason for each step:
+
+1. **Deploy DatsPet (Phase 1) to staging.** Until it runs, no bundle carries the fields.
+2. **Deploy DatsMe (Phase 2) to staging.** Still observing — it cannot refuse anything.
+3. **Build a pet and adopt it.** Confirm the imported manifest reads `individual` / the buyer's
+   slug, and that `owner_transferred_at` does not move on a re-checkout.
+4. **Read the refusal log.** `grep pet_owner_refused` — every line is an honest refusal class or a
+   bug, and this is the measurement the observe phase exists to produce. Expect lines for any pet
+   minted *before* step 1.
+5. **Flip staging to `enforce`.** Re-run the adopt and an upload.
+6. **Then production, staging-first as always.**
+
+Do not flip enforcement in an environment whose DatsPet has not shipped Phase 1: §4.3 refuses a
+bundle with no owner fields, so every pet minted before the stamp would be refused at the upload
+door. That is exactly the failure the observe phase is designed to surface as a log line instead of
+an outage.
+
+### 9.3 Why Phase 1 is worth shipping alone
 
 Bundles are immutable artifacts: every pet minted before the stamp exists can never carry
 `fingerprint` or a `factory` mark, and back-filling means regenerating at GPU cost. That is §1.7's
