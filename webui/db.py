@@ -364,21 +364,26 @@ def purge_drafts(external_user_id: Optional[str] = "__all__") -> list[str]:
     drafts (startup); None purges only standalone drafts; a value purges that
     user's drafts (a DatsMe user iterating without accepting).
 
-    NEVER purges a pet with a PENDING writeback (routed to DatsMe —
-    datsme_activity_id set — but not yet acked): a queued Accept whose retry
-    hasn't drained yet must survive, or the retry would 404 the bundle and the
-    pet would be lost. Such pets are always drafts until the ack clears them.
+    A draft is exactly what the name says: scratch the user never saved.
+
+    There used to be a `not_pending` exemption here, protecting a pet whose QUEUED
+    writeback had not drained yet. That retry queue is gone with the push path, and
+    leaving the clause would have been a leak rather than a no-op: claim_anon_pets
+    stamps datsme_activity_id, so once sign-in claims a browser's work, every
+    claimed-but-unkept draft would have matched the predicate and become exempt from
+    every purge scope, permanently (SPEC_DATSPET_FEDERATED_SESSION §4.6 b).
+
+    Deleting it is safe because the hand-off calls keep() BEFORE navigating to the
+    checkout, so any pet in a live checkout is already draft=0 and outside every
+    purge scope.
     """
-    # A pet is "pending writeback" iff it was routed to DatsMe but not acked.
-    # Excluding it from every purge scope protects the retry-queue window.
-    not_pending = "(datsme_activity_id IS NULL OR writeback_acked_at IS NOT NULL)"
     if external_user_id == "__all__":
         scope, params = "1=1", ()
     elif external_user_id is None:
         scope, params = "external_user_id IS NULL", ()
     else:
         scope, params = "external_user_id=?", (external_user_id,)
-    where = f"draft=1 AND {scope} AND {not_pending}"
+    where = f"draft=1 AND {scope}"
     with _lock:
         conn = _connect()
         rows = conn.execute(f"SELECT id FROM pets WHERE {where}", params).fetchall()
@@ -394,18 +399,6 @@ def stamp_writeback_acked(pet_id: str, activity_id: str, acked_at: float) -> Non
             "UPDATE pets SET datsme_activity_id=?, writeback_acked_at=? WHERE id=?",
             (activity_id, acked_at, pet_id))
         conn.commit()
-
-
-def list_pending_writebacks(external_user_id: str) -> list[dict]:
-    """Accepted-but-unacked pets for resync (writeback_acked_at IS NULL but
-    the pet was routed to DatsMe, i.e. it has an activity id pending)."""
-    with _lock:
-        rows = _connect().execute(
-            """SELECT id, breed_id, display_name, created_at FROM pets
-               WHERE external_user_id=? AND writeback_acked_at IS NULL
-                 AND datsme_activity_id IS NOT NULL
-               ORDER BY created_at DESC""", (external_user_id,)).fetchall()
-    return [dict(r) for r in rows]
 
 
 def export_pets(external_user_id: str) -> list[dict]:

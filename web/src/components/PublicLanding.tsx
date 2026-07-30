@@ -11,7 +11,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getDatsmeSession, datsmeLogout, type DatsmeSession } from "@/lib/api";
+import { getDatsmeSession, datsmeSignOut, type DatsmeSession } from "@/lib/api";
 
 // A non-blocking one-line notice (the shared-toast role for this page).
 function Notice({ text, tone }: { text: string; tone: "warn" | "info" }) {
@@ -65,9 +65,11 @@ export default function PublicLanding() {
   // reach it — either way we show the local-mode path, never a broken sign-in.
   const standalone = loaded && (!integrated || fetchFailed);
 
-  async function signOut() {
-    await datsmeLogout();
-    setSession((s) => (s ? { ...s, launched: false } : s));
+  // A NAVIGATION, not a fetch — see NavAuth. Ends the DatsMe session too, which
+  // is what makes the browser reusable by a different person
+  // (SPEC_DATSPET_FEDERATED_SESSION §5.1).
+  function signOut() {
+    datsmeSignOut(session);
   }
 
   return (

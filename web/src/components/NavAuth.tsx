@@ -9,13 +9,29 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getDatsmeSession, datsmeLogout, type DatsmeSession } from "@/lib/api";
+import {
+  getDatsmeSession,
+  datsmeSignOut,
+  maybeRenewLaunch,
+  type DatsmeSession,
+} from "@/lib/api";
 
 export default function NavAuth() {
   const [session, setSession] = useState<DatsmeSession | null>(null);
 
   useEffect(() => {
-    getDatsmeSession().then(setSession).catch(() => setSession(null));
+    getDatsmeSession()
+      .then((s) => {
+        setSession(s);
+        // Silent re-launch (SPEC_DATSPET_FEDERATED_SESSION §4.2). The nav mounts on
+        // every page, so this is the one place that has to ask — and asking on page
+        // load rather than at the moment of use means the user never meets a stale
+        // greeting or a mid-action bounce. A no-op when there is plenty of time
+        // left, when there is nothing to renew, or when this load already came back
+        // from a renewal that did not take (the loop guard).
+        maybeRenewLaunch(s);
+      })
+      .catch(() => setSession(null));
   }, []);
 
   // Standalone (no DatsMe host) or still loading → render nothing in the nav.
@@ -63,10 +79,13 @@ export default function NavAuth() {
           <span className="font-medium" style={{ color: "var(--heading)" }}>{name}</span>
         </span>
         <button
-          onClick={async () => {
-            await datsmeLogout();
-            setSession((s) => (s ? { ...s, launched: false } : s));
-          }}
+          // A NAVIGATION, not a fetch. A fetch cannot clear the DatsMe session
+          // cookie — it is on another origin, and SameSite=Lax means it would not
+          // even be sent — so the old POST ended DatsPet's session and left
+          // DatsMe's alive, and the next "Sign in" silently re-minted the same
+          // person. Ending both is what lets a second user have this browser
+          // (SPEC_DATSPET_FEDERATED_SESSION §5.1).
+          onClick={() => datsmeSignOut(session)}
           className="hover:opacity-80"
           style={{ color: "var(--faint)" }}
         >

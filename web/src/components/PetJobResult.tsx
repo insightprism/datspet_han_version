@@ -12,8 +12,8 @@ import {
   keepPet,
   petZipUrl,
   getDatsmeSession,
-  acceptPetToDatsme,
-  AcceptError,
+  handOffToDatsme,
+  maybeRenewLaunch,
   type JobStatus,
   type DatsmeSession,
 } from "@/lib/api";
@@ -76,32 +76,19 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
   // primary action becomes "Accept — send to my DatsMe" (costs credits);
   // Save-to-house stays as a free/local secondary action.
   const [datsme, setDatsme] = useState<DatsmeSession | null>(null);
-  // The full session (kept even when not launched) so a re-launch button has the
-  // signin_url. `datsme` above stays the "launched" gate for the Accept button.
-  const [session, setSession] = useState<DatsmeSession | null>(null);
-  const [accepting, setAccepting] = useState(false);
-  const [acceptMsg, setAcceptMsg] = useState("");
-  // Set when Accept fails with a 401 (launch token expired) — offer a re-launch.
-  const [needsRelaunch, setNeedsRelaunch] = useState(false);
+  const [adopting, setAdopting] = useState(false);
 
   useEffect(() => setSaved(false), [job.id]);
   useEffect(() => {
     getDatsmeSession()
-      .then((s) => { setSession(s); setDatsme(s.launched ? s : null); })
-      .catch(() => { setSession(null); setDatsme(null); });
+      .then((s) => {
+        setDatsme(s.launched ? s : null);
+        // A long build can outlast the launch assertion. Renew silently now rather
+        // than let the adopt hand-off be the thing that discovers it.
+        maybeRenewLaunch(s);
+      })
+      .catch(() => setDatsme(null));
   }, []);
-
-  // Bounce through the front-door sign-in to refresh the launch token, returning
-  // to the design page (launched). The pet is a saved draft, so nothing is lost —
-  // the user Accepts once they're back with a fresh token.
-  function relaunch() {
-    if (!session?.signin_url) return;
-    // Save the draft first so it's definitely persisted before we navigate away.
-    keepPet(job.id).catch(() => {});
-    const origin = new URL(session.signin_url).origin;
-    window.location.href =
-      `${origin}/api/integrations/login-launch?activity=design_a_pet&return=/design`;
-  }
 
   async function save() {
     setSaveError("");
@@ -113,37 +100,30 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
     }
   }
 
-  async function accept() {
+  // Adopt runs the ONE purchase path: claim + keep here, then hand off to the
+  // host's own checkout, where the user's DatsMe session authenticates and the
+  // host quotes a binding price before charging anything
+  // (SPEC_DATSPET_FEDERATED_SESSION §2.4). There is no "session expired while
+  // designing" branch any more — that failure class is structurally gone, because
+  // nothing token-authenticated happens at the end of a build.
+  async function adopt() {
+    if (!datsme) return;
     setSaveError("");
-    setAcceptMsg("");
-    setNeedsRelaunch(false);
-    setAccepting(true);
+    setAdopting(true);
     try {
-      const res = await acceptPetToDatsme(job.id);
-      if (res.redirect_url) {
-        window.location.href = res.redirect_url;
-        return;
-      }
-      // Transient failure — pet is queued and will arrive automatically.
-      setAcceptMsg(res.message || "Your pet will arrive in DatsMe automatically.");
+      await handOffToDatsme([job.id], datsme);
     } catch (e) {
-      // 401 = the launch token expired → offer a one-click re-launch instead of a
-      // dead-end error. 402 credits / 409 house full surface their message.
-      if (e instanceof AcceptError && e.status === 401) {
-        setNeedsRelaunch(true);
-        setSaveError("Your DatsMe session expired — re-launch to send this pet.");
-      } else {
-        setSaveError(e instanceof Error ? e.message : "Could not send to DatsMe");
-      }
-    } finally {
-      setAccepting(false);
+      setAdopting(false);
+      setSaveError(e instanceof Error ? e.message : "Could not hand this pet to DatsMe");
     }
   }
 
-  const acceptLabel =
+  // An ESTIMATE. The host's checkout shows the number it is then bound to — it
+  // prices from the bundle's own manifest, so this hint can only ever be a hint.
+  const adoptLabel =
     datsme?.cost != null
-      ? `✓ Accept — send to my DatsMe (${datsme.cost} credits)`
-      : "✓ Accept — send to my DatsMe";
+      ? `✓ Adopt into my DatsMe house (about ${datsme.cost} credits)`
+      : "✓ Adopt into my DatsMe house";
   const Shell = bare ? BareShell : CardShell;
   return (
     <Shell>
@@ -229,19 +209,19 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
           {datsme && (
             <div className="card mt-6 p-3" style={{ borderColor: "rgba(167,139,250,0.4)", background: "rgba(167,139,250,0.08)" }}>
               <div className="mono text-xs" style={{ color: "var(--gold)" }}>
-                🐾 Designing for your DatsMe profile — Accept to add this pet to your DatsMe pet house.
+                🐾 Designing for your DatsMe profile — adopt to add this pet to your DatsMe pet house.
               </div>
             </div>
           )}
           <div className="mt-6 flex flex-wrap gap-3">
             {datsme && (
               <button
-                onClick={accept}
-                disabled={accepting}
+                onClick={adopt}
+                disabled={adopting}
                 className="mono flex-1 rounded-lg border px-4 py-3 text-sm font-bold disabled:opacity-70"
                 style={{ background: "linear-gradient(135deg, #a78bfa, #7c3aed)", color: "var(--heading)", borderColor: "transparent" }}
               >
-                {accepting ? "Sending…" : acceptLabel}
+                {adopting ? "Opening checkout…" : adoptLabel}
               </button>
             )}
             <button
@@ -252,7 +232,7 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
                 saved
                   ? { background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }
                   : datsme
-                    // Secondary when a DatsMe Accept is the primary action.
+                    // Secondary when the DatsMe adopt is the primary action.
                     ? { background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }
                     : { background: "linear-gradient(135deg, #10b981, #059669)", color: "var(--heading)", borderColor: "transparent" }
               }
@@ -285,16 +265,6 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
             </button>
           </div>
           {saveError && <div className="mono mt-2 text-sm" style={{ color: "var(--accent)" }}>{saveError}</div>}
-          {needsRelaunch && session?.signin_url && (
-            <button
-              onClick={relaunch}
-              className="mono mt-2 rounded-lg border px-4 py-2.5 text-sm font-bold"
-              style={{ background: "linear-gradient(135deg, #a78bfa, #7c3aed)", color: "var(--heading)", borderColor: "transparent" }}
-            >
-              🔄 Re-launch to Accept →
-            </button>
-          )}
-          {acceptMsg && <div className="mono mt-2 text-sm" style={{ color: "var(--green)" }}>{acceptMsg}</div>}
           {/* The freshly generated pet, alive on this page via the engine. */}
           <PetStage pets={[{ id: job.id, display_name: job.name }]} />
         </>

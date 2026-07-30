@@ -12,7 +12,7 @@
 // host as DATSPET_FRONTEND_URL — and the browser only sends it to fetch()es on
 // that same host (cookies are host-scoped; ports don't matter, spelling does).
 // Calling 127.0.0.1 here would be a different cookie host, the cookie would be
-// dropped, and getDatsmeSession() would return launched:false (no Accept
+// dropped, and getDatsmeSession() would return launched:false (no Adopt
 // button). Keep this in sync with .env.local, DATSPET_FRONTEND_URL, and
 // DATSPET_PUBLIC_URL — all must use the same hostname.
 // Empty (or unset-in-dev) → relative same-origin calls (`/api/...`), which the
@@ -21,6 +21,28 @@
 // http://localhost is dropped by Firefox). In prod the static export sets
 // NEXT_PUBLIC_API_URL to the same-origin public host (nginx serves /api there).
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
+
+/** Every request to our backend goes through here, so ONE place reacts to a
+ * lapsed launch session (SPEC_DATSPET_FEDERATED_SESSION §5.3).
+ *
+ * A 401 carrying `detail.code === "session_stale"` means the user is still signed
+ * in on DatsMe — only our copy of the assertion aged out — so the right response
+ * is a silent re-launch, not an error the user has to read. Handled here rather
+ * than at each call site because the renewal has a loop guard, and a guard that
+ * has to be remembered in twenty places is a guard that gets forgotten in one.
+ *
+ * The response is returned unchanged either way: the navigation is already in
+ * flight, and the caller's own error handling stays exactly as it was.
+ */
+async function apiFetch(url: string, init?: RequestInit): Promise<Response> {
+  const r = await fetch(url, init);
+  if (r.status === 401) {
+    // clone(): peeking at the body must not consume it for the caller.
+    const body = await r.clone().json().catch(() => null);
+    handleSessionStale(r.status, body);
+  }
+  return r;
+}
 
 export interface JobStatus {
   id: string;
@@ -37,21 +59,23 @@ export interface PetSummary {
   breed_id: string;
   display_name: string;
   created_at: number;
-  // Already in the caller's DatsMe house — stamped by a push Accept or by the
-  // host's post-import ack. Information, not a gate: re-importing is free and
-  // updates in place (SPEC_DPP_DATA_TRANSFER_CHANNEL §3.3).
+  // Already in the caller's DatsMe house — stamped by the host's post-import ack.
+  // Information, not a gate: re-importing is free and updates in place
+  // (SPEC_DPP_DATA_TRANSFER_CHANNEL §3.3).
   in_datsme: boolean;
-  // Visible to this caller but not yet owned by them (an unclaimed local pet).
-  // The house shows these; /partner/export/{user_id} is exact-match and does not,
-  // so they must be claimed before we hand the user to DatsMe's import page or
-  // they silently vanish from it (SPEC_DATSPET_HOUSE_ADOPT §2).
+  // This caller's own pet, still held under their browser's ANONYMOUS owner id
+  // rather than a DatsMe user id — i.e. designed before signing in. The house
+  // shows these; /partner/export/{user_id} is exact-match and does not, so they
+  // must be claimed before we hand the user to DatsMe's import page or they
+  // silently vanish from it (SPEC_DATSPET_HOUSE_ADOPT §2,
+  // SPEC_DATSPET_FEDERATED_SESSION §4.5).
   claimable: boolean;
 }
 
 // Bind unclaimed local pets to the launched caller. Called with the ids the user
 // selected before linking out to the import page — never speculatively.
 export async function claimPets(petIds: string[]): Promise<{ claimed: string[] }> {
-  const r = await fetch(`${API_URL}/api/pets/claim`, {
+  const r = await apiFetch(`${API_URL}/api/pets/claim`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
@@ -62,7 +86,7 @@ export async function claimPets(petIds: string[]): Promise<{ claimed: string[] }
 }
 
 export async function generatePet(form: FormData): Promise<{ job_id: string }> {
-  const r = await fetch(`${API_URL}/api/generate`, { method: "POST", body: form });
+  const r = await apiFetch(`${API_URL}/api/generate`, { method: "POST", body: form });
   // Check status before parsing: a non-JSON error body (proxy HTML, empty 502)
   // must surface the real failure, not an opaque JSON.parse error.
   if (!r.ok) {
@@ -73,7 +97,7 @@ export async function generatePet(form: FormData): Promise<{ job_id: string }> {
 }
 
 export async function getJob(jobId: string): Promise<JobStatus> {
-  const r = await fetch(`${API_URL}/api/job/${encodeURIComponent(jobId)}`);
+  const r = await apiFetch(`${API_URL}/api/job/${encodeURIComponent(jobId)}`);
   if (!r.ok) {
     const data = await r.json().catch(() => ({}));
     throw new Error(data.detail || "Job not found");
@@ -84,7 +108,7 @@ export async function getJob(jobId: string): Promise<JobStatus> {
 // User-initiated Stop (§11). credentials: "include" so the DatsMe launch cookie travels for the
 // owner check. Best-effort/idempotent server-side — a job that already finished returns terminal.
 export async function stopJob(jobId: string): Promise<void> {
-  const r = await fetch(`${API_URL}/api/job/${encodeURIComponent(jobId)}/stop`, {
+  const r = await apiFetch(`${API_URL}/api/job/${encodeURIComponent(jobId)}/stop`, {
     method: "POST",
     credentials: "include",
   });
@@ -95,7 +119,7 @@ export async function stopJob(jobId: string): Promise<void> {
 }
 
 export async function listPets(): Promise<PetSummary[]> {
-  const r = await fetch(`${API_URL}/api/pets`, { cache: "no-store" });
+  const r = await apiFetch(`${API_URL}/api/pets`, { cache: "no-store" });
   if (!r.ok) throw new Error("Could not load pets");
   return r.json();
 }
@@ -112,7 +136,7 @@ export interface HouseConfig {
 }
 
 export async function getHouseConfig(): Promise<HouseConfig> {
-  const r = await fetch(`${API_URL}/api/house`, { cache: "no-store" });
+  const r = await apiFetch(`${API_URL}/api/house`, { cache: "no-store" });
   if (!r.ok) throw new Error("Could not load house settings");
   return r.json();
 }
@@ -141,7 +165,7 @@ export async function fetchMotions(animal: string, profile?: string): Promise<Mo
   const qs = profile
     ? `profile=${encodeURIComponent(profile)}`
     : `animal=${encodeURIComponent(animal)}`;
-  const r = await fetch(`${API_URL}/api/motions?${qs}`, { cache: "no-store" });
+  const r = await apiFetch(`${API_URL}/api/motions?${qs}`, { cache: "no-store" });
   if (!r.ok) throw new Error("Could not load the pose menu");
   return r.json();
 }
@@ -169,7 +193,7 @@ export interface CatalogAnimal {
 }
 
 export async function fetchCatalog(): Promise<CatalogAnimal[]> {
-  const r = await fetch(`${API_URL}/api/catalog`, { cache: "no-store" });
+  const r = await apiFetch(`${API_URL}/api/catalog`, { cache: "no-store" });
   if (!r.ok) throw new Error("Could not load the animal catalog");
   const data = await r.json();
   return data.animals ?? [];
@@ -246,7 +270,7 @@ export interface Entitlement {
 
 export async function fetchEntitlement(): Promise<Entitlement> {
   // Credentialed: a launched user's tier rides their launch cookie.
-  const r = await fetch(`${API_URL}/api/entitlement`, {
+  const r = await apiFetch(`${API_URL}/api/entitlement`, {
     credentials: "include",
     cache: "no-store",
   });
@@ -351,7 +375,7 @@ export class AdminApiError extends Error {
 }
 
 async function adminApiFetch(base: string, path: string, init?: RequestInit) {
-  const r = await fetch(`${API_URL}${base}${path}`, {
+  const r = await apiFetch(`${API_URL}${base}${path}`, {
     credentials: "include",
     cache: "no-store",
     // FormData must set its OWN Content-Type: the multipart boundary is generated by the
@@ -782,7 +806,7 @@ export interface DesignAxis {
 }
 
 async function referenceCall(path: string, form: FormData): Promise<PetReference> {
-  const r = await fetch(`${API_URL}${path}`, {
+  const r = await apiFetch(`${API_URL}${path}`, {
     method: "POST",
     body: form,
     credentials: "include",
@@ -838,7 +862,7 @@ export async function fetchDesignAxes(
   if (opts.referenceId) params.set("reference_id", opts.referenceId);
   else if (opts.animal) params.set("animal", opts.animal);
   const qs = params.toString() ? `?${params}` : "";
-  const r = await fetch(`${API_URL}/api/design-axes${qs}`, {
+  const r = await apiFetch(`${API_URL}/api/design-axes${qs}`, {
     cache: "no-store",
     credentials: "include",
   });
@@ -847,7 +871,7 @@ export async function fetchDesignAxes(
 }
 
 export async function keepPet(petId: string): Promise<void> {
-  const r = await fetch(`${API_URL}/api/pets/${encodeURIComponent(petId)}/keep`, {
+  const r = await apiFetch(`${API_URL}/api/pets/${encodeURIComponent(petId)}/keep`, {
     method: "POST",
   });
   if (!r.ok) {
@@ -857,7 +881,7 @@ export async function keepPet(petId: string): Promise<void> {
 }
 
 export async function deletePet(petId: string): Promise<void> {
-  const r = await fetch(`${API_URL}/api/pets/${encodeURIComponent(petId)}`, {
+  const r = await apiFetch(`${API_URL}/api/pets/${encodeURIComponent(petId)}`, {
     method: "DELETE",
   });
   if (!r.ok) {
@@ -885,6 +909,11 @@ export function petZipUrl(petId: string): string {
 // ---------------------------------------------------------------------------
 export interface DatsmeSession {
   launched: boolean;
+  // The launch cookie is present but its token no longer verifies — the user is
+  // still signed in on DatsMe, we just need a fresh assertion. Drives the silent
+  // re-launch (SPEC_DATSPET_FEDERATED_SESSION §4.2). Distinct from
+  // `launched:false` with no cookie, which means genuinely signed out.
+  stale?: boolean;
   user_id?: string;
   display_name?: string | null;  // the signed-in user's DatsMe name (nm claim), for the nav
   capabilities?: string[];
@@ -893,14 +922,25 @@ export interface DatsmeSession {
   integrated?: boolean;         // wired to a DatsMe host? false = standalone (no DatsMe buttons)
   signin_url?: string | null;   // where "Sign in with DatsMe" points (host login-launch bounce)
   signup_url?: string | null;   // where "Create a DatsMe account" points (host /signup)
-  // Where the house's Adopt action hands off: `${import_url}?items=a,b,c`. Built
-  // server-side — the partner slug is env-overridable, so the browser must never
-  // assemble this itself (SPEC_DATSPET_HOUSE_ADOPT §0.6).
+  // Where "Sign out" NAVIGATES (never fetches — see datsmeSignOut). Built
+  // server-side like the others; the browser never assembles a DatsMe origin.
+  signout_url?: string | null;
+  // Where the Adopt hand-off goes: `${import_url}?items=a,b,c`. Built server-side —
+  // the partner slug is env-overridable, so the browser must never assemble this
+  // itself (SPEC_DATSPET_HOUSE_ADOPT §0.6).
   import_url?: string | null;
+  // Seconds until the launch assertion lapses, so the client can renew BEFORE it
+  // does rather than after (§4.2).
+  token_expires_in?: number | null;
   admin?: boolean;              // a valid admin session is present (show the Admin toolbar link)
 }
 
 export async function getDatsmeSession(): Promise<DatsmeSession> {
+  // Raw fetch, deliberately NOT apiFetch: this is the one endpoint that never
+  // 401s on a stale session — it reports `stale: true` instead, because it is what
+  // TELLS the client to renew (§4.7). Routing it through the wrapper would make
+  // the renewal path re-enter itself.
+  //
   // credentials: the launch cookie is httponly, so it must ride cross-origin.
   const r = await fetch(`${API_URL}/api/datsme/session`, {
     credentials: "include",
@@ -910,48 +950,124 @@ export async function getDatsmeSession(): Promise<DatsmeSession> {
   return r.json();
 }
 
-// End the DatsPet session (clears the launch + admin cookies host-side). The
-// DatsMe session itself is managed on DatsMe (front-door §3.3).
-export async function datsmeLogout(): Promise<void> {
-  await fetch(`${API_URL}/api/datsme/logout`, {
-    method: "POST",
-    credentials: "include",
-  }).catch(() => {});
+// ---------------------------------------------------------------------------
+// Sign out, and staying signed in (SPEC_DATSPET_FEDERATED_SESSION §4.2 / §5.1)
+// ---------------------------------------------------------------------------
+
+// Marks a page load that ARRIVED from a renewal attempt. The loop guard: if we
+// land carrying it and the session still is not live, the host declined (revoked
+// consent, a tripped health gate) and renewing again would loop forever. One
+// query flag, no cookie and no TTL to tune — and the host's own return-path
+// validator already admits `?` and `=`, so it survives the round trip.
+const RENEWED_MARKER = "renewed";
+
+// Renew when the assertion has less than this left. Comfortably longer than any
+// single page interaction, far shorter than the 60-minute window, so a normal
+// visit renews at most once.
+export const LAUNCH_RENEW_THRESHOLD_SEC = 15 * 60;
+
+/** Sign out of BOTH DatsPet and DatsMe. A NAVIGATION, never a fetch.
+ *
+ * A fetch cannot clear a cookie on another origin, and the DatsMe session cookie
+ * is SameSite=Lax, so it would not even be sent. The browser has to actually go
+ * there. This is the whole reason one user could not hand the browser to another:
+ * the old POST cleared DatsPet's cookies and left the DatsMe session alive, so the
+ * next "Sign in" silently re-minted the same person.
+ */
+export function datsmeSignOut(session: DatsmeSession | null): void {
+  // signout_url is null in standalone mode and when there is no launch cookie;
+  // the backend endpoint handles both and lands on our own page.
+  window.location.href = session?.signout_url || `${API_URL}/api/datsme/signout`;
 }
 
-export interface AcceptResult {
-  redirect_url?: string;
-  queued?: boolean;
-  message?: string;
+/** The URL that silently re-launches, returning to `returnPath`. */
+export function datsmeRenewUrl(session: DatsmeSession, returnPath: string): string | null {
+  if (!session.signin_url) return null;
+  const url = new URL(session.signin_url);
+  // REPLACE rather than append: signin_url is prebuilt with return=/design, and a
+  // second `return` parameter would be ambiguous. Reading the origin off the
+  // server-supplied string is what keeps the DatsMe origin out of this file.
+  const sep = returnPath.includes("?") ? "&" : "?";
+  url.searchParams.set("return", `${returnPath}${sep}${RENEWED_MARKER}=1`);
+  return url.toString();
 }
 
-// Carries the HTTP status so the UI can act on it — notably 401, which means the
-// launch token expired and the user needs to re-launch before Accept can authorize.
-export class AcceptError extends Error {
-  status: number;
-  constructor(message: string, status: number) {
-    super(message);
-    this.status = status;
-  }
+/** True if this page load already came back from a renewal attempt. */
+export function arrivedFromRenewal(): boolean {
+  if (typeof window === "undefined") return false;
+  return new URLSearchParams(window.location.search).has(RENEWED_MARKER);
 }
 
-export async function acceptPetToDatsme(petId: string): Promise<AcceptResult> {
-  const r = await fetch(`${API_URL}/api/datsme/accept`, {
-    method: "POST",
-    credentials: "include",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pet_id: petId }),
+/** Renew now if the assertion is close to lapsing. Returns true if navigating.
+ *
+ * Called on page load. Safe to call unconditionally: it is a no-op when there is
+ * nothing to renew, when the assertion has plenty of time left, or when this load
+ * already came back from a renewal that did not take.
+ */
+export function maybeRenewLaunch(session: DatsmeSession | null): boolean {
+  if (!session?.launched || arrivedFromRenewal()) return false;
+  const left = session.token_expires_in;
+  if (typeof left !== "number" || left > LAUNCH_RENEW_THRESHOLD_SEC) return false;
+  const url = datsmeRenewUrl(session, window.location.pathname);
+  if (!url) return false;
+  window.location.href = url;
+  return true;
+}
+
+// The server's structured code for "your launch assertion lapsed" (§4.7). A code,
+// never a message match: a client that string-matches an error breaks the moment
+// the copy is edited.
+const SESSION_STALE_CODE = "session_stale";
+
+/** Turn a 401 session_stale into a silent re-launch — the ONE place that reacts.
+ *
+ * Every API helper funnels its failures through here, so the renewal decision and
+ * its loop guard live in one place. Without that, each call site grows its own
+ * copy and the guard gets forgotten in exactly one of them, which is how a
+ * redirect loop ships.
+ *
+ * Returns true if it is navigating away (the caller should stop).
+ */
+export function handleSessionStale(status: number, body: unknown): boolean {
+  if (status !== 401 || typeof window === "undefined") return false;
+  const detail = (body as { detail?: { code?: string } } | undefined)?.detail;
+  if (detail?.code !== SESSION_STALE_CODE || arrivedFromRenewal()) return false;
+  // The session read is cheap and cannot itself be stale (it never 401s), so this
+  // resolves the renew URL without keeping a session copy in module state.
+  void getDatsmeSession().then((session) => {
+    const url = datsmeRenewUrl(session, window.location.pathname);
+    if (url) window.location.href = url;
   });
-  const data = await r.json().catch(() => ({}));
-  if (!r.ok) {
-    // 402 (credits), 409 (house full), 401 (relaunch) surface their detail. The
-    // detail may be a STRING or a structured object ({error, detail, hint} from a
-    // host validation failure) — extract a readable message, never "[object Object]".
-    const d = data.detail;
-    const msg = typeof d === "string" ? d
-      : d && typeof d === "object" ? (d.detail || d.error || JSON.stringify(d))
-      : "Could not send this pet to DatsMe";
-    throw new AcceptError(msg, r.status);
-  }
-  return data;
+  return true;
+}
+
+/** Claim + keep + hand off to the host's checkout — the ONE purchase path.
+ *
+ * Three surfaces need this (the house, the post-design Adopt, and the catalog
+ * page in SPEC_DATSPET_CATALOG_PURCHASE), and the order is the part that is easy
+ * to get wrong, so it lives here once:
+ *
+ *   1. CLAIM. A pet designed before signing in is held under this browser's
+ *      anonymous owner id, and /partner/export is exact-match on the DatsMe id —
+ *      so an unclaimed pet is visible in the house yet invisible to the host, and
+ *      would silently not appear on the checkout page. (Sign-in normally claims
+ *      already; this is the backstop for a pet finished after that.)
+ *   2. KEEP. The host skips drafts, so a pet that was never kept is not offered.
+ *   3. NAVIGATE. The checkout is the host's page, authenticated by the user's own
+ *      30-day DatsMe session — which is why token expiry can never cost a
+ *      purchase any more.
+ *
+ * DECISION (cancel does NOT unclaim): a user who cancels on DatsMe has still
+ * claimed and kept these pets. Claiming only binds ownership and charges nothing,
+ * and the binding is what makes the pet correctly exportable on the next attempt;
+ * unclaim-on-cancel would add a failure mode for zero user benefit.
+ */
+export async function handOffToDatsme(
+  petIds: string[],
+  session: DatsmeSession,
+): Promise<void> {
+  if (petIds.length === 0 || !session.import_url) return;
+  await claimPets(petIds);
+  await Promise.all(petIds.map((id) => keepPet(id)));
+  window.location.href = `${session.import_url}?items=${petIds.join(",")}`;
 }

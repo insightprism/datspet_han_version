@@ -1,45 +1,62 @@
-"""MEDIUM regression tests — retry/token correctness (data-loss guards).
+"""MEDIUM regression tests — purge/token correctness (data-loss guards).
 
-- purge_drafts must NEVER delete a pet with a pending writeback (routed to
-  DatsMe but not yet acked) — the retry needs it to survive.
+- purge_drafts deletes exactly what "draft" means — scratch the user never saved
+  — and nothing else. It used to carry a `not_pending` exemption for a pet whose
+  QUEUED writeback had not drained yet; that queue went with the push path, and
+  the exemption had to go with it or claimed work would have become unpurgeable
+  forever (SPEC_DATSPET_FEDERATED_SESSION §4.6 b).
 - the bundle token is burned only AFTER the bytes are sent (single-successful-
-  download), so a failed transfer leaves it usable for the queued retry.
+  download), so a failed transfer leaves it usable for the host's next attempt.
 """
 import time
 
 from conftest import make_pet
 
 
-def test_purge_spares_pending_writeback_pet(dpp_env):
+def test_purge_drops_a_claimed_but_unkept_draft(dpp_env):
+    """The §4.6 (b) inversion, and why it matters.
+
+    claim_anon_pets stamps `datsme_activity_id` on everything it moves. Under the
+    old `not_pending` exemption — "activity stamped AND not acked" — every pet a
+    sign-in claimed would have matched, and every claimed-but-unkept draft would
+    have been exempt from EVERY purge scope, permanently. Anonymous scratch would
+    accumulate forever, and the owner-scope migration note leaned on the very purge
+    this clause disabled.
+
+    Deleting the clause is safe because the hand-off calls keep() before navigating
+    to the checkout, so a pet in a live checkout is already draft=0.
+    """
     db = dpp_env["db"]
-    # A normal draft (should be purged) and a pending-writeback pet (must survive).
     make_pet(db, pet_id="plaindraft01", external_user_id="user-A", draft=True)
-    make_pet(db, pet_id="pendingwb001", external_user_id="user-A", draft=True)
-    # Mark the second as routed-to-DatsMe-but-unacked (what Accept's _bind_pending does).
-    db.stamp_writeback_acked  # (no-op ref)
+    make_pet(db, pet_id="claimeddraft", external_user_id="user-A", draft=True)
     with db._lock:
         db._connect().execute(
             "UPDATE pets SET datsme_activity_id='design_a_pet', writeback_acked_at=NULL WHERE id=?",
-            ("pendingwb001",))
+            ("claimeddraft",))
         db._connect().commit()
 
     dropped = db.purge_drafts("user-A")
-    assert "plaindraft01" in dropped
-    assert "pendingwb001" not in dropped
-    assert db.get_pet("plaindraft01") is None       # purged
-    assert db.get_pet("pendingwb001") is not None    # SURVIVED — retry can still land it
+    assert set(dropped) == {"plaindraft01", "claimeddraft"}
+    assert db.get_pet("plaindraft01") is None
+    assert db.get_pet("claimeddraft") is None
 
 
-def test_purge_all_scope_also_spares_pending(dpp_env):
+def test_purge_never_touches_a_kept_pet(dpp_env):
+    """The other half: keeping is what takes a pet out of every purge scope, and
+    it is what the hand-off does before a checkout. An activity stamp is not, and
+    never was, what protects a pet — being saved is."""
     db = dpp_env["db"]
-    make_pet(db, pet_id="pendingwb002", external_user_id=None, draft=True)
+    make_pet(db, pet_id="keptpet00001", external_user_id="user-A", draft=False)
     with db._lock:
         db._connect().execute(
-            "UPDATE pets SET datsme_activity_id='design_a_pet', writeback_acked_at=NULL WHERE id=?",
-            ("pendingwb002",))
+            "UPDATE pets SET datsme_activity_id='design_a_pet' WHERE id=?",
+            ("keptpet00001",))
         db._connect().commit()
-    db.purge_drafts("__all__")  # startup purge
-    assert db.get_pet("pendingwb002") is not None
+
+    assert db.purge_drafts("user-A") == []
+    assert db.get_pet("keptpet00001") is not None
+    assert db.purge_drafts("__all__") == []
+    assert db.get_pet("keptpet00001") is not None
 
 
 def test_bundle_token_single_successful_download(client, dpp_env):

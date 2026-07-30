@@ -6,19 +6,22 @@ FastAPI app. When DATSME_HMAC_SECRET is unset the manifest endpoint 503s and
 nothing else here is reachable in a way that affects local single-user mode —
 the pet engine runs exactly as before.
 
-Transport (spec §3): a pet bundle is ~1–3 MB and the writeback body is capped
-at 64 KB, so the writeback carries a POINTER (bundle_url + sha256 + size). The
-host fetches the bundle server-to-server via a one-time bundle token, validates
-it with its existing validate_uploaded_bundle, and adopts it via write_assets.
+Transport: a pet reaches DatsMe through the PULL channel — the user checks out on
+the host's own import page, and the host fetches the bundle server-to-server via a
+one-time bundle token, validates it, and adopts it. DatsPet never pushes and never
+triggers a charge; it serves bytes to an authenticated host request
+(SPEC_DATSPET_FEDERATED_SESSION §6).
 
-Endpoints (spec §5.1):
+Endpoints:
   GET  /partner/manifest                  signed manifest, ETag/304
   GET  /launch?token=                     verify JWT → cookie → 303 to /design
-  GET  /partner/export/{user_id}          GDPR export (schema datspet_pets.v1)
+  GET  /partner/export/{user_id}          GDPR export + the pull's offer list
   POST /partner/revoke                    delete | anonymize a user's pets
-  GET  /partner/results/{user_id}/pending accepted-but-unacked pets (resync)
-  GET  /api/datsme/session                frontend helper (launched? cost?)
-  POST /api/datsme/accept                 build+post the writeback for a pet
+  GET  /partner/results/{user_id}/pending always empty — nothing is ever owed (§4.6)
+  POST /partner/imported/{user_id}        the host's post-checkout ack
+  GET  /api/datsme/session                frontend helper (launched? stale? cost?)
+  GET  /api/datsme/signout                federated sign-out (§4.1)
+  GET  /api/datsme/signed-out             the origin-translation hop back (§4.4)
   GET  /api/datsme/bundle/{token}         serve pet.zip once per token
 """
 from __future__ import annotations
@@ -47,8 +50,6 @@ from datsme_partner_sdk import (
     verify_launch_token,
     ManifestBuilder,
     sign_manifest_response,
-    WritebackBuilder,
-    post_writeback as sdk_post_writeback,
 )
 from datsme_partner_sdk.launch import LaunchError
 from datsme_partner_sdk.manifest import compute_manifest_etag
@@ -65,10 +66,17 @@ router = APIRouter(tags=["datsme"])
 ACTIVITY_DESIGN_A_PET = "design_a_pet"
 
 LAUNCH_COOKIE = "datsme_launch"
-# Must be >= the host's LAUNCH_TOKEN_TTL (60 min) so the browser session
-# outlives the JWT the writeback carries — designing a pet (GPU build + review)
-# can take many minutes, and if the cookie lapsed first the user would lose the
-# Accept action while the token was still valid. 60 min matches the host window.
+# Matched to the host's LAUNCH_TOKEN_TTL, because resolve_owner_scope re-verifies
+# the token on every request: a cookie that outlived its token would only produce
+# `stale`, and one that died first would drop the user to anonymous a beat early.
+#
+# The old rationale here was that the cookie had to outlive the JWT "so the user
+# doesn't lose the Accept action while the token is still valid". There is no
+# Accept: purchases run on the pull checkout, authenticated by the user's own
+# 30-day DatsMe session, so nothing token-authenticated happens at the end of a
+# build any more (SPEC_DATSPET_FEDERATED_SESSION §4.3). What a long design session
+# needs now is RENEWAL — the session endpoint reports token_expires_in and the
+# client silently re-launches (§4.2) — not a longer cookie.
 LAUNCH_COOKIE_TTL_SEC = 60 * 60  # 60 min — matches host LAUNCH_TOKEN_TTL
 
 # Cookie cross-site policy. In dev + prod the DatsPet frontend and backend are
@@ -103,8 +111,9 @@ def _safe_return_path(return_path: Optional[str]) -> Optional[str]:
         return None
     return return_path
 
-# Bundle tokens must outlive the SDK retry window (backoff ceiling 24 h) so a
-# queued writeback's server-to-server fetch still resolves (spec §5.3 / §7).
+# Bundle tokens must outlive the gap between the host LISTING an item (which mints
+# the token) and the user confirming the checkout, which is human-paced — a user may
+# open the import page and confirm the next day.
 BUNDLE_TOKEN_TTL_SEC = 24 * 60 * 60
 
 PARTNER_SLUG = os.environ.get("DATSME_PARTNER_SLUG", "datspet")
@@ -141,12 +150,6 @@ def _datspet_public_url() -> str:
 def _frontend_url() -> str:
     return os.environ.get(
         "DATSPET_FRONTEND_URL", "http://localhost:19955").rstrip("/")
-
-
-def _retry_queue_path() -> Path:
-    return Path(os.environ.get(
-        "DATSME_RETRY_QUEUE_PATH",
-        str(db.OUTPUT_DIR / "datsme_retry_queue.db"))).resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -233,27 +236,21 @@ def launch(request: Request, token: str | None = None,
     admin bounce uses return=/admin/motions). An admin launch (token carries
     adm=true) additionally sets the datspet_admin cookie (admin spec §2.3).
 
-    Resync (rsx claim): re-post an already-accepted pet's writeback without
-    involving the user, then redirect (spec §5.1).
+    An `rsx` (resync) claim is accepted and IGNORED. It used to short-circuit into
+    a writeback, which was the push path's recovery channel; there is no push any
+    more (SPEC_DATSPET_FEDERATED_SESSION §6.2a). The host is unchanged and may
+    still mint one from a stale row, and a user who clicks a recovery link deserves
+    a working page rather than a 404 — so this lands on the designer like any other
+    launch.
     """
     try:
         ctx: LaunchContext = verify_launch_token(token or "", _hmac_secret())
     except LaunchError as e:
         raise HTTPException(status_code=401, detail=str(e))
 
-    # Resync short-circuit — rsx carries a source_pet_id we accepted before.
-    rsx = ctx.raw_claims.get("rsx")
-    if rsx:
-        row = db.get_pet(rsx)
-        if row is None:
-            raise HTTPException(status_code=404, detail=f"Pet {rsx!r} not found for resync")
-        if row["external_user_id"] != ctx.user_id:
-            raise HTTPException(status_code=403, detail="Resync pet does not belong to the authenticated user")
-        if row["datsme_activity_id"] != ctx.activity_id:
-            raise HTTPException(status_code=409, detail="Resync pet activity_id does not match launch scope")
-        redirect_url = _post_pet_writeback(row, ctx)
-        target = redirect_url or f"{_frontend_url()}/house"
-        return RedirectResponse(url=target, status_code=303)
+    if ctx.raw_claims.get("rsx"):
+        log.info("launch: ignoring rsx claim %r — the push path is retired (§6.2a)",
+                 ctx.raw_claims.get("rsx"))
 
     if ctx.activity_id != ACTIVITY_DESIGN_A_PET:
         raise HTTPException(
@@ -702,238 +699,6 @@ _pet_design_cost = pet_design_cost
 
 
 # ---------------------------------------------------------------------------
-# Outbound: Accept → build + post the writeback
-# ---------------------------------------------------------------------------
-@router.post("/api/datsme/accept")
-async def accept_pet(request: Request):
-    """Accept a designed pet into the launching user's DatsMe (spec §5.1).
-
-    Requires a launch cookie; re-verifies the token; mints a one-time bundle
-    token; builds + posts the pointer writeback. On 200 stamps the pet as
-    acked and clears its draft flag. Transient failure → SDK retry queue +
-    still return the local success state.
-    """
-    cookie = _read_launch_cookie(request)
-    if cookie is None:
-        raise HTTPException(status_code=401, detail="Not launched from DatsMe — return to DatsMe and relaunch.")
-    try:
-        ctx = verify_launch_token(cookie["token"], _hmac_secret())
-    except LaunchError:
-        # Token expired (or otherwise invalid) — the partner detects this
-        # locally before even calling the host, so the user gets an instant,
-        # clear relaunch prompt. Same message as the writeback-time 401 branch.
-        raise HTTPException(
-            status_code=401,
-            detail="Your DatsMe session expired while designing. Return to "
-                   "DatsMe and click “Design a pet” again — your design is "
-                   "saved here, just re-Accept it.",
-        )
-
-    body = await request.json()
-    pet_id = (body or {}).get("pet_id", "")
-    if not isinstance(pet_id, str) or not pet_id.isalnum():
-        raise HTTPException(status_code=400, detail="pet_id required")
-    row = db.get_pet(pet_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="pet not found")
-
-    # Ownership gate: a user may only Accept a pet that is unclaimed (local,
-    # external_user_id IS NULL) or already theirs. 404 (not 403) so we don't
-    # leak that another user's pet_id exists. And once a pet has been acked
-    # under one user, it can't be re-accepted under a different user.
-    owner = row["external_user_id"]
-    if owner is not None and owner != ctx.user_id:
-        raise HTTPException(status_code=404, detail="pet not found")
-    # NO re-adopt 409 here. There used to be one, and it was unreachable: its
-    # condition (acked AND owner is not None AND owner != ctx.user_id) is exactly
-    # what the 404 above already raised on, so it never fired once. Re-adopt is
-    # now handled where it belongs — the host keys the pet AND the credit charge to
-    # (partner_slug, source_pet_id), so a repeat updates in place and costs 0
-    # (SPEC_DPP_DATA_TRANSFER_CHANNEL §3.3). Blocking it here would re-break the
-    # rename-sync the upsert exists to allow.
-
-    # Bind the pet to this DatsMe user (so export/resync/scoping can find it)
-    # and record the activity it's being accepted under.
-    #
-    # _post_pet_writeback makes a BLOCKING httpx POST to the host, and the host
-    # synchronously calls back to GET our /api/datsme/bundle/{token} before it
-    # responds. If we ran that blocking call on the event loop, our loop would
-    # be frozen and unable to serve the host's bundle fetch — a self-deadlock
-    # that fails every Accept. Offload to a worker thread so the event loop
-    # stays free to serve the bundle request concurrently.
-    redirect_url = await run_in_threadpool(_post_pet_writeback, row, ctx)
-    if redirect_url is None:
-        # Transient failure: the writeback is queued (or a permanent error was
-        # raised below). Tell the UI the pet will arrive automatically.
-        return {"queued": True,
-                "message": "DatsMe is unavailable right now — your pet will arrive automatically."}
-    return {"redirect_url": redirect_url}
-
-
-def _post_pet_writeback(row, ctx: LaunchContext) -> Optional[str]:
-    """Build + POST the pointer writeback for `row`. Returns a redirect URL on
-    success, None on transient failure (queued). Raises HTTPException for
-    permanent (non-retryable) host errors so the UI shows the real reason."""
-    zip_bytes = row["bundle_zip"]
-    sha256 = hashlib.sha256(zip_bytes).hexdigest()
-
-    # One-time bundle token (reusable until first successful download, then
-    # burned) — this is what bundle_url points at, NOT /api/pets/{id}/zip.
-    token = secrets.token_urlsafe(16)
-    db.create_bundle_token(token, row["id"], time.time() + BUNDLE_TOKEN_TTL_SEC)
-
-    writeback = (
-        WritebackBuilder(ctx)
-        .target("user.pet", schema_version="pet_bundle.v1")
-        .payload({
-            "activity_id": ctx.activity_id,
-            "breed_id": row["breed_id"],
-            "display_name": row["display_name"],
-            "bundle_url": f"{_datspet_public_url()}/api/datsme/bundle/{token}",
-            "bundle_sha256": sha256,
-            "size_bytes": len(zip_bytes),
-            "source_pet_id": row["id"],
-        })
-        .build()  # idempotency_key defaults to ctx.jti — one accept per launch
-    )
-
-    try:
-        resp = sdk_post_writeback(
-            datsme_base_url=_datsme_base_url(),
-            partner_slug=PARTNER_SLUG,
-            hmac_secret=_hmac_secret(),
-            body=writeback,
-            # A user.pet writeback is SYNCHRONOUS work on the host: it fetches
-            # the (≤32 MB) bundle back from us server-to-server, validates it,
-            # charges credits, and adopts across two databases before it
-            # responds. The SDK's 10 s default is too tight for that and makes
-            # a successful adoption look "queued". 60 s comfortably covers it;
-            # a genuine host outage still trips the retry path below.
-            timeout_seconds=60.0,
-        )
-    except httpx.HTTPError as e:
-        log.warning("DatsMe writeback request failed: %s — enqueuing for retry", e)
-        _enqueue_writeback_retry(writeback)
-        _bind_pending(row, ctx)  # ack happens only on a 200
-        return None
-
-    if resp.status_code == 200:
-        _bind_pending(row, ctx)  # binds external_user_id = ctx.user_id
-        db.stamp_writeback_acked(row["id"], ctx.activity_id, time.time())
-        db.keep_pet(row["id"], external_user_id=ctx.user_id)  # now owned; clear draft
-        try:
-            redirect_path = resp.json().get("redirect_to")
-        except ValueError:
-            redirect_path = None
-        return f"{_datsme_public_url()}{redirect_path}" if redirect_path else f"{_datsme_public_url()}/settings/pet"
-
-    # Non-200. Classify transient (retry) vs permanent (surface):
-    #   5xx / 408 / 429  → transient host hiccup; queue and it recovers.
-    #   401              → the launch TOKEN is dead (expired / wrong secret).
-    #                      The retry queue re-sends the SAME stored token, so a
-    #                      401 can NEVER self-heal — queuing it would retry
-    #                      forever and silently never deliver. Treat as
-    #                      permanent and tell the user to relaunch. (This is
-    #                      where we deliberately diverge from the personality
-    #                      reference, which queues 401 — its writebacks fire
-    #                      seconds after launch, so its tokens are never stale;
-    #                      a pet design can outlive even the 60-min window.)
-    #   other 4xx        → validation/credits/house — surface the host's error.
-    detail = _error_detail(resp)
-    transient = resp.status_code >= 500 or resp.status_code in (408, 429)
-    log.warning("DatsMe writeback status=%s transient=%s detail=%s",
-                resp.status_code, transient, detail)
-    if transient:
-        _enqueue_writeback_retry(writeback)
-        _bind_pending(row, ctx)
-        return None
-    if resp.status_code == 401:
-        raise HTTPException(
-            status_code=401,
-            detail="Your DatsMe session expired while designing. Return to "
-                   "DatsMe and click “Design a pet” again — your design is "
-                   "saved here, just re-Accept it.",
-        )
-    # Permanent — surface the host's structured error to the UI (402/409/400).
-    raise HTTPException(status_code=resp.status_code, detail=detail)
-
-
-def _bind_pending(row, ctx: LaunchContext) -> None:
-    """Record which user+activity a pet was routed to, WITHOUT marking it
-    acked — so /pending and resync can find it if the writeback is still in
-    flight. Only sets ownership fields; writeback_acked_at stays NULL."""
-    if row["external_user_id"] != ctx.user_id or row["datsme_activity_id"] != ctx.activity_id:
-        with db._lock:  # small direct update; mirrors stamp_writeback_acked
-            conn = db._connect()
-            conn.execute(
-                "UPDATE pets SET external_user_id=?, datsme_activity_id=? WHERE id=?",
-                (ctx.user_id, ctx.activity_id, row["id"]))
-            conn.commit()
-
-
-def _error_detail(resp: httpx.Response) -> str:
-    try:
-        data = resp.json()
-        if isinstance(data, dict):
-            return data.get("detail") or data.get("message") or resp.text[:200]
-    except ValueError:
-        pass
-    return resp.text[:200]
-
-
-def _enqueue_writeback_retry(body: dict) -> None:
-    """Best-effort enqueue into the SDK retry queue. Never let a queue write
-    cascade into a user-visible failure."""
-    try:
-        from datsme_partner_sdk.retry import enqueue
-        enqueue(
-            _retry_queue_path(),
-            partner_slug=PARTNER_SLUG,
-            datsme_base_url=_datsme_base_url(),
-            body=body,
-        )
-    except Exception as e:
-        log.warning("Retry-queue enqueue failed: %s", e)
-
-
-def drain_retry_queue() -> list:
-    """Public entry point for a scheduled worker (Phase 4). Drains due retries
-    AND finalizes each success locally: a writeback that finally lands must
-    stamp the pet acked + clear its draft, exactly as the inline Accept does on
-    a 200. Without this the pet stays a purgeable draft and is lost — the SDK's
-    generic drain can't know about our per-pet local state, so we do it here."""
-    try:
-        from datsme_partner_sdk.retry import drain_due
-    except Exception as e:
-        log.warning("Retry-queue drain import failed: %s", e)
-        return []
-    try:
-        results = drain_due(_retry_queue_path(), _hmac_secret())
-    except Exception as e:
-        log.warning("Retry-queue drain failed: %s", e)
-        return []
-
-    for pending, status, _detail in results:
-        if status != 200:
-            continue
-        try:
-            body = json.loads(pending.body_json)
-            payload = body.get("payload") or {}
-            pet_id = payload.get("source_pet_id")
-            activity_id = payload.get("activity_id")
-            if pet_id and db.get_pet(pet_id) is not None:
-                db.stamp_writeback_acked(pet_id, activity_id, time.time())
-                # The pet is already bound to its user (Accept bound it before
-                # queuing); clear the draft under that owner.
-                row = db.get_pet(pet_id)
-                db.keep_pet(pet_id, external_user_id=row["external_user_id"])
-                log.info("retry-drain finalized pet=%s (acked + kept)", pet_id)
-        except Exception as e:
-            log.warning("Could not finalize drained writeback: %s", e)
-    return results
-
-
-# ---------------------------------------------------------------------------
 # Bundle serving — GET /api/datsme/bundle/{token}
 # ---------------------------------------------------------------------------
 @router.get("/api/datsme/bundle/{token}")
@@ -1093,20 +858,23 @@ async def revoke_user(request: Request):
 # ---------------------------------------------------------------------------
 @router.get("/partner/results/{user_id}/pending")
 def list_pending_writebacks(user_id: str, request: Request):
-    """Pets accepted for a user that never acked a successful writeback.
-    Host-signed (GET, no body)."""
+    """Always empty. Host-signed (GET, no body).
+
+    "Pending" meant "a writeback we owe the host but never delivered", which only
+    existed because DatsPet used to PUSH. In the pull model the host fetches when
+    the user checks out, so a pet that was never checked out is not an owed
+    delivery — it is just a pet (SPEC_DATSPET_FEDERATED_SESSION §4.6 a).
+
+    The endpoint stays because the DPP protocol requires partners to serve it, and
+    returning an empty list is what opts DatsPet out of the host's resync channel
+    WITHOUT a host change. That opt-out is load-bearing, not cosmetic: the old
+    query was `datsme_activity_id IS NOT NULL AND writeback_acked_at IS NULL`,
+    which after the retirement describes every kept-but-unadopted pet. Left alone,
+    the host would mint a resync launch for each one and re-open the push path the
+    consolidation closed.
+    """
     _require_host_signature(request)
-    rows = db.list_pending_writebacks(user_id)
-    return {
-        "pending": [
-            {
-                "partner_result_id": r["id"],
-                "activity_id": ACTIVITY_DESIGN_A_PET,
-                "completed_at": _epoch_to_iso(r["created_at"]),
-            }
-            for r in rows
-        ]
-    }
+    return {"pending": []}
 
 
 # ---------------------------------------------------------------------------

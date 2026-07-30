@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  claimPets,
+  handOffToDatsme,
   deletePet,
   getDatsmeSession,
   getHouseConfig,
@@ -36,11 +36,12 @@ const MOBILE_PAGE_CEILING = 6;
  * pauses when the tab is hidden (useAnimationLoop), so a backgrounded house costs
  * nothing. Page size comes from the server (/api/house), clamped down on mobile.
  *
- * Adopting is a LINK, not an API call (SPEC_DATSPET_HOUSE_ADOPT §0.1). A launch
- * nonce authorizes exactly ONE writeback, so a house of Accept buttons cannot
- * work over the push path at any key or batch size. Instead the user selects
- * here — where the pets are visible — and we hand the selection to DatsMe's
- * import page, which pulls from our export. That page treats `?items=` as a
+ * Adopting is a LINK, not an API call (SPEC_DATSPET_HOUSE_ADOPT §0.1). It is now
+ * the ONLY way a pet reaches DatsMe: the user selects here — where the pets are
+ * visible — and we hand the selection to DatsMe's import page, which pulls from
+ * our export, quotes a binding price, and charges against the user's own session.
+ * DatsPet holds no credential that can trigger a charge
+ * (SPEC_DATSPET_FEDERATED_SESSION §6). That page treats `?items=` as a
  * PRESELECTION, so the picking done here survives the trip. Selection is by id,
  * so it spans pages: a pet picked on page 1 stays picked on page 2.
  */
@@ -130,21 +131,12 @@ export default function HousePage() {
     setAdopting(true);
     const ids = (pets ?? []).filter((p) => selected.has(p.id)).map((p) => p.id);
     try {
-      // Claim first, navigate second. An unclaimed pet is visible here but
-      // invisible to /partner/export, so handing it over unclaimed lands the user
-      // on an import page where it silently isn't listed (§2). Only bother when
-      // something actually needs it.
-      //
-      // DECISION (cancel does NOT unclaim): a user who cancels on DatsMe has still
-      // claimed these pets — external_user_id is now bound. Deliberately left as
-      // is. Claiming only binds ownership (charges nothing), and the binding makes
-      // the pet correctly exportable on the next attempt; unclaim-on-cancel would
-      // add a failure mode for zero user benefit.
-      const needClaim = (pets ?? [])
-        .filter((p) => selected.has(p.id) && p.claimable)
-        .map((p) => p.id);
-      if (needClaim.length > 0) await claimPets(needClaim);
-      window.location.href = `${session.import_url}?items=${ids.join(",")}`;
+      // The claim-keep-navigate sequence lives in handOffToDatsme, shared with the
+      // post-design Adopt (and the catalog page in SPEC_DATSPET_CATALOG_PURCHASE)
+      // so the order — which is the part that is easy to get wrong — is written
+      // once. See that helper for why claim precedes keep precedes navigate, and
+      // why a cancelled checkout deliberately does NOT unclaim.
+      await handOffToDatsme(ids, session);
     } catch (e) {
       setAdopting(false);
       setError(

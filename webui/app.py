@@ -1871,7 +1871,6 @@ def pet_zip(pet_id: str, request: Request):
 # imports (tests, tooling) never spawn it.
 # ---------------------------------------------------------------------------
 MAINTENANCE_TICK_S = 60
-RETRY_DRAIN_EVERY_S = 5 * 60
 TRANSIENT_SWEEP_EVERY_S = 60 * 60
 TRANSIENT_MAX_AGE_S = 24 * 60 * 60
 
@@ -1908,20 +1907,13 @@ def _cleanup_transients(max_age_s: float = TRANSIENT_MAX_AGE_S) -> int:
 
 
 def _maintenance_loop() -> None:
-    last_drain = 0.0
+    # The writeback retry drain used to live here too. It went with the push path
+    # (SPEC_DATSPET_FEDERATED_SESSION §6.2): a pull has no queued delivery to
+    # retry. The loop survives for the transient sweep, which is a different job
+    # on a different cadence.
     last_sweep = 0.0
     while True:
         now = time.monotonic()
-        # Drain only when DPP is configured — an unconfigured standalone
-        # install has no secret and nothing queued worth warning about.
-        if os.environ.get("DATSME_HMAC_SECRET") and now - last_drain >= RETRY_DRAIN_EVERY_S:
-            last_drain = now
-            try:
-                drained = datsme_integration.drain_retry_queue()
-                if drained:
-                    print(f"[webui] retry-drain attempted {len(drained)} writeback(s)", flush=True)
-            except Exception as e:
-                print(f"[webui] retry-drain failed: {e}", flush=True)
         if now - last_sweep >= TRANSIENT_SWEEP_EVERY_S:
             last_sweep = now
             try:
