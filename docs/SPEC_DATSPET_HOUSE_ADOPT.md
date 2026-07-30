@@ -1,10 +1,30 @@
 # SPEC — Adopt to DatsMe from the Pet House
 
-**Status:** rev.3 (2026-07-16) — **IMPLEMENTED and verified end-to-end** against the live
+**Status:** rev.4 (2026-07-30) — **IMPLEMENTED and verified end-to-end** against the live
 host. This is the partner side of `SPEC_DPP_DATA_TRANSFER_CHANNEL` (its **Phase 2d**); the
 authoritative wire contract is now the amended protocol itself:
 `keep_SPEC_DATSME_PARTNER_PROTOCOL.md` §7.2a, §13.3a, §13.3b, §13.5 (AM-3..AM-7). Where this
 document and the protocol disagree, the protocol wins.
+
+> **Rev.4 (2026-07-30) — this pull is now the ONLY purchase path, and the hand-off is
+> shared.** `SPEC_DATSPET_FEDERATED_SESSION` §6 retired the push writeback
+> (`POST /api/datsme/accept`), its retry queue, and its resync channel. Three consequences
+> for this document:
+>
+> 1. **Every purchase entrance lands here.** The post-design Adopt and (later) the catalog
+>    page do exactly what the house does. DatsPet holds no credential that can trigger a
+>    charge, and a lapsed launch token can no longer cost a user a purchase — the checkout
+>    authenticates against the user's own 30-day DatsMe session.
+> 2. **The claim-keep-navigate sequence lives in one helper**, `handOffToDatsme` in
+>    `web/src/lib/api.ts`. Where rev.3 said "claim first, navigate second", the full order is
+>    claim → keep → navigate: the host skips drafts, so a pet that was never kept is not
+>    offered either. Do not reimplement the sequence per surface.
+> 3. **`claimable` changed meaning** (federated-session §4.5). It used to mean "an unclaimed
+>    LOCAL pet", when `_scope_clause` showed every signed-in caller every unowned row. Scoping
+>    is exact-match now and an anonymous browser owns its work under an `anon:` id, so
+>    `claimable` means "this caller's own pet, not yet bound to their DatsMe id". Sign-in
+>    normally claims everything already; the endpoint is the backstop for a pet finished after
+>    that sweep, and it is keyed by owner rather than by a list of ids.
 
 **Rev.3 changelog — what building it changed (each moved an implementation decision):**
 
