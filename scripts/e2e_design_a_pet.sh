@@ -15,10 +15,20 @@ set -uo pipefail
 
 # --- config -----------------------------------------------------------------
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DATSME_API="$(cd "$REPO/../datsme_me/api" && pwd)"
+# The host's code + .env, for minting and for reading the RESULT out of its DB.
+# Overridable because the sibling-checkout layout is a DEV fact: on a deployed box
+# the two repos are /var/www/datspet-staging and /var/www/datsme-staging, which are
+# not siblings. Running this against staging is what SPEC_DATSPET_FEDERATED_SESSION
+# §9 step 11 asks for, and it could not be done while this path was hardcoded.
+DATSME_API="${DATSME_API:-$REPO/../datsme_me/api}"
+[ -d "$DATSME_API" ] || die_early "DATSME_API not found: $DATSME_API"
+DATSME_API="$(cd "$DATSME_API" && pwd)"
 DATSPET_BACKEND="${DATSPET_BACKEND:-http://127.0.0.1:19954}"
 DATSME_HOST="${DATSME_HOST:-http://127.0.0.1:19994}"
-COMFY_URL="${PET_FACTORY_COMFY_URL:-http://127.0.0.1:19953}"
+# Empty = do not preflight ComfyUI. Required on any GPU-less tier (staging/prod run
+# PET_GEN_BACKEND=pool, so there is no local ComfyUI and generation goes to the
+# fleet) — checking for one there fails a perfectly good stack.
+COMFY_URL="${PET_FACTORY_COMFY_URL-http://127.0.0.1:19953}"
 # markly.1 (display_name=markly, wu@insightprism.com). Override for another user.
 DATSME_USER_ID="${DATSME_USER_ID:-5d8f6d64-5473-41c8-a709-5ed88c5ff850}"
 # PET_TEXT names the ANIMAL — step 1's only input (SPEC_PET_DESIGNER_FLOW §0.1). It used
@@ -29,6 +39,8 @@ DATSME_USER_ID="${DATSME_USER_ID:-5d8f6d64-5473-41c8-a709-5ed88c5ff850}"
 PET_TEXT="${PET_TEXT:-a friendly turtle}"
 PET_COLOR="${PET_COLOR:-green}"
 SLUG="${DATSPET_SLUG:-datspet}"
+
+die_early() { printf '   \033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 JAR="$(mktemp)"
 trap 'rm -f "$JAR"' EXIT
@@ -45,8 +57,11 @@ die()  { printf '   \033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
 
 # --- 0. preflight -----------------------------------------------------------
 say "Preflight — services reachable?"
-for pair in "ComfyUI $COMFY_URL/system_stats" "DatsPet $DATSPET_BACKEND/api/pets" "DatsMe $DATSME_HOST/docs"; do
-  set -- $pair
+CHECKS="DatsPet|$DATSPET_BACKEND/api/pets DatsMe|$DATSME_HOST/docs"
+[ -n "$COMFY_URL" ] && CHECKS="ComfyUI|$COMFY_URL/system_stats $CHECKS" \
+                    || ok "ComfyUI check skipped (GPU-less tier — generation goes to the pool)"
+for pair in $CHECKS; do
+  set -- $(echo "$pair" | tr '|' ' ')
   code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' "$2" 2>/dev/null)
   [ "$code" = "200" ] && ok "$1 up ($2 → 200)" || die "$1 not reachable ($2 → $code). Start it first."
 done
