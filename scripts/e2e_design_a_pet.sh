@@ -92,7 +92,7 @@ from user_db import open_user_database
 from apps.pets.pet_models import Pet
 uid='$DATSME_USER_ID'
 with SocialSessionLocal() as s: bal=get_user_credit_balance(s, uid)
-d=open_user_database(uid); n=len([p for p in d.query(Pet).all() if p.source=='partner']); d.close()
+d=open_user_database(uid); n=len([p for p in d.query(Pet).all() if (p.source or '').startswith('partner')]); d.close()
 print(bal, n)
 ")"
 [ -n "${BAL_BEFORE:-}" ] || die "Could not read the DatsMe user — is the user id right? ($DATSME_USER_ID)"
@@ -285,7 +285,11 @@ from apps.pets.pet_models import Pet
 uid='$DATSME_USER_ID'
 with SocialSessionLocal() as s: bal=get_user_credit_balance(s, uid)
 d=open_user_database(uid)
-partner=[p for p in d.query(Pet).all() if p.source=='partner']
+# The host tags an ingested pet `partner_<slug>` (e.g. partner_datspet), never
+# bare 'partner' — this filtered on a value that has never existed, so the
+# count was always 0 and the run died at the last line after doing everything
+# right, including charging real credits.
+partner=[p for p in d.query(Pet).all() if (p.source or '').startswith('partner')]
 newest=max(partner, key=lambda p: p.slot_index) if partner else None
 d.close()
 print(bal, len(partner), (newest.name if newest else ''), (newest.breed_id if newest else ''))
@@ -299,7 +303,7 @@ echo "   credits:      $BAL_BEFORE → $BAL_AFTER   (charged $CHARGED)"
 echo "   newest pet:   '$NEW_NAME'  ($NEW_BREED)"
 echo
 [ "$GAINED" -ge 1 ] || die "NO new partner pet appeared in the DatsMe house"
-ok "a new source=partner pet is in the DatsMe user's house"
+ok "a new partner_* pet is in the DatsMe user's house"
 [ "$CHARGED" -gt 0 ] && ok "credits were charged ($CHARGED)" \
   || printf '   \033[1;33m! credits unchanged (cost may be 0, or auto-refill absorbed it)\033[0m\n'
 
