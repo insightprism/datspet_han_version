@@ -6,10 +6,11 @@
 transfer.** One field carries the owner, and it is the DatsMe **slug** (or group tag) — the thing a
 human can look up.
 
-**Phases 1 and 2 are BUILT and green** (2026-07-30) — DatsPet `71f3632` (584 pass), DatsMe
-`325b6909` (38/38 new, in-process). Verified end to end across both repos on a real 3.58 MB bundle.
-**The host's gate ships observe-first (`PET_OWNER_ENFORCEMENT=observe`) and nothing is deployed**;
-flipping to `enforce` is its own step, gated on §6.16. Phase 3 is unstarted and optional. See §9.
+**All three phases are BUILT and green** (2026-07-30). DatsPet `71f3632` (584 pass); DatsMe
+`325b6909` + Phase 3 (50/50 in-process, `tsc` clean, no new lint errors). Verified end to end across
+both repos on a real 3.58 MB bundle. **The host's ingest gate ships observe-first
+(`PET_OWNER_ENFORCEMENT=observe`) and nothing is deployed** — flipping to `enforce` is its own step,
+gated on §6.16 and detailed in §9.2. That flip is the only work left.
 
 > ## Rev.12 — the owner is a slug, and the HOST writes it
 >
@@ -451,23 +452,35 @@ keeps exactly its existing honesty gates (no digest, no `pose_count`, no block).
 
 ---
 
-## 3. The group check (Phase 3 — DatsMe builds this)
+## 3. The group choice — SELECTED, not typed (Phase 3, built)
 
-**Only needed when group licensing becomes a product**, and note where it now lives: under Rev.12
-the group choice is made **on the host's checkout page** (§5), so the host resolves the tag with a
-local query. There is no partner-facing endpoint, no new authorization category, no HMAC-signed
-partner call, and no DatsPet client.
+Rev.11 needed `GET /api/partner/owner-check`: a typed tag, a debounced lookup, a "that name doesn't
+resolve" warning, and the first partner→host call with no user context — a whole new authorization
+shape to get right. **All of it is deleted**, and the deletion is a direct consequence of moving the
+chooser to the host (Rev.12).
 
-That is a direct saving from moving the stamp to the host. Rev.11 needed
-`GET /api/partner/owner-check` — the first partner→host call with no user context, a new
-authorization shape to get right — purely because DatsPet was choosing the owner. It is deleted.
+**The host already knows which groups the buyer is in.** `GET /api/groups/my` returns
+`normalized_tag`, `name` and `member_count` for exactly those groups. So the buyer picks from a
+list instead of typing, and four problems disappear rather than being handled:
 
-What remains is host-local:
+| Rev.11 had to handle | Rev.12 |
+|---|---|
+| typos in a tag | impossible — the value comes from the list |
+| a tag that resolves to nothing | impossible — every option resolves |
+| buying for a group you are not in | impossible in the UI, and refused server-side anyway (§4.4) |
+| a new partner-signed endpoint | none — an endpoint that already existed |
 
-- Resolve `Group.normalized_tag == normalize(typed tag)`.
-- Show the group's display name and member count for confirmation.
-- **Do not check membership at choose time.** §4.1's ladder re-checks it at every ingest door, and
-  that check is the authoritative one.
+**Tags are still canonicalized server-side.** `_resolve_owner_choice` runs the typed-or-listed value
+through `tag_parser.normalize_tag_string` — the same chokepoint group *creation* uses — so
+`Tennis#Detroit` and `detroit#tennis` reach one group, and a tag this host could never have created
+is rejected as a 400 rather than stamped into a bundle whose ladder would then refuse it forever, on
+a pet the buyer already paid for. The API is not the UI: it must not trust that the value came from
+the list.
+
+> **The canonical form has no leading `#`.** `normalize_tag_string` emits `detroit#tennis` — words
+> lowercased, sorted, joined by `#`. Earlier revisions of this spec and its fixture wrote
+> `#black#zebra`, which is not a shape any group tag has ever had. Corrected here and in the owned
+> fixture; the vendored-copy checksum (§2.3a) is what surfaced it on the host side.
 
 ---
 
@@ -547,6 +560,27 @@ re-validated, so nothing in a user's house breaks; only a fresh upload hits this
 **This is the whole reason for §6.16's ordering gate.** Ship the ladder warn-only until DatsPet's
 mint stamp is live in the same environment.
 
+### 4.4 The purchase TARGET is validated separately, and always enforces
+
+The two doors above ask about a bundle that arrived from somewhere. A third check asks about the
+owner the buyer is **about to assign**, and it is deliberately not rollout-gated:
+
+- `resolve_purchase_owner` turns the request into `(category, name)`. Omitted → the buyer.
+  `individual` → **the buyer's own slug, never a name from the body** — otherwise a crafted request
+  could stamp someone else as owner. `public` and `factory` are refused: the first would convert a
+  paid licence into a free-for-all, and the second means *unsold*, which a completed purchase is by
+  definition not.
+- `assert_may_own` then runs the §4.1 ladder against that target and **403s** if it fails.
+
+**Why this one never observes.** The doors' observe phase exists for *legacy data* — bundles minted
+before the partner's stamp shipped carry no owner fields, and refusing them on day one would be an
+outage (§4.3, §6.16). The target check has no legacy case: it validates a choice being made right
+now, in a UI that only offers groups the buyer belongs to. Softening it would let someone buy a pet
+licensed to a group they are not in — a pet they can never bring to life, already paid for. Pinned
+by a test that asserts observe mode does **not** soften it.
+
+It runs **before credits move**, for the same reason.
+
 ---
 
 ## 5. The user-facing surface
@@ -562,13 +596,25 @@ Optionally, surface it read-only: the pet detail view can render "Owned by {owne
 {owner_transferred_at}" through `read_pet_ownership` — noting §1.4, DatsPet's own copy reads
 `factory` even after a sale, so the honest local rendering is "unsold" rather than a name.
 
-### 5.2 The group choice lives on the host's checkout page (Phase 3)
+### 5.2 The group choice lives on the host's checkout page (Phase 3, built)
 
-Choosing "adopt this to my group" belongs where the transfer and the money are. On the host's import
-page: category defaults to *me* (nothing to type), with an option to switch to a group and type a
-tag, resolved locally (§3) and confirmed before purchase. A tag that resolves to nothing is a
-warning, not a block — the buyer may proceed, and their pet will not be adoptable. That is their
-call and their mistake to make (§0.1).
+Choosing "adopt this to my group" belongs where the transfer and the money are —
+`web/src/app/import/[partner]/page.tsx`.
+
+- **Default is *Myself*, and it sends nothing.** Omitting `owner_category` is the host's default, so
+  the common path posts exactly the body it posted before this feature existed.
+- **The chooser renders ONLY when the buyer has groups.** A select with one option is ceremony; a
+  user with no groups has exactly one possible owner and sees no control at all.
+- **The group list is best-effort and never blocks.** A failed `/api/groups/my` degrades to "no
+  chooser", and adopting for yourself still works. Never block a purchase on a decoration.
+- **The confirm names the group**, because that is the one choice on this page whose consequence
+  outlives the purchase: *"It will be licensed to Detroit Tennis — every member can bring it to
+  life."* Adopting for yourself says nothing extra.
+- **The wire is one field pair**, resolved once per checkout rather than per item (§4.4).
+
+An earlier revision put a "use it anyway" escape on an unresolvable tag. There is no such state now
+— every option in the list resolves, and a hand-crafted request that names a nonexistent tag is a
+400, not a warning. Letting a buyer pay for a pet nobody can ever adopt was never a kindness.
 
 ### 5.3 No DatsMe identity — `factory` already covers it
 
@@ -701,7 +747,7 @@ Anonymous use stays fully supported: base-tier pet making with no login keeps wo
 | **1** | `pet_ownership.py`, `fingerprint`, the two mint stamps (§2.4), the owned fixture, tests 1–11 | **DatsPet only** | **nothing** | **BUILT** 2026-07-30 |
 | **2** | The two transfer stamps (§2.5), the access ladder + the two doors (§4), tests 12–15b | DatsMe | — | **BUILT** 2026-07-30 (`325b6909`) |
 | **2b** | Flip `PET_OWNER_ENFORCEMENT=observe` → `enforce`, staging then prod | DatsMe (config) | Phase 1 **deployed** in that environment (§6.16) | **not done** — see §9.2 |
-| **3** | The group chooser on the host's checkout page (§5.2) | DatsMe | Phase 2; **only if group licensing becomes a product** | not started, ~1 day |
+| **3** | The group chooser on the host's checkout page (§3, §5.2), the purchase-target check (§4.4) | DatsMe | Phase 2 | **BUILT** 2026-07-30 |
 
 ### 9.1 What Phase 1 shipped, for whoever picks up Phase 2
 
@@ -743,6 +789,24 @@ clear, so the stamp cannot creep back in unnoticed.
 - **`pet_routes.upload_my_pet`** — the access gate, placed **before** `_charge_adoption`.
 - **`api/tests/fixtures/owner_fields.json`** — vendored, sha256 pinned in `test_pet_ownership.py`.
 - **`api/tests/test_pet_ownership.py`** — 38 in-process checks, registered in `test_all.py`.
+
+### 9.1b What Phase 3 shipped (DatsMe)
+
+Built now rather than "when a group wants to buy a pet" — that gate was a production signal, and in
+development it can never fire.
+
+- **`pet_ownership.resolve_purchase_owner` / `assert_may_own` / `normalize_group_tag`** — §4.4.
+- **`IngestContext.owner_category` / `owner_name`** — optional, defaulting to None/None, so a caller
+  that knows nothing about ownership (any other partner's push) keeps working unchanged.
+- **`import_routes._resolve_owner_choice`** — validates and canonicalizes ONCE per checkout, before
+  any item is charged. A whole checkout either targets a valid owner or fails as a request; a
+  partial success where item 1 landed on a group and item 2 did not would be worse than a clean 400.
+- **`web/src/app/import/[partner]/page.tsx`** — the chooser, fed by `GET /api/groups/my`.
+
+**The design changed while building it**, and the spec above reflects the result: the buyer
+**selects** a group rather than typing a tag (§3). That deleted the typed-tag field, the debounced
+lookup, the unresolvable-name warning path, and the partner-signed `owner-check` endpoint Rev.11
+would have needed.
 
 ### 9.2 The remaining step is a config flip, not code
 

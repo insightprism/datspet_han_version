@@ -43,9 +43,17 @@
     },
     {
       "case": "group — the normalized tag, a different namespace from a slug",
+      "_form": [
+        "The canonical form `Group.normalized_tag` stores: words lowercased,",
+        "sorted, joined by '#', with NO leading '#'. Produced by the host's",
+        "tag_parser.normalize_tag_string, which is the same chokepoint group",
+        "creation and lookup go through — so 'Tennis#Detroit' and",
+        "'detroit#tennis' are one group. An earlier revision of this fixture",
+        "wrote '#black#zebra'; no group tag has ever looked like that."
+      ],
       "write": {
         "category": "group",
-        "name": "#black#zebra",
+        "name": "detroit#tennis",
         "at": "2026-07-30T16:30:00Z"
       }
     },
