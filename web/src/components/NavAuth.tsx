@@ -12,6 +12,7 @@ import Link from "next/link";
 import {
   getDatsmeSession,
   datsmeSignOut,
+  datsmeSignInUrlForHere,
   maybeRenewLaunch,
   type DatsmeSession,
 } from "@/lib/api";
@@ -97,8 +98,15 @@ export default function NavAuth() {
 
   // Integrated but not signed in — a compact sign-in link (the landing has the
   // full button; this keeps the toolbar consistent on inner pages).
-  return session.signin_url ? (
-    <a href={session.signin_url} className="text-sm font-medium hover:opacity-80" style={{ color: "var(--accent)" }}>
+  //
+  // Returns to the CURRENT page, query included, rather than the prebuilt
+  // return=/design. This is the nav that sits above the designer, so it is the one
+  // a user clicks mid-build — and the designer keeps its running job in `?job=`.
+  // Dropping that query is what lost a finished pet on staging (usePetJob's
+  // docstring has the incident).
+  const signinHref = datsmeSignInUrlForHere(session);
+  return signinHref ? (
+    <a href={signinHref} className="text-sm font-medium hover:opacity-80" style={{ color: "var(--accent)" }}>
       Sign in
     </a>
   ) : null;

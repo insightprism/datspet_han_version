@@ -44,6 +44,7 @@ from fastapi.concurrency import run_in_threadpool
 from starlette.background import BackgroundTask
 
 import db
+import owner_scope
 
 from datsme_partner_sdk import (
     LaunchContext,
@@ -280,7 +281,6 @@ def launch(request: Request, token: str | None = None,
     # running finalizes into a pet), and the /api/pets/claim backstop needs the
     # anon id to reach it. It carries no authority while a launch cookie exists:
     # resolve_owner_scope prefers the launch cookie unconditionally.
-    import owner_scope
     anon_owner = request.cookies.get(owner_scope.ANON_COOKIE)
     moved = owner_scope.claim_anon_owner(anon_owner, ctx.user_id, ctx.activity_id)
     if any(moved.values()):
@@ -347,10 +347,10 @@ def verified_launch_user_id(cookie: dict) -> Optional[str]:
 def resolve_launch_activity(request: Request) -> Optional[str]:
     """The VERIFIED activity id this caller launched under, or None.
 
-    Same posture as resolve_launch_identity: re-verify the JWT rather than trust
-    the cookie blob. Used to stamp provenance on a claimed pet
-    (SPEC_DATSPET_HOUSE_ADOPT §3.3), exactly as _bind_pending does on the push
-    path — so a claimed pet and an accepted one carry the same shape of record.
+    Same posture as owner_scope.resolve_owner_scope: re-verify the JWT rather than
+    trust the cookie blob. Used to stamp provenance on a claimed pet
+    (SPEC_DATSPET_HOUSE_ADOPT §3.3), the way the retired push path's _bind_pending
+    did — so a pet claimed at sign-in carries the same shape of record.
     """
     cookie = _read_launch_cookie(request)
     if cookie is None:
@@ -364,7 +364,7 @@ def resolve_launch_activity(request: Request) -> Optional[str]:
 def resolve_launch_capabilities(request: Request) -> list[str]:
     """The caller's VERIFIED DPP launch capabilities, or [] for standalone.
     Drives tier resolution (SPEC_PET_DESIGNER_PLATFORM §5.3). Like
-    resolve_launch_identity, we re-verify the JWT rather than trust the cookie:
+    owner_scope.resolve_owner_scope, we re-verify the JWT rather than trust the cookie:
     a tier grants a higher pose cap + adopt permission, so a forged cookie must
     not be able to claim capabilities the token doesn't carry — an invalid token
     falls back to [] (base tier), never elevated. The verified token's
@@ -438,7 +438,8 @@ def pool_labels(request: Optional[Request], owner: Optional[str]) -> dict[str, s
       user    — the HUMAN-READABLE name a person recognizes on the dashboard: the
                 verified `nm` display-name claim (same source the session endpoint
                 reports as "who is logged in"), falling back to the user_id when no
-                name is on the token, and to "anonymous" when standalone. Never
+                name is on the token, and to "anonymous" when there is no DatsMe
+                user at all — standalone OR a per-browser anonymous owner. Never
                 empty.
       user_id — the verified DatsMe user_id, kept alongside for unambiguous lookup
                 (the readable name isn't guaranteed unique). Sent only when there
@@ -450,13 +451,21 @@ def pool_labels(request: Optional[Request], owner: Optional[str]) -> dict[str, s
     Values are clamped to < 64 chars to honor the pool's string→string label
     contract. Returns a plain dict; the caller merges it into the submit body."""
     display_name = resolve_launch_display_name(request) if request is not None else None
+    # An anonymous owner is a per-browser SCOPING value, not a person
+    # (SPEC_DATSPET_FEDERATED_SESSION §4.5) — so it is NOT a launched id here.
+    # Before this test, `owner` was None for every anonymous caller and the two
+    # lines below read naturally; once anonymous callers gained an "anon:<uuid4>"
+    # id, that id became the dashboard's readable name, `user_id` dropped out
+    # (owner == user), and a distinct label value crossed into the shared pool for
+    # every browser that ever visited. Anonymous is anonymous on the dashboard.
+    launched_owner = None if owner_scope.is_anon_owner(owner) else owner
     # user = readable name > user_id > "anonymous"; never blank.
-    user = display_name or owner or "anonymous"
+    user = display_name or launched_owner or "anonymous"
     labels: dict[str, str] = {"user": user[:63]}
     # Keep the id for unambiguous lookup, but only when it adds signal — i.e. a
     # real launched id that differs from what we already put in `user`.
-    if owner and owner != user:
-        labels["user_id"] = owner[:63]
+    if launched_owner and launched_owner != user:
+        labels["user_id"] = launched_owner[:63]
     if request is not None:
         labels["device"] = classify_device(request.headers.get("user-agent"))[:63]
     return labels
@@ -799,8 +808,10 @@ async def partner_imported(user_id: str, request: Request):
     signed, then those same bytes are parsed — never re-read the stream.
 
     activity_id stays NULL: a pull has no activity, and inventing one would put a
-    lie in the record. purge_drafts' not_pending clause reads that column, but
-    only for draft rows — an imported pet is draft=0, so it is not swept.
+    lie in the record. Nothing reads that column as "delivery owed" any more —
+    purge_drafts' not_pending exemption went with the push path
+    (SPEC_DATSPET_FEDERATED_SESSION §4.6 b), and an imported pet is draft=0, so no
+    purge scope reaches it regardless.
     """
     raw = await request.body()
     _require_host_signature(request, raw)

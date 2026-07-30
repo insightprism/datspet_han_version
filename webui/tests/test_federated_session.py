@@ -256,3 +256,36 @@ def test_the_pending_list_is_empty_by_construction(client, dpp_env):
     })
     assert r.status_code == 200, r.text
     assert r.json() == {"pending": []}
+
+
+# ---------------------------------------------------------------------------
+# The return path carries the in-flight build (SPEC_PET_DESIGNER_FLOW resume)
+# ---------------------------------------------------------------------------
+
+def test_a_return_path_may_carry_the_running_job(dpp_env):
+    """Signing in mid-build must come back to the build.
+
+    The designer keeps its running job in `?job=<id>`, and sign-in returns to the
+    current path INCLUDING that query. This validator is the last gate that path
+    passes through, so if it rejected `?` the pet would be lost — which is exactly
+    what happened on staging 2026-07-30 (pet 332793aaaa66: 828 KB of finished
+    bundle, correctly re-owned, reachable from nowhere) before the resume existed.
+
+    The host's own `_safe_return` (datsme_me routes.py) uses the same charset and
+    `_append_return` quotes with safe='/?=&', so the path survives the full round
+    trip. Both halves are asserted — here for ours, and by the staging round trip
+    for theirs.
+    """
+    di = dpp_env["di"]
+    for path in ("/design/general?job=332793aaaa66",
+                 "/design/general?job=332793aaaa66&renewed=1",
+                 "/house"):
+        assert di._safe_return_path(path) == path, path
+
+
+def test_the_return_path_is_still_an_open_redirect_guard(dpp_env):
+    """Widening it to admit a query must not have widened it to admit a host."""
+    di = dpp_env["di"]
+    for bad in ("https://evil.example/steal", "//evil.example/steal",
+                "/design?x=<script>", "javascript:alert(1)"):
+        assert di._safe_return_path(bad) is None, bad

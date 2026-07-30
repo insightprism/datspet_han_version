@@ -981,15 +981,37 @@ export function datsmeSignOut(session: DatsmeSession | null): void {
 }
 
 /** The URL that silently re-launches, returning to `returnPath`. */
-export function datsmeRenewUrl(session: DatsmeSession, returnPath: string): string | null {
+/** Exported for test: the pure half of the sign-in URL rule. `datsmeSignInUrlForHere`
+ *  is the same thing plus a `window` read, which is the part that cannot be tested
+ *  here (vitest is deliberately DOM-free — see vitest.config.ts). */
+export function signinUrlReturningTo(session: DatsmeSession, returnPath: string): string | null {
   if (!session.signin_url) return null;
   const url = new URL(session.signin_url);
   // REPLACE rather than append: signin_url is prebuilt with return=/design, and a
   // second `return` parameter would be ambiguous. Reading the origin off the
   // server-supplied string is what keeps the DatsMe origin out of this file.
-  const sep = returnPath.includes("?") ? "&" : "?";
-  url.searchParams.set("return", `${returnPath}${sep}${RENEWED_MARKER}=1`);
+  url.searchParams.set("return", returnPath);
   return url.toString();
+}
+
+/** The URL that silently re-launches, returning to `returnPath`. */
+export function datsmeRenewUrl(session: DatsmeSession, returnPath: string): string | null {
+  const sep = returnPath.includes("?") ? "&" : "?";
+  return signinUrlReturningTo(session, `${returnPath}${sep}${RENEWED_MARKER}=1`);
+}
+
+/** Sign in and come back to exactly HERE — path, query and all.
+ *
+ * The prebuilt `signin_url` always returns to /design, which is right from the
+ * landing page and wrong from anywhere else. It is especially wrong mid-build: the
+ * designer keeps its running job in `?job=<id>` (see usePetJob), so dropping the
+ * query is what turned "design a pet, then sign in to adopt it" into a lost pet.
+ * Sign-in is the ONE navigation a user makes expecting to end up where they were.
+ */
+export function datsmeSignInUrlForHere(session: DatsmeSession): string | null {
+  if (typeof window === "undefined") return session.signin_url ?? null;
+  const here = window.location.pathname + window.location.search;
+  return signinUrlReturningTo(session, here) ?? session.signin_url ?? null;
 }
 
 /** True if this page load already came back from a renewal attempt. */

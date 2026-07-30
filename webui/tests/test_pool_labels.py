@@ -22,6 +22,7 @@ for p in (WEBUI, REPO):
 import pytest
 
 import datsme_integration as di
+import owner_scope
 import pool_client
 
 
@@ -81,6 +82,24 @@ def test_pool_labels_anonymous_when_no_owner():
     labels = di.pool_labels(_Req("curl/8.4.0"), None)
     assert labels == {"user": "anonymous", "device": "unknown"}
     assert "user_id" not in labels
+
+
+def test_pool_labels_anonymous_for_a_per_browser_anon_owner():
+    """An integrated anonymous caller reads "anonymous" too — NOT their anon id.
+
+    Regression pin. Anonymous callers used to arrive here with owner=None, so the
+    plain `owner or "anonymous"` fallback was right by accident. Once they gained a
+    per-browser "anon:<uuid4>" owner (SPEC_DATSPET_FEDERATED_SESSION §4.5) that id
+    became the dashboard's readable name, user_id dropped out (because owner ==
+    user), and one distinct label value per browser crossed into the shared pool.
+    The anon id is a row-scoping value; it is not a person and it does not leave
+    this service.
+    """
+    anon = owner_scope.ANON_OWNER_PREFIX + "0123456789abcdef0123456789abcdef"
+    labels = di.pool_labels(_Req("Mozilla/5.0 (X11; Linux x86_64) Firefox/121.0"), anon)
+    assert labels == {"user": "anonymous", "device": "desktop"}
+    assert "user_id" not in labels
+    assert anon not in json.dumps(labels)
 
 
 def test_pool_labels_omits_device_without_request():

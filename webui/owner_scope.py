@@ -177,10 +177,16 @@ def _has_launch_cookie(request: Request) -> bool:
 # The claim sweep — everything one anonymous owner holds, moved at once
 # ---------------------------------------------------------------------------
 # A claim handler moves rows from one owner to another and returns how many it
-# moved. Each owner-stamping module registers its own at import; adding a fourth
+# moved. Each owner-stamping module registers its own at import; adding another
 # owner-stamped store is ONE registration, not an edit to claim_anon_owner. Three
 # concrete stores exist today (pets, jobs, references), which is what makes the
 # registry earned rather than speculative.
+#
+# `ai_usage` carries an external_user_id too and is DELIBERATELY not registered.
+# It is an append-only ledger — "a re-run is a NEW row, never an UPDATE" — and a
+# claim handler would rewrite history to make cost attribution tidier. Anonymous
+# AI spend stays attributed to the anon id that incurred it. Do not "complete" the
+# registry by adding it.
 ClaimHandler = Callable[[str, str, Optional[str]], int]
 _CLAIM_HANDLERS: list[tuple[str, ClaimHandler]] = []
 
@@ -193,11 +199,6 @@ def register_claim_handler(store: str, handler: ClaimHandler) -> None:
             _CLAIM_HANDLERS[i] = (store, handler)
             return
     _CLAIM_HANDLERS.append((store, handler))
-
-
-def registered_claim_stores() -> list[str]:
-    """The store names with a handler — read by the guard test."""
-    return [name for name, _ in _CLAIM_HANDLERS]
 
 
 def claim_anon_owner(from_owner: Optional[str], to_owner: str,
