@@ -39,6 +39,20 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# A COOKIE JAR, because the thing this script stands in for is a BROWSER.
+#
+# Since SPEC_DATSPET_FEDERATED_SESSION §4.5, a caller with no DatsMe launch cookie
+# owns their work under a per-browser anonymous id carried in `datspet_anon`. A
+# cookieless client is therefore a DIFFERENT anonymous user on every request — it
+# creates a reference and then cannot see it, which is correct behaviour and a
+# useless test. Without the jar this script models a client that does not exist,
+# and would fail a perfectly good deploy (measured: 2026-07-30 staging).
+#
+# Same rule as the rest of this file: exercise the real path, not a proxy for it.
+CJ="$(mktemp -t datspet_verify_cookies.XXXXXX)"
+trap 'rm -f "$CJ"' EXIT
+CURL=(curl -s -b "$CJ" -c "$CJ")
+
 PASS=0; FAIL=0
 ok()   { printf '  \033[32mPASS\033[0m  %s\n' "$1"; PASS=$((PASS+1)); }
 bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$1"; FAIL=$((FAIL+1)); }
@@ -53,7 +67,7 @@ echo "=============================================================="
 
 # ---------------------------------------------------------------- surface
 hdr "1. Backend"
-H=$(curl -s -m 15 "$BASE/api/health")
+H=$("${CURL[@]}" -m 15 "$BASE/api/health")
 [ "$(echo "$H" | jget status)" = "ok" ] && ok "/api/health -> ok" || { bad "/api/health not ok"; note "got: ${H:0:120}"; }
 WS=$(echo "$H" | python3 -c "import sys,json;print(json.load(sys.stdin).get('workshop',{}).get('online',''))" 2>/dev/null)
 if [ "$(echo "$H" | jget backend)" = "pool" ]; then
@@ -64,8 +78,8 @@ hdr "2. The DPP deep link  (/design is registered with the DatsMe host; not ours
 # MUST be a real server-side 307. The static export renders /design as a BLANK page
 # whose redirect only runs after JS paints — nginx must intercept it first.
 # 2026-07-15: this shipped to staging as a blank page.
-CODE=$(curl -s -o /dev/null -m 15 -w '%{http_code}' "$BASE/design")
-LOC=$(curl -s -o /dev/null -m 15 -w '%{redirect_url}' "$BASE/design")
+CODE=$("${CURL[@]}" -o /dev/null -m 15 -w '%{http_code}' "$BASE/design")
+LOC=$("${CURL[@]}" -o /dev/null -m 15 -w '%{redirect_url}' "$BASE/design")
 if [ "$CODE" = "307" ] && [ "${LOC%%\?*}" = "$BASE/design/general" ]; then
   ok "/design -> 307 -> /design/general (real, server-side)"
 else
@@ -74,7 +88,7 @@ else
   note "    location = /design { return 307 /design/general\$is_args\$args; }"
 fi
 # The host launches with ?from=datsme — the query must survive ($is_args$args).
-QLOC=$(curl -s -o /dev/null -m 15 -w '%{redirect_url}' "$BASE/design?from=datsme")
+QLOC=$("${CURL[@]}" -o /dev/null -m 15 -w '%{redirect_url}' "$BASE/design?from=datsme")
 case "$QLOC" in
   *from=datsme) ok "/design?from=datsme keeps its query" ;;
   *) bad "launch query DROPPED: $QLOC"; note "vhost is missing \$is_args\$args" ;;
@@ -83,7 +97,7 @@ esac
 hdr "3. The designer renders"
 # NOT a status check: try_files falls back to /index.html, so a MISSING route still
 # answers 200 with the landing page. Only content proves the route exists.
-BODY=$(curl -s -m 15 "$BASE/design/general")
+BODY=$("${CURL[@]}" -m 15 "$BASE/design/general")
 echo "$BODY" | grep -q "Select the Animal to Design" \
   && ok "/design/general serves the three-step designer" \
   || { bad "/design/general is NOT the designer"; note "200 here proves nothing — try_files serves index.html for missing routes"; }
@@ -92,25 +106,25 @@ hdr "4. Caching  (a correct deploy can still serve a deleted page)"
 # 2026-07-15: HTML went out with Last-Modified+ETag and NO Cache-Control. That does
 # not mean "always revalidate" — caches may apply a HEURISTIC lifetime (RFC 9111
 # §4.2.2), so users kept a deleted page for hours while every curl said 307.
-CC=$(curl -s -D - -o /dev/null -m 15 "$BASE/design/general" | grep -i '^cache-control:' | tr -d '\r' | cut -d' ' -f2-)
+CC=$("${CURL[@]}" -D - -o /dev/null -m 15 "$BASE/design/general" | grep -i '^cache-control:' | tr -d '\r' | cut -d' ' -f2-)
 case "$CC" in
   *no-cache*|*no-store*|*max-age=0*) ok "HTML revalidates (cache-control: $CC)" ;;
   "") bad "HTML has NO Cache-Control — browsers will heuristically cache a stale page" ;;
   *) bad "HTML cache-control is '$CC' — must revalidate" ;;
 esac
-ET=$(curl -s -D - -o /dev/null -m 15 "$BASE/design/general" | grep -i '^etag:' | tr -d '\r' | cut -d' ' -f2)
+ET=$("${CURL[@]}" -D - -o /dev/null -m 15 "$BASE/design/general" | grep -i '^etag:' | tr -d '\r' | cut -d' ' -f2)
 if [ -n "$ET" ]; then
-  RC=$(curl -s -o /dev/null -m 15 -w '%{http_code}' -H "If-None-Match: $ET" "$BASE/design/general")
+  RC=$("${CURL[@]}" -o /dev/null -m 15 -w '%{http_code}' -H "If-None-Match: $ET" "$BASE/design/general")
   [ "$RC" = "304" ] && ok "revalidation is cheap (If-None-Match -> 304)" || bad "ETag present but revalidation returned $RC (want 304)"
 fi
 ASSET=$(echo "$BODY" | grep -o '/_next/static/[^"]*\.js' | head -1)
 if [ -n "$ASSET" ]; then
-  ACC=$(curl -s -D - -o /dev/null -m 15 "$BASE$ASSET" | grep -i '^cache-control:' | tr -d '\r')
+  ACC=$("${CURL[@]}" -D - -o /dev/null -m 15 "$BASE$ASSET" | grep -i '^cache-control:' | tr -d '\r')
   case "$ACC" in *immutable*) ok "hashed assets are immutable" ;; *) bad "hashed assets not immutable ($ACC) — needless revalidation every load" ;; esac
 fi
 
 hdr "5. Entitlement  (this is what every user gets — default_tier is 'plus')"
-E=$(curl -s -m 15 "$BASE/api/entitlement")
+E=$("${CURL[@]}" -m 15 "$BASE/api/entitlement")
 MP=$(echo "$E" | jget max_poses)
 if [ -n "$EXPECT_MAX_POSES" ]; then
   [ "$MP" = "$EXPECT_MAX_POSES" ] && ok "max_poses = $MP (as expected)" \
@@ -118,7 +132,7 @@ if [ -n "$EXPECT_MAX_POSES" ]; then
 else
   note "max_poses = $MP  (pass --expect-max-poses to assert)"
 fi
-[ -n "$(curl -s -m 15 "$BASE/api/body-shapes" | jget shapes)" ] && ok "/api/body-shapes serves content" || bad "/api/body-shapes empty/missing"
+[ -n "$("${CURL[@]}" -m 15 "$BASE/api/body-shapes" | jget shapes)" ] && ok "/api/body-shapes serves content" || bad "/api/body-shapes empty/missing"
 
 # ---------------------------------------------------------------- the real thing
 if [ "$SKIP_GPU" = "1" ]; then
@@ -127,11 +141,11 @@ if [ "$SKIP_GPU" = "1" ]; then
   note "fleet gate was green for exactly this reason. Do not skip before a launch."
 else
   hdr "6. The three doors — REAL jobs on the REAL pool (this is the part that matters)"
-  R=$(curl -s -m 30 -X POST "$BASE/api/reference" -F "catalog_animal=dog" -F "catalog_breed=corgi")
+  R=$("${CURL[@]}" -m 30 -X POST "$BASE/api/reference" -F "catalog_animal=dog" -F "catalog_breed=corgi")
   RID=$(echo "$R" | jget reference_id)
   if [ -n "$RID" ]; then
     ok "door 1 — curated base -> $RID (free, no pool call)"
-    PC=$(curl -s -o /dev/null -m 20 -w '%{http_code}' "$BASE/api/reference/$RID.png")
+    PC=$("${CURL[@]}" -o /dev/null -m 20 -w '%{http_code}' "$BASE/api/reference/$RID.png")
     [ "$PC" = "200" ] && ok "reference image serves (200)" || bad "reference png -> $PC"
   else
     bad "door 1 — curated base FAILED"; note "got: ${R:0:140}"
@@ -139,13 +153,13 @@ else
 
   # The door that needs pet_preview v2 + the engine change on EVERY node. A stale
   # node kills 100% of these while the dispatcher's schema check stays green.
-  T=$(curl -s -m 120 -X POST "$BASE/api/reference" -F "animal=a blue jay")
+  T=$("${CURL[@]}" -m 120 -X POST "$BASE/api/reference" -F "animal=a blue jay")
   TN=$(echo "$T" | jget display_name)
   [ -n "$TN" ] && ok "door 2 — typed animal -> \"$TN\" (fleet is v2 + engine)" \
     || { bad "door 2 — typed animal FAILED (the fleet-rollout canary)"; note "got: ${T:0:140}"; }
 
   if [ -n "$RID" ]; then
-    P=$(curl -s -m 120 -X POST "$BASE/api/preview" -F "reference_id=$RID" -F "color=purple" -F "body_shape=fat")
+    P=$("${CURL[@]}" -m 120 -X POST "$BASE/api/preview" -F "reference_id=$RID" -F "color=purple" -F "body_shape=fat")
     PN=$(echo "$P" | jget display_name)
     [ -n "$PN" ] && ok "step 2 — preview -> \"$PN\" (img2img)" \
       || { bad "step 2 — preview FAILED"; note "got: ${P:0:140}"; }
