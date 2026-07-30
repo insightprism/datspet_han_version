@@ -5,7 +5,7 @@
 it goes through the *same* host checkout a designed pet does. Zero new backend, zero new money
 code, one new page.
 
-**Split from `docs/SPEC_DATSPET_FEDERATED_SESSION.md`** (Rev.2 §2.5 / §5.4), which specified this
+**Split from `docs/archive/SPEC_DATSPET_FEDERATED_SESSION.md`** (Rev.2 §2.5 / §5.4), which specified this
 inline before the content gap was found. That spec is the **hard dependency**: this one consumes
 its shared hand-off helper (§5.2 there) and its owner-scope model (§4.5 there), and adds neither.
 

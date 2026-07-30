@@ -1,5 +1,47 @@
 # SPEC — DatsPet Federated Session (sign in, sign out, stay signed in) + one purchase path
 
+> **CLOSED & ARCHIVED — 2026-07-30. Executed in full and verified on staging.**
+>
+> Every build step in §9 is done, and the two gates that decide it were run against
+> `pet-staging.datsme.me`, not argued:
+>
+> **The acceptance criterion, in ONE browser.** sara signed in (6 pets) → signed out
+> (anonymous house: **0**) → **wu signed in on the same browser and saw exactly his 11**,
+> none of sara's, nothing marked claimable → sara returned and had her original 6
+> byte-for-byte, with none of wu's leaked. That is the thing this spec was written for.
+>
+> **The full DPP round trip** (`scripts/e2e_design_a_pet.sh`, on the box): launch → cookie →
+> archetype → preview → a real GPU build → claim + keep → the host quoted 50 credits from the
+> declared basis without fetching bytes → **charged 50 exactly once** → **a re-checkout quoted
+> 0** → the pet landed in the DatsMe house as `partner_datspet`. Also verified by hand: the
+> silent re-launch (600 s → renewed to 3584, no login page) and its loop guard (with
+> `?renewed=1` present it correctly did **not** renew again).
+>
+> **DEPLOYED TO STAGING ONLY.** Production is deliberately still at `fe8ba0c` — Rule 0 is
+> satisfied (staging is ahead and verified), and the production deploy is a separate,
+> explicitly-requested act. Nothing in this spec is waiting on it.
+>
+> **What this spec created and handed off, rather than left undone:**
+>
+> 1. **The designer's resume** — a three-minute build used to die on any navigation, which this
+>    work found by signing out mid-build. Specified and built, but it is a designer concern, so
+>    it lives in **`SPEC_PET_DESIGNER_FLOW` §8.3**, not here.
+> 2. **The catalog purchase surface** — split to **`SPEC_DATSPET_CATALOG_PURCHASE.md`** and
+>    **blocked on content, not code**: no sample bundles ship (`animal_catalog`'s catalog
+>    animals are `cat` and `dog`, and the only sample zip in the tree sits under
+>    `_candidates/`, which is not a catalog animal). Its Gate 0 is that content.
+> 3. **Four dev-only assumptions in the E2E script**, each of which made the staging run this
+>    spec asks for impossible: a hardcoded sibling path to the host repo, a mandatory local
+>    ComfyUI probe on a GPU-less tier, `PYRUN` chaining `. .env` with `&&` (it exits 2 on a
+>    box, so every host query silently returned nothing and the script blamed the user id), and
+>    a filter on `source=='partner'` when the host writes `partner_<slug>`. All fixed. A gate
+>    that cannot run is not a gate.
+>
+> **One behaviour to know, not a defect:** signing out revokes the DatsMe session row, but a
+> DatsMe tab left open elsewhere can mint a new one within seconds. DatsPet's half is correct —
+> row revoked, all three cookies cleared. Whether an open host tab should silently
+> re-authenticate after a revoke is a host question.
+
 **Status:** Design — **Rev.4** (2026-07-30), implementation-ready. Makes DatsPet behave like an ordinary
 website with a federated identity provider: a user signs in, stays signed in until they choose
 to leave, signs out for real, and a *second* user can then sign in on the same browser and see
