@@ -1,7 +1,9 @@
 > **ARCHIVED 2026-07-16 — never built; superseded.** This isolation-first plan to embed pet
 > generation *inside* the DatsMe host was never implemented. The shipped architecture inverts it:
-> DatsPet is a standalone DPP partner app that DatsMe launches and receives writebacks from — see
-> `docs/SPEC_DATSPET_DPP_INTEGRATION.md` (live, E2E-verified) and `docs/SPEC_DATSPET_HOUSE_ADOPT.md`.
+> DatsPet is a standalone DPP partner app that DatsMe launches, and whose pets DatsMe pulls into a
+> user's house at checkout — see `docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md` (built and
+> E2E-verified; itself closed and archived 2026-07-30) and `docs/SPEC_DATSPET_HOUSE_ADOPT.md`,
+> which owns the pull.
 > Kept for historical reference; do not implement from this document.
 
 # Integrating pet_factory into DatsMe — cleanly and safely

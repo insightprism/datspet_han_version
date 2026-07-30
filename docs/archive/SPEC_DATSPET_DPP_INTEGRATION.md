@@ -1,16 +1,42 @@
 # SPEC — DatsPet as a DatsMe Partner App (DPP Integration)
 
-> **RETIRED IN PART, 2026-07-30 — `POST /api/datsme/accept` and the push writeback no longer
-> exist.** `SPEC_DATSPET_FEDERATED_SESSION` §6 consolidated the two purchase paths onto the
-> PULL checkout: the user checks out on the host's own import page, authenticated by their own
-> DatsMe session, and the host fetches the bundle server-to-server. DatsPet holds no credential
-> that can trigger a charge. **Everything below describing `/api/datsme/accept`, the writeback
-> POST, the SDK retry queue, or the resync (`rsx`) launch is history, not current behaviour** —
-> notably the flow diagram, the endpoint table's accept row, and the frontend note. The
-> manifest, `/launch`, `/partner/export`, `/partner/revoke` and the bundle-token endpoint are
-> unaffected and still current.
+> **CLOSED & ARCHIVED — 2026-07-30. Built, E2E-verified, and half-retired since. This is a
+> build record, not a design to implement from.**
+>
+> **What it built that still runs.** The partner surface in `webui/datsme_integration.py` is
+> this spec's work and is load-bearing today: the signed manifest, `GET /launch` + the
+> `datsme_launch` cookie, `/partner/export`, `/partner/revoke`, `GET /api/datsme/bundle/{token}`
+> with its single-successful-download token, the §5.4 SQLite store, host-signature fail-closed
+> auth, and per-user scoping as a WHERE clause. On the host, `user.pet` and its three additive
+> registry entries (`datsme_me/api/apps/dpp/pet_writeback.py`) are live and are what the pull
+> checkout charges and adopts through — federated §6.4 says explicitly: do not delete them.
+>
+> **What was retired.** `SPEC_DATSPET_FEDERATED_SESSION` §6 consolidated the two purchase paths
+> onto the PULL checkout: the user checks out on the host's own import page, authenticated by
+> their own 30-day DatsMe session, and the host fetches the bundle server-to-server. DatsPet
+> holds no credential that can trigger a charge. Gone with it: `POST /api/datsme/accept`, the
+> writeback POST, the SDK retry queue, and the resync (`rsx`) launch. §4's diagram and §5.3 are
+> that dead path. They are kept rather than deleted because the *payload shape* survived the
+> transport: the host's `build_user_pet_import_payload` maps a pull item onto the same
+> `pet_bundle.v1` body, so the handler cannot tell the two transports apart.
+>
+> **Corrected against both working trees on this date.** Every section that asserted current
+> behaviour has been checked against `webui/datsme_integration.py`, `webui/db.py`, `web/src/`
+> and `datsme_me/api/apps/dpp/`, and fixed where it had drifted — the §5.1 endpoint table (four
+> live routes were missing, three rows were wrong), §5.4's scoping rule, §5.5's frontend,
+> §6.2's dispatch signature and pricing, §7's expiry posture, §8's Phase 4, and §9's open
+> questions. Corrections are marked **[2026-07-30]**; the original text is left in place
+> wherever it is still the reason a thing is the way it is.
+>
+> **Living successors:** `docs/SPEC_DATSPET_FRONT_DOOR.md` (sign-in, the bounce/mint plumbing),
+> `docs/archive/SPEC_DATSPET_FEDERATED_SESSION.md` (session lifetimes, sign-out, owner scope,
+> the purchase consolidation), `docs/SPEC_DATSPET_HOUSE_ADOPT.md` (the pull checkout and the
+> export's `transfer` block), `docs/SPEC_DATSPET_CATALOG_PURCHASE.md` (the catalog surface),
+> `docs/SPEC_MOTION_PROFILE_ADMIN.md` (the admin launch that reuses §5.1's `/launch`),
+> `docs/RUNBOOK_DPP_E2E.md` + `scripts/e2e_design_a_pet.sh` (the runnable round trip).
 
-**Status:** ✅ IMPLEMENTED + E2E-verified live · 2026-07-11 (Phases 0–3 done, both repos)
+**Status:** ✅ IMPLEMENTED + E2E-verified live · 2026-07-11 (Phases 0–3 done, both repos) ·
+**CLOSED 2026-07-30**
 **Repos touched:** `datsme-pet-factory` (this repo — the partner) and `datsme_me` (the host)
 **Reference partner:** `datsme_personality` (imitate `app/api/datsme_integration.py`)
 **Protocol:** DatsMe Partner Protocol v1 — `datsme_me/docs/keep_SPEC_DATSME_PARTNER_PROTOCOL.md`,
@@ -62,6 +88,14 @@ broke generation — fixed in `pet_env.sh`/`factory.py`.
   fail-closed + no-mutation-on-401 + envelope binding), `test_scoping.py` (4 —
   two-user isolation, cross-user 404, purge-scope), `test_accept_fixes.py`
   (3 — SameSite=None cookie, expired-token permanent-401-not-queued).
+  **[2026-07-30]** Still 9/4/3 files-and-counts, but two of them now guard the
+  *absence* of the push path: `test_accept_fixes.py` asserts `POST
+  /api/datsme/accept` 404s and `test_scoping.py`'s cross-user case moved off it.
+  The DPP suite has since grown `test_pull_export.py` (17 — the export's
+  `transfer` block, the ack channel, token minting), `test_federated_session.py`
+  (19 — sign-out, renewal, owner scope, the ignored `rsx` claim),
+  `test_front_door.py`, and `test_retry_and_token.py` (4 — purge scope after the
+  queue's removal, single-successful-download).
 - Host (`datsme_me/api/tests/`): `test_user_pet_writeback.py` (15 — full
   round-trip via the REAL `mint_launch_token`/nonce path + stub bundle server:
   happy adopt+charge, echo→409, both cap layers, bad-sha→400, house-full→409,
@@ -85,7 +119,24 @@ DatsPet remains fully usable standalone (the personality app's principle:
 *standalone first, integrated second — integration is an adapter layer, not a
 dependency*).
 
+**[2026-07-30] The goal still holds; two nouns in it moved.** (a) There is no
+`/` Describe + `/design` pair any more — there is exactly ONE designer,
+`/design/general`, the three-step archetype → design → animation flow of
+`SPEC_PET_DESIGNER_FLOW`; `/design` 307s to it and is still where `/launch`
+lands, so the deep-link target in §5.1 is unchanged. (b) The user no longer
+clicks **Accept** on DatsPet. They keep the pet, then hand off to the host's own
+import page (`{DATSME_PUBLIC_URL}/import/{slug}?items=…`) and check out there
+against their own DatsMe session. Everything after that sentence — bytes copied
+into the user's own storage, adoption-as-copy, identical to an upload — is
+exactly what still happens, via the same `user.pet` handler.
+
 ## 2. What exists today (verified in code, not from the protocol spec's prose)
+
+> **[2026-07-30] "Today" here means 2026-07-11 — this is the pre-build fact base**,
+> deliberately left as it was. Its DatsPet paragraph ("No users, no SQLite, no
+> partner endpoints yet") describes the starting line, not the current tree. The
+> host paragraph is still broadly accurate — `service.py` remains the consolidated
+> implementation — with the dispatch signature the exception (§6.2).
 
 **Corrections to the protocol spec's module map:** the host implementation is
 consolidated in `datsme_me/api/apps/dpp/service.py` (mint / authenticate / dispatch)
@@ -161,6 +212,17 @@ target = new registry entry), which v1's compatibility rule allows.
 
 ## 4. Architecture
 
+> **[2026-07-30] This diagram is the RETIRED push flow.** From `POST
+> /api/datsme/accept` rightward it no longer exists. What replaced it: the user
+> keeps the pet, DatsPet's house hands off to `{host}/import/datspet?items=…`,
+> the host lists the items from the signed `GET /partner/export/{user_id}`,
+> quotes each from its **declared** `pose_count` without fetching bytes, and on
+> checkout fetches `transfer.pointer_url` server-to-server — the same
+> SSRF-guarded fetch, the same `validate_uploaded_bundle`, the same
+> `write_assets` adoption drawn below, entered from a different transport
+> (`SPEC_DATSPET_HOUSE_ADOPT` §3; `SPEC_DATSPET_FEDERATED_SESSION` §6). The
+> left-hand column — launch mint, cookie, design — is unchanged.
+
 ```
 DatsMe (host :19994/:19995)                 DatsPet (partner :19954/:19955)
 ────────────────────────────                ────────────────────────────────
@@ -199,14 +261,18 @@ installed from `datsme_me/api/sdk/`; pin as a path dependency in dev).
 ### 5.1 Endpoints (conformance-required set)
 | Route | Behavior |
 |---|---|
-| `GET /partner/manifest` | `ManifestBuilder(slug="datspet", display_name="DatsPet", base_url=$DATSPET_PUBLIC_URL)` + one activity (below) + `.request_capability("pets.write", justification="Deliver the pet the user designed into their DatsMe pet house.", required=True)` (+ optional `.request_capability("profile.read", justification="Greet the user by their DatsMe name while designing.")`) — NB `justification` is a REQUIRED kwarg on the SDK — + `.add_data_export(export_type="pets", schema="datspet_pets.v1")` + `.set_schema_version("user.pet", "pet_bundle.v1")` (SDK signature is `set_schema_version(target, version)`; `add_activity` params are keyword-only); signed via `sign_manifest_response`, ETag/304 support. 503 if `DATSME_HMAC_SECRET` unset. **This declaration only registers if the host ships fix B-1 first (§6.1).** |
-| `GET /launch?token=` | `verify_launch_token` → 401 on `LaunchError`; map `aid` `design_a_pet` (400 `unknown_activity` otherwise); set cookie `datsme_launch` = `{token, user_id, activity_id, jti, capabilities}` httponly/samesite=lax/1800 s; 303 → `{FRONTEND_URL}/design?from=datsme`. Honor `rsx` claim (resync: re-post an existing accepted pet, ownership + activity checks, then redirect). |
-| `GET /partner/export/{user_id}` | All pets rows for that `external_user_id` (schema `datspet_pets.v1`), host-signature-verified request. |
+| `GET /partner/manifest` | `ManifestBuilder(slug="datspet", display_name="DatsPet", base_url=$DATSPET_PUBLIC_URL)` + one activity (below) + `.request_capability("pets.write", justification="Deliver the pet the user designed into their DatsMe pet house.", required=True)` (+ optional `.request_capability("profile.read", justification="Greet the user by their DatsMe name while designing.")`) — NB `justification` is a REQUIRED kwarg on the SDK — + `.add_data_export(export_type="pets", schema="datspet_pets.v1")` + `.set_schema_version("user.pet", "pet_bundle.v1")` (SDK signature is `set_schema_version(target, version)`; `add_activity` params are keyword-only); signed via `sign_manifest_response`, ETag/304 support. 503 if `DATSME_HMAC_SECRET` unset. **This declaration only registers if the host ships fix B-1 first (§6.1).** **[2026-07-30]** The export declaration additionally opts into the pull — `transferable=True, ingest_target="user.pet", max_bytes=10 MB` (the host clamps to its own 32 MB ceiling). All three are required together and are a *request*: the host's registry independently decides ingestibility. |
+| `GET /launch?token=` | `verify_launch_token` → 401 on `LaunchError`; map `aid` `design_a_pet` (400 `unknown_activity` otherwise); set cookie `datsme_launch` = `{token, user_id, activity_id, jti, capabilities}` httponly/samesite=lax/1800 s; 303 → `{FRONTEND_URL}/design?from=datsme`. ~~Honor `rsx` claim (resync: re-post an existing accepted pet, ownership + activity checks, then redirect).~~ **[2026-07-30]** As-built: cookie TTL is **3600 s** (§7) and SameSite is `none`+Secure (§5.5), the blob also carries `display_name` (the `nm` claim, cosmetic — re-read from the verified token), an `adm=true` claim additionally sets the `datspet_admin` cookie (`SPEC_MOTION_PROFILE_ADMIN` §2.3), a validated same-origin `?return=` path overrides the default landing (`SPEC_DATSPET_FRONT_DOOR`), and the launch **claims this browser's anonymous pets** for the arriving user (`claim_anon_owner`, federated §4.5c). An `rsx` claim is now **accepted and IGNORED** — honoring it would re-open the retired push path through a back door (federated §6.2a), so it is logged and dropped rather than 400'd. |
+| `GET /partner/export/{user_id}` | All pets rows for that `external_user_id` (schema `datspet_pets.v1`), host-signature-verified request. **[2026-07-30]** This became the pull's product catalog: each item now also carries `pose_count` (the declared pricing basis) and, when the row can be transferred honestly, a `transfer` block `{pointer_url, sha256, size_bytes, content_type}` with a **freshly minted** bundle token per listing. Omitted — never half-built — when the row has no digest or no parseable pose count, because the host refuses to quote an item with no declared basis (`SPEC_DATSPET_HOUSE_ADOPT` §3.2). |
 | `POST /partner/revoke` | `{user_id, action: delete\|anonymize}` → delete rows+folders / null `external_user_id`. |
-| `GET /partner/results/{user_id}/pending` | Accepted-but-unacked pets (`writeback_acked_at IS NULL`) for resync. |
-| `GET /api/datsme/session` | (frontend helper, not conformance) returns `{launched: bool, user_id?, capabilities?}` from the cookie so the UI can show "Designing for <DatsMe user>" and the Accept button. |
-| `POST /api/datsme/accept` | Body `{pet_id}`. Requires launch cookie; re-verifies token; pet must exist. Mints a **one-time bundle token**, builds + posts the writeback (below), on 200 stamps `writeback_acked_at` + clears draft flag, returns `{redirect_url}` (DatsMe `redirect_to` resolved against `DATSME_PUBLIC_URL`); on transient failure enqueues the SDK retry queue and still returns the local success page state. |
-| `GET /api/datsme/bundle/{token}` | Serves the pet's `pet.zip` per token (single-**successful**-download, 24 h expiry to cover the SDK retry window, constant-time compare). This is what `bundle_url` points at — NOT the regular `/api/pets/{id}/zip`. |
+| `POST /partner/imported/{user_id}` | **[2026-07-30] NEW — the pull's acknowledgment channel.** Host-signed `{item_ids: […]}`; stamps `writeback_acked_at` on each pet that user actually owns. A push learns the pet landed from its own 200; a pull is passive and never sees the outcome, so without this `in_datsme` would read false forever for a pulled pet. `activity_id` stays NULL — a pull has no activity and inventing one would put a lie in the record. |
+| `GET /partner/results/{user_id}/pending` | ~~Accepted-but-unacked pets (`writeback_acked_at IS NULL`) for resync.~~ **[2026-07-30]** Returns `{"pending": []}`, always. The endpoint stays because the protocol requires partners to serve it, and an empty list is how DatsPet opts OUT of the host's resync channel without a host change. **That opt-out is load-bearing:** after the retirement the old query describes every kept-but-unadopted pet, so left alone the host would mint a resync launch for each one and re-open the path the consolidation closed (federated §4.6a). |
+| `GET /api/datsme/session` | (frontend helper, not conformance) returns `{launched: bool, user_id?, capabilities?}` from the cookie so the UI can show "Designing for <DatsMe user>" and the Accept button. **[2026-07-30]** Grew into the frontend's whole identity surface, all built server-side so the browser never hardcodes a DatsMe origin: `integrated`, `signin_url`, `signup_url`, `import_url` (where the house's Adopt hands off), `signout_url` (the host logout bounce), `admin`, `display_name`, `cost`, and `token_expires_in` (from the **verified** `exp`) which drives the silent re-launch. It is also **the one endpoint that never 401s on a stale session** — a lapsed cookie answers `{launched: false, stale: true}`, because 401ing here would deadlock the renewal it exists to trigger (federated §4.7). |
+| ~~`POST /api/datsme/accept`~~ | **[2026-07-30] RETIRED — the endpoint 404s and a test pins that.** Was: body `{pet_id}`, requires launch cookie, re-verifies token, mints a one-time bundle token, builds + posts the writeback, stamps `writeback_acked_at`, returns `{redirect_url}`; transient failure → SDK retry queue. Replaced by the pull checkout on the host, authenticated by the user's own DatsMe session (federated §6.2). |
+| `GET /api/datsme/bundle/{token}` | Serves the pet's `pet.zip` per token (single-**successful**-download, 24 h expiry to cover the SDK retry window, constant-time compare). This is what `bundle_url` points at — NOT the regular `/api/pets/{id}/zip`. **[2026-07-30]** Unchanged and now the *only* way bytes reach the host; the token is burned in a `BackgroundTask` after the bytes are sent, so a failed transfer leaves it usable for the host's next attempt. The 24 h TTL no longer covers a retry queue — see §7. |
+| `GET /api/datsme/signout` | **[2026-07-30] NEW** (federated §4.1). A navigation, not an XHR: clears all three DatsPet cookies and bounces to the host's `logout-launch`. |
+| `GET /api/datsme/signed-out` | **[2026-07-30] NEW** (federated §4.4). The origin-translation hop — the host may only redirect to our registered API origin, so this is what forwards the browser to the frontend. |
+| `POST /api/datsme/logout` | **[2026-07-30]** The local cookie-clear, kept as the non-navigational form. |
 
 ### 5.2 Manifest activity
 ```python
@@ -222,6 +288,17 @@ installed from `datsme_me/api/sdk/`; pin as a path dependency in dev).
 ```
 
 ### 5.3 Writeback body (`pet_bundle.v1`, pointer ≤ 64 KB)
+
+> **[2026-07-30] RETIRED as a transport, SURVIVING as a shape.** DatsPet builds and
+> posts nothing; there is no `WritebackBuilder` call and no retry queue in this repo.
+> But the pull did not invent a second payload — the host's
+> `build_user_pet_import_payload` maps a `datspet_pets.v1` export item onto exactly
+> the body below (`activity_id: None`, `bundle_url` ← `transfer.pointer_url`, plus
+> `pose_count` as the quote basis), so the `user.pet` handler receives the same shape
+> either way and cannot tell which transport produced it. Read the payload spec as
+> current and the posting/retry mechanics as history. The one clause with a live
+> consequence is the last one: bundle tokens are single-**successful**-download, which
+> is now what makes a failed *checkout* fetch retryable.
 ```python
 WritebackBuilder(ctx)
   .target("user.pet", schema_version="pet_bundle.v1")
@@ -282,7 +359,35 @@ NULL` — the local single-user mode keeps working unchanged. The API surface th
 frontend uses does not change (the four test questions hold: new source of
 identity, no engine forks).
 
+**[2026-07-30] The three tables are as-built and still current** (`webui/db.py`;
+plus `app_settings` and `ai_usage`, which other specs added). Two corrections:
+
+- **`external_user_id IS NULL` is no longer what "not launched" means.** That
+  read made every anonymous visitor share ONE pool — on a public deployment, one
+  stranger's house. Anonymous work now belongs to a **per-browser anonymous
+  owner** (`owner_scope.ANON_COOKIE`); `resolve_owner_scope` prefers the launch
+  cookie unconditionally and falls back to that id, and a launch **claims** the
+  browser's anonymous rows for the arriving user. This is still a WHERE clause
+  and still not an engine fork — the identity source got one more case, not a
+  branch (`SPEC_DATSPET_FEDERATED_SESSION` §4.5, the acceptance criterion that
+  spec exists to pass).
+- **The SDK retry-queue DB is gone with the push path.** `purge_drafts` lost its
+  `not_pending` exemption along with it — after the retirement that clause
+  matched every claimed pet and would have made claimed drafts unpurgeable
+  forever (federated §4.6b, pinned by `test_retry_and_token.py`).
+
 ### 5.5 Frontend changes (small)
+
+> **[2026-07-30]** The session read, the banner and the cookie note below are
+> current — `web/src/lib/api.ts` is still the one adapter and still uses
+> `localhost`. What changed is the action: there is no Accept button and no 402/409
+> handling on the result card, because DatsPet no longer initiates a charge. The
+> house's **Adopt** action calls the shared hand-off helper (federated §5.2), which
+> `keep()`s the selected pets and navigates to `${session.import_url}?items=a,b,c`;
+> price, credits and house-full all resolve on the host's checkout page now. A
+> `session_stale` response anywhere triggers the silent re-launch (federated §5.3)
+> instead of the "session expired — relaunch" copy below.
+
 - `/design` and `/` read `GET /api/datsme/session`; when launched, show a banner
   ("Designing for your DatsMe profile") and swap the result card's primary action
   from "💾 Save to the pet house" to **"✓ Accept — send to my DatsMe (N credits)"**
@@ -341,6 +446,21 @@ extending `apply_writeback` to thread `target_schema_version` through — modifi
 shared engine code for all targets and is rejected as contradicting this spec's
 additive-only stance; revisit only when a `pet_bundle.v2` actually exists).
 
+**[2026-07-30] The dispatch signature changed, and for exactly this spec's
+reason.** Handlers are now called as **`handler(ctx, payload, visibility)`** where
+`ctx` is an `IngestContext(user_id, partner_slug, source_ref, activity_id,
+granted_caps)` (`service.py:978`). A writeback arrives on a burned launch nonce; a
+pull arrives on the user's own session and has **no nonce at all** — so the nonce
+could not stay in the signature without either forking the engine per transport or
+synthesizing a fake nonce, i.e. putting a lie in the record. `activity_id` is
+`None` on a pull, which is why the echo-check below passes naturally instead of
+being special-cased, and why `user.pet` is in `PULLABLE_TARGETS` while
+`user.collection` is not (a target whose business key includes the activity cannot
+be pulled — a registry rule, not a branch). The schema-version decision below
+still stands: `pet_bundle.v2` does not exist. The handler itself lives in
+`apps/dpp/pet_writeback.py` exactly as specified — it was never merged into
+`service.py`.
+
 `def _handle_target_user_pet(nonce, payload, visibility=None):`
 1. Echo-check: `payload.get("activity_id") != nonce.activity_id` → 409
    `activity_mismatch` (copy the exact pattern from the identity handler,
@@ -364,6 +484,15 @@ additive-only stance; revisit only when a `pet_bundle.v2` actually exists).
    credits gone iff pet created). This deduction commits atomically with the
    ownership row in the same Postgres commit (step 8), mirroring `create_my_pet`
    step 4 (`pet_routes.py:266-268`).
+   **[2026-07-30] The cost is no longer flat.** `price_user_pet(social_db,
+   pose_count)` is THE one pricing formula: `credit_pet_design_cost` plus
+   `credit_pet_extra_pose_cost` per pose above the base count. Two callers, one
+   function, deliberately — the checkout quotes it from the export's **declared**
+   `pose_count` (no bytes fetched) and the handler charges it from the **fetched**
+   bundle's real count, and the declaration is verified against the artifact at
+   ingest (`pricing_basis_mismatch`) so the host never charges above the quote. If
+   those were two expressions they would diverge the first time either config key
+   moved.
 6. Adopt with the `upload_my_pet` ordering (`pet_routes.py:273-332`): open the
    user's DB (`open_user_database_context`, defined `user_db.py:174`; the identity
    handler's call at `service.py:867` is the usage pattern to copy),
@@ -417,6 +546,23 @@ presence, not value — so `activity_type="pet_design"` is accepted as-is. No
 `collection_append` fallback needed.
 
 ## 7. Security & failure modes
+
+> **[2026-07-30] Corrections to this section, in one place.** (a) The bundle
+> token's 24 h TTL survives, but its *reason* changed: there is no retry queue to
+> outlive, and the export mints a **fresh** token per listing, so the TTL now
+> only has to cover the gap between a user opening the host's import page and
+> checking out. (b) The launch-expiry bullet's remedy is superseded — nothing
+> token-authenticated happens at the end of a build any more, so a long design
+> session no longer needs a long token; it needs **renewal**. `session` reports
+> `token_expires_in` and the client silently re-launches before the lapse, with a
+> `?renewed=1` loop guard (federated §4.2/§4.3). The 60-min TTL stays.
+> (c) 402/409 are no longer surfaced by DatsPet — the charge and the house-full
+> check happen on the host's checkout page, which is also where the user sees the
+> price, so "the user has already spent GPU time before we know they can't afford
+> it" is now answered by quoting **before** the checkout rather than by a message
+> on the result card. (d) The SSRF allowlist, the one-time nonce, the idempotency
+> cache and the host-signature fail-closed rule are unchanged and still the
+> perimeter.
 
 - All the DPP invariants come free: HMAC on manifest + writeback, ±5 min drift,
   one-time nonce, idempotency cache, kill switch, fail-closed 401s.
@@ -488,12 +634,18 @@ http://localhost:19954/partner/manifest` (`--launch-base` → the stored
 paste the once-printed secret into `pet_env.local.sh` (gitignored); end-to-end: DatsMe → design →
 preview → Accept → pet appears in My Pets → set ★ active → visible on profile.
 
-**Phase 4 — production posture (LATER, not yet done):** public HTTPS for DatsPet
-(e.g. `pets.datsme.me` behind one reverse proxy so frontend+backend share an
-origin and the launch cookie is first-party), rate limits, retry-queue drain
-scheduler, monitoring.
+**✅ Phase 4 — production posture (DONE, differently than sketched):** DatsPet
+runs on public HTTPS — prod `pet.datsme.me` (:19954) and the staging twin
+`pet-staging.datsme.me` (:29954), procedure in `deploy/CHECKLIST.md`, gated by
+`scripts/verify_deployment.sh`. Three deltas from the sketch: the host is
+`pet.datsme.me`, not `pets.`; frontend and backend are still **separate origins**
+(static export + API vhost), so the launch cookie remains `SameSite=None; Secure`
+and `DATSPET_COOKIE_SAMESITE=lax` stays the unused same-origin escape hatch; and
+the retry-queue drain scheduler was never needed — the queue it would drain was
+retired. Generation in prod runs `PET_GEN_BACKEND=pool` on a GPU-less box
+(`SPEC_DEPLOY_PETDATSME_POOL`).
 
-## 9. Open questions for review
+## 9. Open questions for review — **all closed [2026-07-30]**
 1. ~~Credit charge for partner pets~~ **RESOLVED + SHIPPED: pets cost credit
    points. `credit_pet_design_cost` shipped with default `"100"` (matches
    adoption — a designed pet is an acquisition; admin-tunable, set 0 for free).**
@@ -501,16 +653,43 @@ scheduler, monitoring.
    number, and should the cost be pre-authorized before the ~3-min build rather
    than only at Accept? (Current: charged at Accept; the button shows the cost up
    front via `DATSPET_DESIGN_COST` so it isn't a surprise.)
+   **[2026-07-30] CLOSED — the "when" question dissolved with the push path.**
+   The charge is not at Accept because there is no Accept: the user is quoted an
+   exact price on the host's checkout page *before* anything is fetched, charged
+   or written, and confirms there. The flat number also went away — pricing is
+   `credit_pet_design_cost + extra poses × credit_pet_extra_pose_cost` (§6.2
+   step 5), so a bigger pet costs more. Verified live: a 50-credit quote from the
+   declared basis, charged 50 exactly once, and a re-checkout of the same pet
+   quoted **0**. `DATSPET_DESIGN_COST` survives as an env override that only
+   feeds the designer's price hint, not the charge.
 2. ~~`activity_type` value~~ **RESOLVED (code-verified): no host allowlist —
    `activity_type` is a free String column (`dpp/models.py:122`), so
    `pet_design` is accepted; the `collection_append` fallback is unnecessary.**
 3. Should Accept ALSO leave a `user.collection` pointer row (so the pet shows in
    any future "collections" UI), or is My Pets enough? (Proposed: My Pets only.)
+   **[2026-07-30] CLOSED as proposed — My Pets only, and the reason hardened.**
+   `user.collection`'s business key includes `activity_id`, which a pull does not
+   have; that is precisely why it is **not** in `PULLABLE_TARGETS` while
+   `user.pet` (keyed on `source_partner_slug, source_item_id`) is. Writing a
+   collection row alongside would have re-introduced a push-only dependency into
+   the one path that no longer pushes.
 4. Draft retention when launched: per-user drafts currently purged on next
    generation — keep, or give DatsMe users a small persistent workshop?
+   **[2026-07-30] CLOSED — kept, scoped.** A new generation still supersedes the
+   caller's unsaved draft (`app.py:_purge_drafts(owner)`), but only **that
+   caller's**: a launched user's Generate can no longer delete another user's or
+   the local user's in-progress draft. The persistent workshop is the house — a
+   kept pet is not a draft, and the hand-off `keep()`s before navigating, so a pet
+   in a live checkout is `draft=0` and out of every purge scope.
 5. Where DatsPet runs in production (Hetzner CPU box can't generate — the GPU
    queue/worker split from `archive/DESIGN_SPEC_HETZNER_LOCAL_GPU.md` applies to the
    generation path; the partner endpoints themselves are CPU-only).
+   **[2026-07-30] CLOSED — answered by §8 Phase 4.** `pet.datsme.me` on a GPU-less
+   Hetzner box with `PET_GEN_BACKEND=pool`; the bespoke queue/worker split was
+   *not* built (`SPEC_DEPLOY_PETDATSME_POOL` §2 says do not), the shared
+   `../shared_gpu_cpu` pool carries generation instead. The observation that the
+   partner endpoints are CPU-only is what made the lazy-import posture in
+   `CLAUDE.md` (§"The GPU-less posture") both possible and load-bearing.
 
 ## 10. Consistency checks (global engineering rules)
 - *New variant without engine change?* ✓ `user.pet` is a registry entry; DatsPet's

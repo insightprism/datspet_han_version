@@ -6,7 +6,7 @@ launch → design → Accept → *pet in My Pets* round trip.
 
 Phases 0–2 (SQLite migration, partner surface, host handler) are code +
 verified in-repo. Nothing here changes code — it wires the two running services
-together. Implementation reference: `docs/SPEC_DATSPET_DPP_INTEGRATION.md`.
+together. Implementation reference: `docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md`.
 
 ---
 

@@ -160,7 +160,7 @@ verified live before writing it:
 | **Pet generation works end-to-end on the pool right now.** Submitting `{task:"pet_factory", params:{animal:…}}` with the `datspet` app key was claimed by GPU worker `omen-pet` and generated a pet (observed progressing idle→walk→run). | Live job `1467e39a…` submitted + polled. |
 | **The `datspet` app is registered** on the pool; its key is cached locally at `~/.pool/datspet_key` (server copy: `ssh root@5.161.70.13 cat /var/www/pool/app_key_datspet`). | File read + successful authenticated submit. |
 | **The pool contract** is `POST /api/jobs` → poll `GET /api/jobs/{id}` (`{status,pct,msg,error}`) → `GET /api/jobs/{id}/result` (the `.zip`), auth via `X-App-Key`. A working reference client is `created_pets/make_pet.py`. | Read + exercised. |
-| **The DPP integration (DatsMe ⇄ DatsPet) is built, hardened, and E2E-verified.** Launch → design → Accept → `pet_bundle.v1` writeback → host fetches the bundle → adopts into My Pets, credits charged, consent + host-signature security done. | Prior sessions; `docs/SPEC_DATSPET_DPP_INTEGRATION.md`. |
+| **The DPP integration (DatsMe ⇄ DatsPet) is built, hardened, and E2E-verified.** Launch → design → keep → checkout on the host's import page → host fetches the bundle → adopts into My Pets, credits charged, consent + host-signature security done. *(The Accept/writeback push this row originally described was retired 2026-07-30 in favour of that pull.)* | Prior sessions; `docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md`, `docs/SPEC_DATSPET_HOUSE_ADOPT.md`. |
 | **All the relevant config is env-driven**, so dev→prod is env values, not code: `DATSPET_PUBLIC_URL`, `DATSPET_FRONTEND_URL`, `DATSME_BASE_URL`, `DATSME_PUBLIC_URL`, `DATSME_HMAC_SECRET`, `NEXT_PUBLIC_API_URL`. | `webui/datsme_integration.py`, `web/.env.local`. |
 | **`pet.datsme.me`, `staging.datsme.me`, `datsme.me`, `pool.datsme.me` all resolve to `5.161.70.13`** — the Hetzner box. `pet.datsme.me`'s **A-record already exists** (→ `5.161.70.13`); what's missing is the served **vhost + TLS cert** (a plain HTTP probe returns 000 because nothing is listening for that host yet). | `dig pet.datsme.me` → `5.161.70.13`. |
 | **The GPU nodes dial *out* to the pool** (NAT-friendly); nothing reaches into this box or Omen. | Pool design; `/api/pool` shows `omen-pet`, `dual-nvidia-gpu0/1` online. |
@@ -846,6 +846,6 @@ page.) These are the mechanics §C.5 codifies for the online tiers.
   one ComfyUI on :19953.
 - Env-driven config: `webui/datsme_integration.py:104-121`, `web/.env.local`.
 - DNS (all → `5.161.70.13`, incl. `pet.datsme.me`): `dig`.
-- DPP integration (built + hardened): `docs/SPEC_DATSPET_DPP_INTEGRATION.md`,
+- DPP integration (built + hardened): `docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md`,
   `docs/RUNBOOK_DPP_E2E.md`.
 - Superseded bespoke-queue design: `docs/archive/DESIGN_SPEC_HETZNER_LOCAL_GPU.md` (do not build).

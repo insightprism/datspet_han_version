@@ -273,8 +273,10 @@ watchdog, so no handler-timeout change is needed at launch (SPEC_MOTION_PROFILES
 
 ### 5.2 Pricing wires to pose count (Rev.4: defaults set — all admin-tunable)
 Each generated pose is real GPU cost (~75 s), so price scales with pose count. This ties into DatsMe's
-**existing credit system** — `credit_pet_design_cost` is charged today at Accept
-(SPEC_DATSPET_DPP_INTEGRATION, currently a flat 100).
+**existing credit system** — `credit_pet_design_cost` (SPEC_DATSPET_DPP_INTEGRATION). *(Shipped
+since: the charge moved off Accept — which no longer exists — to the host's pull checkout, and the
+pose-count formula below is live as `price_user_pet` = base + extra poses ×
+`credit_pet_extra_pose_cost`.)*
 
 **The formula and defaults (every number a config knob, none load-bearing):**
 
@@ -420,7 +422,8 @@ pool app key (server-side secrets never reach the client, deploy spec Finding 9)
 - Existing routes (`design`, `house`) under `web/src/app/`.
 - img2img remix pipeline the catalog base feeds: `pet_factory/factory.py` (`make_pet_zip`
   `reference_image`/`remix_strength`); reference transport `reference_image_b64` (deploy spec §A.2).
-- Credit charge point: `docs/SPEC_DATSPET_DPP_INTEGRATION.md` (`credit_pet_design_cost`, at Accept).
+- Credit charge point: `docs/SPEC_DATSPET_HOUSE_ADOPT.md` (`credit_pet_design_cost`, charged at the
+  host's pull checkout; the retired Accept path is `docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md`).
 - Motion/pose layer: `docs/SPEC_MOTION_PROFILES.md`.
 - Fleet cutover discipline: `docs/SPEC_DEPLOY_PETDATSME_POOL.md` §B.1; the concrete v3 runbook (step 0):
   `docs/archive/SPEC_V3_FLEET_ROLLOUT.md`.

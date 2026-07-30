@@ -3,7 +3,7 @@
 **Status:** Design — **Rev.2** (2026-07-14), for review. A public landing page at the DatsPet
 root URL with **Sign in with DatsMe** (a launch-token bounce — no DatsPet accounts, ever) and
 **Create a DatsMe account** (routes out to DatsMe's own signup). The landing also explains what
-DatsPet is and how it relates to DatsMe. Builds on **`docs/SPEC_DATSPET_DPP_INTEGRATION.md`**
+DatsPet is and how it relates to DatsMe. Builds on **`docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md`**
 (the launch/writeback machinery this reuses). Grounded against both working trees (appendix).
 
 **This spec OWNS the shared bounce/mint plumbing** that `docs/SPEC_MOTION_PROFILE_ADMIN.md` consumes:

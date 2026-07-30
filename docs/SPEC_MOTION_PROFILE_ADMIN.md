@@ -4,7 +4,7 @@
 duplicate, and delete motion profiles (`pet_factory/motion_profiles/*.json` + `registry.json`)
 through a UI, gated by DatsMe's existing `system_admin` role. Builds on
 **`docs/SPEC_MOTION_PROFILES.md`** (the movement layer this edits) and reuses the DPP launch
-mechanism from **`docs/SPEC_DATSPET_DPP_INTEGRATION.md`**. Grounded against the working tree.
+mechanism from **`docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md`**. Grounded against the working tree.
 
 **Rev.2 — reconciled with `docs/SPEC_DATSPET_FRONT_DOOR.md`.** That spec is now the **owner of the
 shared bounce/mint plumbing** (the DatsPet `/launch` `return` param and the host mint-and-redirect
@@ -34,7 +34,7 @@ once here and refactoring it there — so the front door lands first.
 ## 0. The core decisions (read this first)
 
 1. **No new auth system in DatsPet.** DatsPet has no login/accounts today — its only identity is
-   the DatsMe launch cookie (`docs/SPEC_DATSPET_DPP_INTEGRATION.md`). DatsMe already has a proven
+   the DatsMe launch cookie (`docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md`). DatsMe already has a proven
    admin system (`User.role='system_admin'`, `require_system_admin` in `auth.py`). We **reuse it** rather
    than hand-roll a password page guarding file writes — a hand-rolled login on a file-mutating
    surface is exactly the liability to avoid. The admin gate is an **`adm` claim in the launch

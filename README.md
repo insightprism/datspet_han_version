@@ -32,7 +32,7 @@ ways to integrate:
   a GPU box polls the queue, runs `make_pet_zip()`, and uploads the `.zip` back.
 
 > **The shipped DatsMe integration** is the DPP partner architecture — see
-> **[docs/SPEC_DATSPET_DPP_INTEGRATION.md](docs/SPEC_DATSPET_DPP_INTEGRATION.md)**.
+> **[docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md](docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md)**.
 > (An earlier, never-built plan to embed generation inside DatsMe is archived at
 > [docs/archive/DATSME_INTEGRATION.md](docs/archive/DATSME_INTEGRATION.md).)
 

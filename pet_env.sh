@@ -54,7 +54,7 @@ export PET_FACTORY_REQUIRE_GPU=1
 #    DatsMe partner app (the /partner/* and /api/datsme/* endpoints). In pure
 #    standalone mode none of these are required — the partner surface stays
 #    inert (manifest 503s without DATSME_HMAC_SECRET). See
-#    docs/SPEC_DATSPET_DPP_INTEGRATION.md.
+#    docs/archive/SPEC_DATSPET_DPP_INTEGRATION.md.
 # ---------------------------------------------------------------------------
 # The HMAC secret DatsMe prints ONCE at registration (scripts/register_datspet.sh)
 # is a SECRET, so it never lives in this tracked file. Paste it into
