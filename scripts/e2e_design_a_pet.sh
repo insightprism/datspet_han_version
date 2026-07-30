@@ -285,7 +285,7 @@ from apps.pets.pet_models import Pet
 uid='$DATSME_USER_ID'
 with SocialSessionLocal() as s: bal=get_user_credit_balance(s, uid)
 d=open_user_database(uid)
-# The host tags an ingested pet `partner_<slug>` (e.g. partner_datspet), never
+# The host tags an ingested pet partner_SLUG (e.g. partner_datspet), never
 # bare 'partner' — this filtered on a value that has never existed, so the
 # count was always 0 and the run died at the last line after doing everything
 # right, including charging real credits.
