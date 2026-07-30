@@ -44,7 +44,7 @@
 > **Living successors:** `docs/archive/SPEC_DATSPET_FEDERATED_SESSION.md` (sign-out, renewal,
 > owner scope — it extends this spec's bounce), `docs/SPEC_MOTION_PROFILE_ADMIN.md` (the admin
 > sibling of §2.1), `docs/SPEC_DATSPET_HOUSE_ADOPT.md` and
-> `docs/SPEC_DATSPET_CATALOG_PURCHASE.md` (what a signed-in user does next).
+> `docs/archive/SPEC_DATSPET_CATALOG_PURCHASE.md` (what a signed-in user does next).
 
 **Status:** ~~Design — **Rev.2** (2026-07-14), for review.~~ **SHIPPED + LIVE · CLOSED 2026-07-30**
 (original Rev.2 text follows). A public landing page at the DatsPet

@@ -9,15 +9,14 @@ shown to the user (SPEC_DATSPET_FEDERATED_SESSION §2.5). That is the worst fail
 shape this repo has: silent, and only visible to whoever reads the host's logs. It
 is a hard invariant and it is enforced below.
 
-**Every catalog animal should have at least one sample.** That is a *release*
-question, not a correctness one — an animal with no `samples/` directory is legal
-and simply offers nothing. It is reported rather than asserted, because a red suite
-is not the right way to say "the dog shelf is empty": it would block every unrelated
-deploy until somebody spends GPU time, and a test that must be ignored to work is a
-test that stops being read.
+**Which animals are stocked is a merchandising choice, not an invariant.** An animal
+with no `samples/` directory is legal: `list_samples` returns `[]`, the page renders
+no tiles for it, nothing misbehaves. So it is REPORTED, never asserted — the owner
+decides what is worth curating (as of 2026-07-30: `cat` yes, `dog` deliberately not),
+and a test encoding that preference would be a build blocker for a stocking decision.
 
-Gate 0 in SPEC_DATSPET_CATALOG_PURCHASE is the thing that closes the gap; this file
-makes its state impossible to lose track of.
+This is the revised Gate 0 in SPEC_DATSPET_CATALOG_PURCHASE §0.1: the hard gate is
+sellability, the stock list is information.
 """
 import json
 import os
@@ -77,19 +76,18 @@ def test_a_promoted_sample_is_sellable(animal, sample):
     assert ac.sample_preview_path(animal, sample), f"{animal}/{sample}: no preview.png"
 
 
-def test_report_which_animals_still_have_no_sample(capsys):
-    """Gate 0's state, printed rather than asserted (see the module docstring).
+def test_report_which_animals_are_stocked(capsys):
+    """Which animals carry samples, printed rather than asserted (see the module
+    docstring). Information for whoever is deciding what to curate next.
 
     Run with `-s` to see it. It fails only if the catalog itself is empty, which
-    would mean something far more broken than a missing sample.
+    would mean something far more broken than an unstocked animal.
     """
     animals = ac.list_animals()
     assert animals, "the catalog has no animals at all"
 
     empty = [a["key"] for a in animals if not ac.list_samples(a["key"])]
     with capsys.disabled():
-        if empty:
-            print(f"\n  [Gate 0] no samples yet for: {', '.join(empty)} "
-                  f"— the catalog page shows an empty shelf for these.")
-        else:
-            print("\n  [Gate 0] every catalog animal has at least one sample.")
+        stocked = [a["key"] for a in animals if ac.list_samples(a["key"])]
+        print(f"\n  [catalog] stocked: {', '.join(stocked) or 'none'}"
+              f"{'  |  not stocked: ' + ', '.join(empty) if empty else ''}")

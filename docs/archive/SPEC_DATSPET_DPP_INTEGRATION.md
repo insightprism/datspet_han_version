@@ -31,7 +31,7 @@
 > **Living successors:** `docs/archive/SPEC_DATSPET_FRONT_DOOR.md` (sign-in, the bounce/mint plumbing),
 > `docs/archive/SPEC_DATSPET_FEDERATED_SESSION.md` (session lifetimes, sign-out, owner scope,
 > the purchase consolidation), `docs/SPEC_DATSPET_HOUSE_ADOPT.md` (the pull checkout and the
-> export's `transfer` block), `docs/SPEC_DATSPET_CATALOG_PURCHASE.md` (the catalog surface),
+> export's `transfer` block), `docs/archive/SPEC_DATSPET_CATALOG_PURCHASE.md` (the catalog surface),
 > `docs/SPEC_MOTION_PROFILE_ADMIN.md` (the admin launch that reuses §5.1's `/launch`),
 > `docs/RUNBOOK_DPP_E2E.md` + `scripts/e2e_design_a_pet.sh` (the runnable round trip).
 

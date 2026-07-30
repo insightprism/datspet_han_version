@@ -59,7 +59,7 @@ model** — the retirement of the shared anonymous pool in favour of a per-brows
 resync back door (§6). It also owns the **shared hand-off helper** (§5.2) that every purchase
 surface calls, including the ones specified elsewhere.
 
-**Split out:** the catalog purchase surface is **`docs/SPEC_DATSPET_CATALOG_PURCHASE.md`** — it
+**Split out:** the catalog purchase surface is **`docs/archive/SPEC_DATSPET_CATALOG_PURCHASE.md`** — it
 depends on §5.2's helper and is blocked on content, not code (decision 12).
 
 **Repos touched:** `datsme-pet-factory_wu` (signout endpoint, session fields, renewal, owner
@@ -111,7 +111,7 @@ confirmed by the code they cite. Rev.3 changes only what that validation found m
 | 1 | **§4.5 (a) mints the anon id in middleware**, not on an injected `Response`. | FastAPI merges an injected `Response`'s cookies **only when the handler returns a non-Response value**. `/api/reference/{id}.png` is explicitly *"Owner-scoped"* and returns a raw `FileResponse` (`app.py:1095-1113`), so Rev.2 would have dropped the `Set-Cookie` there, minted a *different* id on the next request, and orphaned the user's work. |
 | 2 | **§4.6 also deletes `purge_drafts`' `not_pending` clause** (`db.py:357-359`). | `claim_unowned_pets` **sets `datsme_activity_id`** (`db.py:462`), so once §4.5 (c) claims at launch, every claimed-but-unadopted draft matches `(datsme_activity_id IS NOT NULL AND writeback_acked_at IS NULL)` and becomes **unpurgeable forever**. Rev.2 retired the pending *list* but left the same retired semantics encoded in the purge guard — and its own migration note leaned on a startup purge that §4.5 (c) would have disabled for exactly those rows. |
 | 3 | **§4.5 (b) adds `revoke_user`** to the lockstep list. | Its `anonymize` action sets `external_user_id=NULL` (`db.py:478-483`) and documents the rows as *"standalone/orphaned"*. Under exact-match on an integrated box they become invisible to everyone. A consumer of the NULL rule that Rev.2's sweep list did not name. |
-| 4 | **The catalog purchase surface is split out** into `docs/SPEC_DATSPET_CATALOG_PURCHASE.md`; Rev.2's §2.5 and §5.4 are gone, Rev.2's §2.6 became §2.5, and build step 10 is removed. *(Rev.4 note: §5.4 exists again as "Nothing to purge from browser storage", shifted down by the new §5.3 — it is not the deleted catalog section.)* | Rev.2's backend claims were all correct, but **no sample bundles ship**: `_samples_dir` resolves `_DIR/<animal>/samples` gated on catalog membership (`animal_catalog/__init__.py:160-164`), the catalog animals are `cat` and `dog`, and the only sample zip in the repo sits under `_candidates/cat/samples/`, which is not a catalog animal. `GET /api/catalog` returns `samples: []` today, so the section's own guard test would pass on an empty set — a false green. Blocked on content, not code, and the acceptance criterion does not depend on it. |
+| 4 | **The catalog purchase surface is split out** into `docs/archive/SPEC_DATSPET_CATALOG_PURCHASE.md`; Rev.2's §2.5 and §5.4 are gone, Rev.2's §2.6 became §2.5, and build step 10 is removed. *(Rev.4 note: §5.4 exists again as "Nothing to purge from browser storage", shifted down by the new §5.3 — it is not the deleted catalog section.)* | Rev.2's backend claims were all correct, but **no sample bundles ship**: `_samples_dir` resolves `_DIR/<animal>/samples` gated on catalog membership (`animal_catalog/__init__.py:160-164`), the catalog animals are `cat` and `dog`, and the only sample zip in the repo sits under `_candidates/cat/samples/`, which is not a catalog animal. `GET /api/catalog` returns `samples: []` today, so the section's own guard test would pass on an empty set — a false green. Blocked on content, not code, and the acceptance criterion does not depend on it. |
 | 5 | Minor: `api/auth.py:68` (not `:56`) for the `samesite: "lax"` literal; §0.9 notes that the checkout **page** and the checkout **API** are different paths. | Citation accuracy, and a reader could otherwise conflate `/import/datspet` with `/api/integrations/import/datspet`. |
 
 ---
@@ -222,7 +222,7 @@ confirmed by the code they cite. Rev.3 changes only what that validation found m
     more (§4.3).
 
 12. **The catalog is a second entrance to the same checkout — and it is split out.** Rev.2
-    specified it here; Rev.3 moved it to **`docs/SPEC_DATSPET_CATALOG_PURCHASE.md`** for one
+    specified it here; Rev.3 moved it to **`docs/archive/SPEC_DATSPET_CATALOG_PURCHASE.md`** for one
     reason: **no sample bundles ship today.** `_samples_dir` resolves `_DIR/<animal>/samples` and
     is gated on catalog membership (`animal_catalog/__init__.py:160-164`); the catalog animals are
     `cat` and `dog`; the only sample zip in the tree is under `_candidates/cat/samples/`, which is
@@ -998,7 +998,7 @@ partner-generic, and DatsPet opts out of it by having nothing pending (§4.6).
 - **No change to anonymous/standalone design gating** — still `SPEC_DATSPET_FRONT_DOOR` §9.3.
   §4.5 changes *who owns* an anonymous pet, never *whether* one may be designed.
 - **No host-side deletion**, and no new host endpoint beyond §3.1.
-- **No catalog purchase surface** — split to `docs/SPEC_DATSPET_CATALOG_PURCHASE.md`, which
+- **No catalog purchase surface** — split to `docs/archive/SPEC_DATSPET_CATALOG_PURCHASE.md`, which
   consumes §5.2's helper and §4.5's owner scope and adds no checkout logic of its own
   (decision 12).
 
@@ -1068,7 +1068,7 @@ deploy failure on this app so far has been a false green.
     acceptance criterion by hand on staging, then production.
 
 **Not in this spec's build order:** the catalog purchase surface, split to
-`docs/SPEC_DATSPET_CATALOG_PURCHASE.md`. It depends on step 8's helper, so it can only start after
+`docs/archive/SPEC_DATSPET_CATALOG_PURCHASE.md`. It depends on step 8's helper, so it can only start after
 step 8 lands — and on curated sample bundles, which do not exist yet (decision 12).
 
 ---
@@ -1111,7 +1111,7 @@ citation; **all held** — including the catalog-content finding, re-checked dir
 lists exactly `cat` and `dog`, the only `*.zip` under `animal_catalog/` is
 `_candidates/cat/samples/snowleopard.zip`, and no `<animal>/samples` directory exists, so
 `list_samples` returns `[]` for both animals. Bolded entries are the ones Rev.4 added or corrected.
-Catalog-only citations live in `docs/SPEC_DATSPET_CATALOG_PURCHASE.md`'s own appendix.
+Catalog-only citations live in `docs/archive/SPEC_DATSPET_CATALOG_PURCHASE.md`'s own appendix.
 
 **`datsme-pet-factory_wu`** — `webui/datsme_integration.py`: `:66-83` cookie names/TTL/samesite,
 `:92-103` `_safe_return_path` (charset admits `?` `=` `&`), `:133-137` `_datspet_public_url`

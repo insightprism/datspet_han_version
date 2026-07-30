@@ -1,5 +1,51 @@
 # SPEC — DatsPet Catalog Purchase (browse ready-made pets, buy with credits)
 
+> **CLOSED & ARCHIVED — 2026-07-30. Executed in full and verified on staging with a real purchase.**
+>
+> A signed-out visitor can pick a ready-made pet, adopt it, sign in afterwards, and end up owning
+> it. Driven end to end on `pet-staging.datsme.me`, not argued:
+>
+> | Step | Verified |
+> |---|---|
+> | Signed-out visitor on `/catalog` | tile renders, preview 200 |
+> | **Adopt** | pet created under `anon:0d52a1f6…`, draft, 3.5 MB bundle |
+> | Sign-in bounce | `return=/catalog?adopted=27fb99f2b045` — the id survives the hop |
+> | Return | **claimed** to the DatsMe user, **kept**, activity stamped |
+> | Resume | fired automatically → host checkout |
+> | Host quote | White Snow Leopard · 8 poses · **110 credits**, sha verified |
+> | **Purchase** | **charged 110, matching the quote exactly**; pet in the DatsMe house; DatsPet acked 20:09:23 |
+>
+> `verify_deployment.sh` 14/14. 563 tests, `tsc` clean, vitest 32, preflight PASSED with
+> `/catalog.html` in the export.
+>
+> **STAGING ONLY, deliberately.** Production stays at `fe8ba0c` pending several more specs — the
+> owner's sequencing, not a blocker. Note for whoever deploys it: prod's `/catalog` currently
+> answers **200 while serving the landing page**, because `try_files … /index.html` catches the
+> missing route. A status code will not tell you whether this shipped; check the page says
+> "Ready-made pets".
+>
+> **Gate 0 was REVISED, not met as originally written (§0.1).** Rev.1–3 required "every catalog
+> animal has ≥1 sample" and called it blocking. That encoded a stocking preference as a build
+> gate — `dog` is deliberately unstocked, by the owner's decision — so the gate was rewritten to
+> the property that actually fails silently: *every promoted sample is sellable*. That one is
+> enforced per-sample, with a floor so the suite cannot pass over an empty set. The stock list is
+> reported: `[catalog] stocked: cat | not stocked: dog`.
+>
+> **What this work found outside its own scope:**
+>
+> 1. **`--muted` was not theme-aware, site-wide on the host.** `applyUserColors` overrode `--bg`,
+>    `--text`, `--card`, `--accent`, `--border` per user but never `--muted`, which kept a
+>    dark-theme white-at-60%. On a light user theme every `var(--muted)` string rendered at
+>    **1.13:1** — invisible. It hid the reason an import was refused behind text that could not be
+>    read: the page said "see below" and below was blank. Fixed in `datsme_me` (`7c38a7e5`,
+>    `676682b4`): derived from `--text` via `color-mix` at 72%, **measured** at 5.14:1 light /
+>    10.07:1 dark. 62% was tried first and rejected at 3.88:1 — under WCAG AA.
+> 2. **A refusal reason was styled as a subtitle.** Now full-strength `--text`: it is the answer to
+>    "why did nothing happen?", not a caption.
+> 3. **`adopt_sample` does not enforce `can_adopt_samples`** (§0.6). The gate is advisory; a direct
+>    POST succeeds. Harmless while both tiers are `true`, a silent hole the moment one is not.
+>    Setting that flag needs a server check, which is a deliberate §3 exception.
+
 **Status:** Design — **Rev.3.1** (2026-07-30), implementation-ready. A browse-and-adopt surface for
 the pre-made sample pets in the animal catalog: pick one, and it goes through the *same* host
 checkout a designed pet does. Zero new backend, zero new money code, one new page.
@@ -74,13 +120,27 @@ python3 pet_factory/animal_catalog/promote_sample.py --list       # what is stag
 python3 pet_factory/animal_catalog/promote_sample.py cat snowleopard
 ```
 
-So the remaining content work is **one dog sample** (`generate_sample.py` → review → promote), not
-an open-ended curation project. `pet_factory/animal_catalog/**/*.zip` is deliberately un-gitignored
-so curated bundles ship as content (`CLAUDE.md`).
+`pet_factory/animal_catalog/**/*.zip` is deliberately un-gitignored so curated bundles ship as
+content (`CLAUDE.md`).
 
-**Gate 0 (blocking):** every catalog animal has ≥1 promoted sample with a preview and a parseable
-`pose_count`. Half satisfied. Shipping the page with `dog: []` would give half the catalog an empty
-shelf — and §4's guard test, which must fail today, is what keeps that from passing quietly.
+**Gate 0 — REVISED, and the revision is the point (2026-07-30).** Rev.1–3 made it *"every catalog
+animal has ≥1 promoted sample"* and called it blocking. That is the wrong invariant, on two
+grounds:
+
+- **It is not a correctness property.** An animal with no `samples/` directory is legal —
+  `list_samples` returns `[]`, the page renders no tiles for it, and nothing misbehaves. "The dog
+  shelf is empty" is a merchandising judgement, and the owner has made it: **no dog sample is
+  wanted.** A gate that encodes one person's stocking preference as a build blocker will be walked
+  past, and a gate that gets walked past teaches everyone to walk past gates.
+- **What actually breaks silently is the OTHER thing.** A promoted bundle whose manifest will not
+  parse declares no `pose_count`, so the host skips it with a log line and the pet is simply absent
+  from the checkout — no error, nothing on screen, visible only to whoever reads the host's logs
+  (SPEC_DATSPET_FEDERATED_SESSION §2.5). That is the property worth a hard gate.
+
+**Gate 0, as enforced:** *every promoted sample is sellable* — parses, declares poses, has a
+preview. `pet_factory/tests/test_catalog_samples.py` asserts it per sample, plus a floor ("at least
+one promoted sample exists anywhere") that prevents the whole suite passing over an empty set.
+Which animals are stocked is reported, not asserted.
 
 ### 0.2 The backend already exists — this is a surface, not a feature
 
