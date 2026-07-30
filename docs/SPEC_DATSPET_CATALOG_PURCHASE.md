@@ -1,13 +1,23 @@
 # SPEC — DatsPet Catalog Purchase (browse ready-made pets, buy with credits)
 
-**Status:** Design — **Rev.1** (2026-07-30), for review. **BLOCKED on content, not code** — see
-§0.1. A browse-and-adopt surface for the pre-made sample pets in the animal catalog: pick one, and
-it goes through the *same* host checkout a designed pet does. Zero new backend, zero new money
-code, one new page.
+**Status:** Design — **Rev.2** (2026-07-30), implementation-ready. A browse-and-adopt surface for
+the pre-made sample pets in the animal catalog: pick one, and it goes through the *same* host
+checkout a designed pet does. Zero new backend, zero new money code, one new page.
 
-**Split from `docs/archive/SPEC_DATSPET_FEDERATED_SESSION.md`** (Rev.2 §2.5 / §5.4), which specified this
-inline before the content gap was found. That spec is the **hard dependency**: this one consumes
+**Split from `docs/archive/SPEC_DATSPET_FEDERATED_SESSION.md`** (Rev.2 §2.5 / §5.4), which specified
+this inline before the content gap was found. That spec was the hard dependency — this one consumes
 its shared hand-off helper (§5.2 there) and its owner-scope model (§4.5 there), and adds neither.
+**It is now CLOSED, executed and verified on staging, so the dependency is satisfied** and nothing
+here waits on it.
+
+**What changed in Rev.2** (all four found by re-verifying Rev.1 against the tree):
+
+| # | Change | Why |
+|---|---|---|
+| 1 | **§2's component reuse is withdrawn.** The page gets its own small grid. | `BaseGalleryDialog` renders **breeds** (`base_image_url`), not samples (`preview_url`) — different data, different shape — and its own docstring says *"Do NOT reintroduce a `view` prop to make this multi-purpose again."* What is genuinely shared is `getCatalog()` and the preview URL, not the component. |
+| 2 | **Gate 0 is half done and was never as large as Rev.1 implied.** `cat/snowleopard` is promoted and live; only `dog` remains. | Rev.1 never mentioned `promote_sample.py`, the tool that exists for exactly this. `SPEC_PET_DESIGNER_FLOW` §11.2 had already recorded that the staged sample was one command from being real. |
+| 3 | **New §0.5** answering "isn't this the house-pet source we rejected?" | Any reader who knows the designer's §2.1/§3.9 will ask it on sight. It deserves the answer inline, not a re-derivation. |
+| 4 | Citations refreshed; they had drifted the same day. | `adopt_sample` moved 1408 → **1476** and friends, when `/api/pets/unsaved` landed. An appendix that says "verified" has to be. |
 
 **Repos touched:** `datsme-pet-factory_wu` only — one page, one guard test, and the sample bundles
 themselves. No `datsme_me` change. No SDK change.
@@ -16,28 +26,36 @@ themselves. No `datsme_me` change. No SDK change.
 
 ## 0. The core decisions
 
-### 0.1 This is blocked on curated sample bundles, and that is the whole gate
+### 0.1 Content is the gate, and it is now half cleared
 
-**There are no shipped samples today.** Verified:
+**`cat` has a real sample; `dog` does not.** As of 2026-07-30:
 
-- `_samples_dir(animal_key)` resolves `_DIR / animal_key / "samples"` and returns `None` unless
-  `_animal(animal_key)` exists — i.e. the animal must be in the catalog
-  (`pet_factory/animal_catalog/__init__.py:160-164`).
-- The catalog's animals are exactly `cat` and `dog` (`animal_catalog/catalog.json`).
-- The only sample `.zip` anywhere in the tree is
-  `pet_factory/animal_catalog/_candidates/cat/samples/snowleopard.zip`, and `_candidates` is **not**
-  a catalog animal.
+```
+cat: [{'key': 'snowleopard', 'has_preview': True}]
+dog: []
+```
 
-So `list_samples()` returns `[]` for every animal and `GET /api/catalog` serves `samples: []`
-today. Shipping the page first would produce an empty browse surface, and the §4 guard test would
-**pass on an empty set** — a false green, the failure class `deploy/CHECKLIST.md` §E exists to
-prevent.
+`pet_factory/animal_catalog/cat/samples/snowleopard.{zip,png}` is promoted and live —
+`GET /api/catalog` serves it, and `POST /api/catalog/cat/samples/snowleopard/adopt` returns a
+pet id. The bundle carries **8 poses** (`walk, idle, run, sleep, sit, eat, jump, play`) and is a
+post-`SPEC_MATTE_REPAIR_ORDER`-F1 build measuring 161 hard-zero px, already verified on a live
+DatsMe profile.
 
-**Gate 0 (blocking, precedes every build step):** at least one curated sample bundle per catalog
-animal is committed under `pet_factory/animal_catalog/<animal>/samples/<key>.zip` with a matching
-`<key>.png` preview, and each yields a parseable `pose_count`. `pet_factory/animal_catalog/**/*.zip`
-is deliberately un-gitignored precisely so curated bundles ship as content (`CLAUDE.md`), so this
-is a content task, not an infrastructure one.
+**The tool for this exists and Rev.1 did not mention it.** `promote_sample.py` is the only step
+that touches the live catalog, deliberately manual, exactly like base-image promotion:
+
+```bash
+python3 pet_factory/animal_catalog/promote_sample.py --list       # what is staged
+python3 pet_factory/animal_catalog/promote_sample.py cat snowleopard
+```
+
+So the remaining content work is **one dog sample** (`generate_sample.py` → review → promote), not
+an open-ended curation project. `pet_factory/animal_catalog/**/*.zip` is deliberately un-gitignored
+so curated bundles ship as content (`CLAUDE.md`).
+
+**Gate 0 (blocking):** every catalog animal has ≥1 promoted sample with a preview and a parseable
+`pose_count`. Half satisfied. Shipping the page with `dog: []` would give half the catalog an empty
+shelf — and §4's guard test, which must fail today, is what keeps that from passing quietly.
 
 ### 0.2 The backend already exists — this is a surface, not a feature
 
@@ -73,6 +91,22 @@ the hand-off routes them through `signin_url` first, and claim-at-launch binds t
 pet to the DatsMe user on the way back. This works only because that spec landed first; without
 it, an anonymous adopt would drop into the shared pool.
 
+### 0.5 This is not the house-pet source, and the difference is the direction
+
+A reader who knows `SPEC_PET_DESIGNER_FLOW` will object immediately: §2.1 and §3.9 **reject** a
+finished pet as a step-1 source, because *"step 2 already ran on it"* — starting there means
+designing a design, and the modifiers compound where the user cannot see them. A sample pet is
+exactly such a finished design. So why is this allowed?
+
+**Because nothing here feeds the designer.** §2.1 governs what step 1 may accept as *input*. This
+spec never puts a sample into step 1; it sells the finished pet as-is and hands it to the host
+checkout. The pet the user buys is the pet they looked at — the property §2.1 exists to protect,
+arrived at from the other direction.
+
+The rule that would be violated is *"a sample may be used as a base to design from."* That is
+**not** proposed here, and if it is ever proposed it must go back through §2.1 rather than around
+it.
+
 ---
 
 ## 1. The flow
@@ -106,9 +140,16 @@ requirements here — if the two ever disagree, that spec wins.
 
 ## 2. The page (`web/src/app/catalog/page.tsx`)
 
-- **Data:** one `GET /api/catalog` call. **Reuse the designer's gallery components** —
-  `web/src/app/design/general/BaseGalleryDialog.tsx` already renders this exact tree for step 1 of
-  the designer. One endpoint, one shape, two presentations; do not build a second catalog reader.
+- **Data:** one `GET /api/catalog` call — the SAME endpoint and the same shape the designer's
+  step 1 reads. Share the reader (`getCatalog()`), not a component.
+
+  **Do NOT reuse `BaseGalleryDialog`** (Rev.1 said to, wrongly). It renders **breeds**
+  (`base_image_url`), not samples (`preview_url`) — different field, different meaning — and its
+  docstring forbids exactly the change that would be needed: *"Do NOT reintroduce a `view` prop to
+  make this multi-purpose again; if a second view is ever genuinely needed, make it fully
+  controlled."* A grid of `<img src={preview_url}>` with an adopt button per tile is a dozen lines
+  and owes nothing to the dialog. Sharing the endpoint is what stops the two drifting; sharing a
+  component would be paying a coupling cost for a layout that is not the same.
 - **Adopt:** `POST /api/catalog/{animal}/samples/{sample}/adopt` → `{pet_id}` →
   `handOffToDatsme([pet_id], session)`. The client helper deleted at `api.ts:205-214` comes back —
   its own note says the six lines cost nothing to write again.
@@ -135,14 +176,16 @@ requirements here — if the two ever disagree, that spec wins.
 
 ## 4. Build order
 
-**Gate 0 — content (blocking).** Curated sample bundles committed per §0.1, each with a preview
-and a parseable `pose_count`.
+**Gate 0 — content (blocking, HALF DONE).** `cat/snowleopard` is promoted and live (§0.1). One
+`dog` sample remains: `generate_sample.py` → review → `promote_sample.py dog <key>`. That is a GPU
+build and a curation decision, not engineering.
 
 1. **Guard test first.** Every `pet_factory/animal_catalog/<animal>/samples/*.zip` parses to a
    `pose_count`, and every animal the catalog offers has ≥1 sample. This is a **content
    invariant**, so it lives with the other catalog guard tests in `pet_factory/tests`, not in the
    web tier. Writing it before the page is what stops the empty-set false green: **it must fail
-   today**, and Gate 0 is what makes it pass.
+   today** — and it does, on `dog`, which is exactly the state that makes it a real test rather
+   than a decorative one. Gate 0's remaining half is what makes it pass.
 2. **Restore the client helpers** (`adoptSample`, `catalogSamplePreviewUrl`) in `src/lib/api.ts`.
    *Gate: `npx tsc --noEmit` clean.*
 3. **The page + entry points** (§2).
@@ -151,8 +194,9 @@ and a parseable `pose_count`.
    visitor's adopt survives the sign-in round trip and appears in their house afterwards.*
 4. **Deploy staging → verify → production**, per `deploy/CHECKLIST.md` Rule 0.
 
-**Dependency:** step 2 cannot start until `SPEC_DATSPET_FEDERATED_SESSION` build step 8 (the
-shared hand-off helper) has landed.
+**Dependency: SATISFIED.** `SPEC_DATSPET_FEDERATED_SESSION` is closed and archived — its step 8
+(the shared `handOffToDatsme` helper) landed, and the whole spec was verified on staging including
+a real charge and a two-user browser handover. Nothing here is waiting on it.
 
 ---
 
@@ -161,10 +205,12 @@ shared hand-off helper) has landed.
 1. **How many samples per animal, and who curates them?** The guard test enforces ≥1; the product
    question is whether a browse page reads as a catalog with two entries. Proposal: 3–4 per animal
    before shipping the page.
-2. **Should samples be priced differently from designed pets?** They cost no GPU, which is
-   Platform §4.4's "business lever" framing. Today the host prices both from pose count, so a
-   sample is cheap only if it has few poses. Changing that is a **host credit-config** question
-   (`credit_pet_design_cost`), explicitly out of scope here, but it is the obvious follow-on.
+2. **~~Should samples be priced differently?~~ SETTLED — not this spec's question.** The host
+   prices a sample from pose count exactly as it prices a designed pet, and the numbers are
+   host-side credit config (`credit_pet_design_cost`, `credit_pet_extra_pose_cost`) which the owner
+   sets independently of anything here. Nothing in this spec reads, displays or depends on a
+   price. Recorded only so the next reader does not re-open it: the surface is the deliverable,
+   the numbers are a knob.
 3. **Does the catalog page need the pet runtime** (live animated previews) or are the static
    preview PNGs enough? Proposal: PNGs — `preview_url` already exists and the designer's gallery
    uses exactly that.
@@ -173,16 +219,19 @@ shared hand-off helper) has landed.
 
 ## Appendix — grounding (verified 2026-07-30)
 
-`webui/app.py`: `:1327-1360` `/api/catalog` (**carries `samples` + `preview_url`**), `:1381`
-`/api/entitlement`, `:1396` sample preview, `:1404-1406` preview `FileResponse`, `:1408-1438`
-`adopt_sample` (*"generation-free (zero GPU)"*, draft, same insert path, owner-scoped, house cap at
-`:1418-1422`).
+`webui/app.py` (**re-verified 2026-07-30 after the federated-session work moved them**): `:1395`
+`/api/catalog` (**carries `samples` + `preview_url`**), `:1449` `/api/entitlement`, `:1464` sample
+preview, `:1476` `adopt_sample` (*"generation-free (zero GPU)"*, draft, same insert path,
+owner-scoped, enforces the house cap). Confirmed live end to end: `/api/catalog` returns the
+snowleopard tile and the adopt POST returns `{'pet_id': ..., 'display_name': 'White Snow Leopard'}`.
 `pet_factory/animal_catalog/__init__.py`: `:160-164` **`_samples_dir` = `_DIR/<animal>/samples`,
 gated on catalog membership**, `:167-179` `list_samples` (globs `*.zip`, alnum keys only), `:187`
 `sample_bundle_path`, `:196` `sample_preview_path`.
 `pet_factory/animal_catalog/catalog.json`: animals = `cat`, `dog`.
-`find pet_factory/animal_catalog -name '*.zip'` → **only**
-`_candidates/cat/samples/snowleopard.zip` (not a catalog animal) — the §0.1 blocker.
+`promote_sample.py` — the manual promote step (`--list`, then `<animal> <key>`); **the tool Rev.1
+omitted**. `cat/samples/snowleopard.{zip,png}` is now promoted; the bundle's manifest declares 8
+animations, so `pose_count` parses. `dog` has no sample — the remaining half of Gate 0.
+`SPEC_PET_DESIGNER_FLOW` §11.2 (why the UI was removed, and that the sample was one promote away).
 `pet_factory/tiers/tiers.json`: `can_adopt_samples`.
 `web/src/lib/api.ts:205-214`: the deleted-helper note (endpoint *"still EXISTS"*, kept
 deliberately). `web/src/app/design/general/BaseGalleryDialog.tsx`: the gallery tree to reuse.
