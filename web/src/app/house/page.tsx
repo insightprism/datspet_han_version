@@ -180,13 +180,26 @@ export default function HousePage() {
       {pets && pets.length === 0 && (
         <div className="card p-8 text-center">
           <p style={{ color: "var(--muted)" }}>No pets yet — the house is empty.</p>
-          <Link
-            href="/design/general"
-            className="mono mt-4 inline-block rounded-lg border px-5 py-3 text-sm font-semibold"
-            style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}
-          >
-            Design your first pet
-          </Link>
+          <div className="mt-4 flex flex-wrap justify-center gap-3">
+            <Link
+              href="/design/general"
+              className="mono inline-block rounded-lg border px-5 py-3 text-sm font-semibold"
+              style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}
+            >
+              Design your first pet
+            </Link>
+            {/* An empty house is exactly where "browse ready-made" belongs — it is
+                the moment a new user most wants a pet and least wants to wait three
+                minutes for one (SPEC_DATSPET_CATALOG_PURCHASE §2). Secondary
+                styling: designing stays the primary flow. */}
+            <Link
+              href="/catalog"
+              className="mono inline-block rounded-lg border px-5 py-3 text-sm font-semibold"
+              style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}
+            >
+              Or adopt a ready-made one
+            </Link>
+          </div>
         </div>
       )}
 

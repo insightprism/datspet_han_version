@@ -242,32 +242,56 @@ export function catalogBaseOptions(animals: CatalogAnimal[]): CatalogBaseOption[
   return out;
 }
 
-// NOTE — adopt-a-sample has no client helper any more.
+// adopt-a-sample — the zero-GPU path (SPEC_DATSPET_CATALOG_PURCHASE).
 //
-// `catalogSamplePreviewUrl` and `adoptSample` were <SampleGallery>'s, and the gallery
-// went with the themed pages (SPEC_PET_DESIGNER_FLOW §11). They are removed rather than
-// kept warm: dead client code that looks live is worse than an absent helper, and the
-// six lines cost nothing to write again.
+// These two helpers were <SampleGallery>'s and went with the themed pages
+// (SPEC_PET_DESIGNER_FLOW §11), leaving `POST /api/catalog/{animal}/samples/
+// {sample}/adopt` alive with no caller. The note that stood here recorded that
+// state and is now spent — the catalog page is the new caller, and the six lines
+// did indeed cost nothing to write again.
 //
-// `POST /api/catalog/{animal}/samples/{sample}/adopt` still EXISTS. Platform §4.4 calls
-// it the zero-GPU business lever — free users steered to adopt, paid users generate — so
-// it is kept deliberately rather than lost by attrition. But be clear about what it is:
+// Correcting what that note got wrong, because it will be read in `git log`:
+// it said "catalog.json defines no `samples` at all, so `_samples_dir()` returns
+// None for every animal". Samples are never DECLARED in catalog.json — they are
+// discovered on disk — and `_samples_dir` returns None when the animal is not in
+// the catalog OR when `<animal>/samples/` does not exist
+// (`animal_catalog/__init__.py:160-164`). The directory was the missing half, and
+// `promote_sample.py cat snowleopard` supplied it.
 //
-//   no UI       SampleGallery was its only entry point, and it went with the themed
-//               pages (SPEC_PET_DESIGNER_FLOW §11).
-//   no content  catalog.json defines no `samples` at all, so `_samples_dir()` returns
-//               None for every animal and `list_samples()` returns []. It rendered
-//               nothing even when the gallery existed.
-//   NO TESTS    (An earlier version of this comment claimed "still tested server-side".
-//               That was false — grep finds zero. Said plainly now: reviving this means
-//               writing them.)
-//
-// So it is three-quarters dead, and reviving it needs all three: promote the one real
-// sample (staged at _candidates/cat/samples/snowleopard.zip — a path _samples_dir never
-// looks at), build an entry point, and test the endpoint.
-//
-// `CatalogSample` / `CatalogAnimal.samples` below stay: /api/catalog really does return
-// the field, and the type must model the response, not the consumer.
+// Adopting is a COPY, not a purchase: it puts a draft in the caller's house, and
+// the money happens later, on the host, through the same checkout a designed pet
+// uses (handOffToDatsme). Nothing here prices anything.
+
+/** The gallery portrait for a sample. `preview_url` is a path under API_URL, so
+ *  it needs the same prefixing every other asset does. */
+export function catalogSamplePreviewUrl(animal: string, sample: string): string {
+  return `${API_URL}/api/catalog/${encodeURIComponent(animal)}/samples/${encodeURIComponent(sample)}/preview.png`;
+}
+
+export interface AdoptedSample {
+  pet_id: string;
+  display_name: string;
+  breed_id: string;
+}
+
+/** Copy a curated sample into the caller's house as a draft. Zero GPU, instant.
+ *
+ * Scoped like every other write: the pet lands under the caller's owner id,
+ * anonymous or DatsMe (SPEC_DATSPET_FEDERATED_SESSION §4.5), which is what lets a
+ * signed-out visitor adopt first and sign in after.
+ */
+export async function adoptSample(animal: string, sample: string): Promise<AdoptedSample> {
+  const r = await apiFetch(
+    `${API_URL}/api/catalog/${encodeURIComponent(animal)}/samples/${encodeURIComponent(sample)}/adopt`,
+    { method: "POST", credentials: "include" },
+  );
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    // 409 = house full, and its detail is the message the user needs to see.
+    throw new Error(typeof data.detail === "string" ? data.detail : "Could not adopt this pet");
+  }
+  return r.json();
+}
 
 // The caller's OWN resolved tier entitlement (SPEC_PET_DESIGNER_PLATFORM §5.3).
 // The browser never sees the whole tier table — only this slice. The pose

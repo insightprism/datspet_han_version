@@ -127,6 +127,20 @@ export default function PublicLanding() {
             <div className="h-12" />
           )}
         </div>
+
+        {/* Browse ready-made pets — the zero-GPU entrance
+            (SPEC_DATSPET_CATALOG_PURCHASE §2). Deliberately BELOW the hero actions
+            and styled as a plain link: designing is the product, adopting is the
+            shortcut for someone who wants a pet now. Shown in every session state,
+            including signed out — the page's whole premise is that you can pick a
+            pet before you have an account. */}
+        <p className="mt-4 text-sm" style={{ color: "var(--muted)" }}>
+          In a hurry?{" "}
+          <Link href="/catalog" style={{ color: "var(--green)" }}>
+            Browse ready-made pets
+          </Link>{" "}
+          and adopt one instantly.
+        </p>
       </section>
 
       {/* How it works */}
