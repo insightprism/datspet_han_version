@@ -32,7 +32,7 @@ for p in (WEBUI, REPO):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from conftest import TEST_SECRET, make_pet  # noqa: E402
+from conftest import ANON_OWNER, TEST_SECRET, anon_cookies, make_pet  # noqa: E402
 
 
 def _bundle(poses=("walk", "idle"), breed_id="phoenix_red"):
@@ -250,55 +250,79 @@ def test_export_is_still_byteless(dpp_env):
 # Claim — the export/house scoping asymmetry (§2)
 # ---------------------------------------------------------------------------
 
-def test_claim_makes_an_unclaimed_pet_visible_to_the_export(app_client, dpp_env):
-    """The house shows a launched user unclaimed local pets; export_pets is exact
-    match. Without the claim, adopting one links to an import page where it
-    silently is not listed. This is the whole reason /api/pets/claim exists."""
+def test_claim_makes_this_browsers_anon_pet_visible_to_the_export(app_client, dpp_env):
+    """A pet designed before signing in is held under this BROWSER's anonymous
+    owner id; export_pets is exact-match on the DatsMe id. Without the claim,
+    adopting one links to an import page where it silently is not listed. That is
+    the whole reason the claim exists (SPEC_DATSPET_FEDERATED_SESSION §4.5 c).
+
+    Claim-at-launch normally does this; the endpoint is the backstop for a row
+    written after that sweep, so it is owner-keyed too — the body's pet_ids are
+    accepted and ignored."""
     db = dpp_env["db"]
-    make_pet(db, pet_id="petLocal0001", external_user_id=None, draft=False)
+    make_pet(db, pet_id="petAnon00001", external_user_id=ANON_OWNER, draft=False)
 
     assert db.export_pets("user-A") == []          # invisible to the host
-    listed = app_client.get("/api/pets", cookies={"datsme_launch": _cookie_for("user-A")}).json()
-    assert [p["id"] for p in listed] == ["petLocal0001"]   # but visible in the house
+    listed = app_client.get("/api/pets", cookies=anon_cookies()).json()
+    assert [p["id"] for p in listed] == ["petAnon00001"]   # visible to that browser
     assert listed[0]["claimable"] is True
 
-    r = app_client.post("/api/pets/claim", json={"pet_ids": ["petLocal0001"]},
-                        cookies={"datsme_launch": _cookie_for("user-A")})
-    assert r.status_code == 200 and r.json()["claimed"] == ["petLocal0001"]
+    r = app_client.post("/api/pets/claim", json={"pet_ids": ["petAnon00001"]},
+                        cookies={"datsme_launch": _cookie_for("user-A"),
+                                 "datspet_anon": ANON_OWNER})
+    assert r.status_code == 200 and r.json()["claimed"] == 1
 
-    assert [p["id"] for p in db.export_pets("user-A")] == ["petLocal0001"]
-    row = db.get_pet("petLocal0001")
+    assert [p["id"] for p in db.export_pets("user-A")] == ["petAnon00001"]
+    row = db.get_pet("petAnon00001")
     assert row["external_user_id"] == "user-A"
-    assert row["datsme_activity_id"] == "design_a_pet"   # provenance, as _bind_pending does
+    assert row["datsme_activity_id"] == "design_a_pet"   # provenance, as _bind_pending did
+
+
+def test_claim_never_takes_another_browsers_anon_pet(app_client, dpp_env):
+    """Keyed by THIS browser's anon id, in the WHERE (atomic). Before exact-match
+    scoping, "unowned" meant anyone's anonymous pet and a signed-in user could
+    claim one they had merely seen in a shared house."""
+    db = dpp_env["db"]
+    make_pet(db, pet_id="petOther0001", external_user_id="anon:someoneelsesbrowser000000000",
+             draft=False)
+    r = app_client.post("/api/pets/claim", json={"pet_ids": ["petOther0001"]},
+                        cookies={"datsme_launch": _cookie_for("user-A"),
+                                 "datspet_anon": ANON_OWNER})
+    assert r.status_code == 200 and r.json()["claimed"] == 0
+    assert db.get_pet("petOther0001")["external_user_id"] == "anon:someoneelsesbrowser000000000"
 
 
 def test_claim_never_takes_another_users_pet(app_client, dpp_env):
-    """Ownership is enforced in the WHERE (atomic), not by a read-then-write."""
+    """A pet already bound to a DatsMe user is not anon-owned, so no sweep reaches
+    it whatever cookies the caller presents."""
     db = dpp_env["db"]
     make_pet(db, pet_id="petB00000001", external_user_id="user-B", draft=False)
     r = app_client.post("/api/pets/claim", json={"pet_ids": ["petB00000001"]},
-                        cookies={"datsme_launch": _cookie_for("user-A")})
-    assert r.status_code == 200 and r.json()["claimed"] == []
+                        cookies={"datsme_launch": _cookie_for("user-A"),
+                                 "datspet_anon": ANON_OWNER})
+    assert r.status_code == 200 and r.json()["claimed"] == 0
     assert db.get_pet("petB00000001")["external_user_id"] == "user-B"
 
 
-def test_claim_of_an_already_owned_pet_is_a_noop_not_an_error(app_client, dpp_env):
-    """The house claims a whole selection, most of which is normally already the
-    caller's. That must not fail."""
+def test_claim_with_nothing_anonymous_is_a_noop_not_an_error(app_client, dpp_env):
+    """The hand-off calls this every time, and for a user who signed in before
+    designing anything there is nothing to move. That must not fail."""
     db = dpp_env["db"]
     make_pet(db, pet_id="petA00000001", external_user_id="user-A", draft=False)
     r = app_client.post("/api/pets/claim", json={"pet_ids": ["petA00000001"]},
                         cookies={"datsme_launch": _cookie_for("user-A")})
-    assert r.status_code == 200 and r.json()["claimed"] == []
+    assert r.status_code == 200 and r.json()["claimed"] == 0
     assert db.get_pet("petA00000001")["external_user_id"] == "user-A"
 
 
 def test_claim_requires_a_launch(app_client, dpp_env):
+    """An anonymous caller has nobody to claim TO. 401, and nothing moves."""
     db = dpp_env["db"]
-    make_pet(db, pet_id="petLocal0001", external_user_id=None, draft=False)
-    r = app_client.post("/api/pets/claim", json={"pet_ids": ["petLocal0001"]})
+    make_pet(db, pet_id="petAnon00001", external_user_id=ANON_OWNER, draft=False)
+    r = app_client.post("/api/pets/claim", json={"pet_ids": ["petAnon00001"]},
+                        cookies=anon_cookies())
     assert r.status_code == 401
-    assert db.get_pet("petLocal0001")["external_user_id"] is None
+    assert db.get_pet("petAnon00001")["external_user_id"] == ANON_OWNER
 
 
 # ---------------------------------------------------------------------------

@@ -16,17 +16,43 @@ def _launch_token(user_id="user-A", ttl=1800):
         partner_slug="datspet", capabilities=["pets.write"], ttl_seconds=ttl)
 
 
-def test_launch_cookie_is_samesite_none_secure(client, dpp_env):
+def test_launch_cookie_is_samesite_none_secure(tmp_path, monkeypatch):
     """Cross-origin XHR (frontend :19955 -> backend :19954) only sends the cookie
-    if it is SameSite=None; Secure. Lax would make the Accept button never show."""
-    tok = _launch_token()
-    r = client.get(f"/launch?token={tok}", follow_redirects=False)
-    assert r.status_code == 303, r.text
-    set_cookie = r.headers.get("set-cookie", "")
-    assert "datsme_launch=" in set_cookie
-    assert "samesite=none" in set_cookie.lower()
-    assert "secure" in set_cookie.lower()
-    assert "httponly" in set_cookie.lower()
+    if it is SameSite=None; Secure. Lax would make the Adopt button never show.
+
+    Builds its own app rather than using the shared `client`: the suite pins
+    DATSPET_COOKIE_SAMESITE=lax so the anonymous-owner cookie can round-trip over
+    TestClient's http (see conftest), and this test's whole subject is the OTHER
+    setting. Reading the ambient value would make it assert whatever the
+    environment happened to be — which is how it would pass vacuously on the dev
+    box, where pet_env.local.sh also sets lax.
+    """
+    import importlib
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("DATSPET_COOKIE_SAMESITE", "none")
+    monkeypatch.setenv("DATSME_HMAC_SECRET", TEST_SECRET)
+    monkeypatch.setenv("DATSME_PARTNER_SLUG", "datspet")
+    monkeypatch.setenv("PETMAKER_OUTPUT_DIR", str(tmp_path))
+    monkeypatch.setenv("PETMAKER_DB_PATH", str(tmp_path / "t.db"))
+    import datsme_integration as di
+    importlib.reload(di)
+    try:
+        app = FastAPI()
+        app.include_router(di.router)
+        r = TestClient(app).get(f"/launch?token={_launch_token()}",
+                                follow_redirects=False)
+        assert r.status_code == 303, r.text
+        set_cookie = r.headers.get("set-cookie", "")
+        assert "datsme_launch=" in set_cookie
+        assert "samesite=none" in set_cookie.lower()
+        assert "secure" in set_cookie.lower()
+        assert "httponly" in set_cookie.lower()
+    finally:
+        # Restore the suite-wide module state; monkeypatch only undoes the env.
+        monkeypatch.undo()
+        importlib.reload(di)
 
 
 def test_accept_with_expired_token_is_permanent_401_not_queued(client, dpp_env):

@@ -506,7 +506,10 @@ def test_stop_endpoint_cancels_owned_job(pool_app, monkeypatch):
     captured = {}
     monkeypatch.setattr(pool_app.pool_client, "cancel",
                         lambda jid, reason="user_stopped": captured.update(jid=jid, reason=reason))
-    monkeypatch.setattr(pool_app.datsme_integration, "resolve_launch_identity", lambda req: None)
+    # Identity now resolves through owner_scope, the one door (§4.5). Patching
+    # resolve_owner_scope covers require_owner too, which calls it.
+    monkeypatch.setattr(pool_app.owner_scope, "resolve_owner_scope",
+                        lambda req: pool_app.owner_scope.OwnerScope(None, False))
     job = pool_app.Job(id="jobstop000001", name="X")
     job.pool_job_id = "pool-jid-stop"
     job.status = "running"
@@ -520,7 +523,8 @@ def test_stop_endpoint_cancels_owned_job(pool_app, monkeypatch):
 
 def test_stop_endpoint_is_owner_scoped(pool_app, monkeypatch):
     from fastapi.testclient import TestClient
-    monkeypatch.setattr(pool_app.datsme_integration, "resolve_launch_identity", lambda req: "user-Y")
+    monkeypatch.setattr(pool_app.owner_scope, "resolve_owner_scope",
+                        lambda req: pool_app.owner_scope.OwnerScope("user-Y", False))
     job = pool_app.Job(id="jobstop000002", name="X", external_user_id="user-X")
     job.pool_job_id = "p"
     job.status = "running"

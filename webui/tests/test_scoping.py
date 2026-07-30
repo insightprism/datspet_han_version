@@ -21,7 +21,8 @@ for p in (WEBUI, REPO):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from conftest import TEST_SECRET, make_pet  # noqa: E402
+from conftest import (ANON_OWNER, ANON_OWNER_2, TEST_SECRET,  # noqa: E402
+                      anon_cookies, make_pet)
 
 
 @pytest.fixture()
@@ -51,27 +52,36 @@ def _cookie_for(user_id):
 
 
 def test_two_users_see_only_their_own_saved_pets(app_client, dpp_env):
+    """THE ACCEPTANCE CRITERION, at the data layer
+    (SPEC_DATSPET_FEDERATED_SESSION §4.5 b).
+
+    User B, freshly signed in on a browser user A used, must see an EMPTY house —
+    not A's pets, and not the anonymous pets anyone left behind either. Until this
+    changed, `_scope_clause` unioned every unowned row into every signed-in
+    caller's view and stamped it `claimable`, so B could see and buy work that was
+    never theirs. No amount of correct sign-out fixed that; the read rule had to.
+    """
     db = dpp_env["db"]
     make_pet(db, pet_id="petA00000001", external_user_id="user-A", draft=False)
     make_pet(db, pet_id="petB00000001", external_user_id="user-B", draft=False)
-    make_pet(db, pet_id="petLocal0001", external_user_id=None, draft=False)
+    make_pet(db, pet_id="petAnon00001", external_user_id=ANON_OWNER, draft=False)
 
-    # user A sees their own + the local (unclaimed) pet, NEVER user B's.
+    # user A sees their own — never user B's, and never a browser's anonymous work.
     ra = app_client.get("/api/pets", cookies={"datsme_launch": _cookie_for("user-A")})
-    ids_a = {p["id"] for p in ra.json()}
-    assert "petA00000001" in ids_a
-    assert "petLocal0001" in ids_a       # unclaimed local pets are shared/actionable
-    assert "petB00000001" not in ids_a   # but NEVER another user's
+    assert {p["id"] for p in ra.json()} == {"petA00000001"}
 
+    # user B, on the same browser, sees an empty house of their own pets only.
     rb = app_client.get("/api/pets", cookies={"datsme_launch": _cookie_for("user-B")})
-    ids_b = {p["id"] for p in rb.json()}
-    assert "petB00000001" in ids_b
-    assert "petA00000001" not in ids_b
+    assert {p["id"] for p in rb.json()} == {"petB00000001"}
 
-    # standalone (no cookie) sees only the local pet.
-    rs = app_client.get("/api/pets")
-    ids_s = {p["id"] for p in rs.json()}
-    assert ids_s == {"petLocal0001"}
+    # The anonymous browser sees ITS OWN work, and nobody else's.
+    ranon = app_client.get("/api/pets", cookies=anon_cookies())
+    assert {p["id"] for p in ranon.json()} == {"petAnon00001"}
+    assert ranon.json()[0]["claimable"] is True   # its own, not yet bound to a user
+
+    # A DIFFERENT anonymous browser shares nothing with the first.
+    rother = app_client.get("/api/pets", cookies=anon_cookies(ANON_OWNER_2))
+    assert rother.json() == []
 
 
 def test_user_cannot_read_or_delete_another_users_pet(app_client, dpp_env):

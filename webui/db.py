@@ -27,6 +27,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import owner_scope
+
 # The DB lives next to the pet output dir so "move the collection elsewhere"
 # (PETMAKER_OUTPUT_DIR) moves the pets with it. One file, one source of truth.
 _DEFAULT_OUTPUT_DIR = Path(__file__).parent / "datspet_output"
@@ -288,31 +290,44 @@ def list_saved_pets(external_user_id: Optional[str] = None) -> list[dict]:
     # the host's post-import ack (SPEC_DATSPET_HOUSE_ADOPT §3.4). Cast to a real
     # bool so the JSON carries true/false rather than SQLite's 1/0.
     #
-    # claimable: visible to this caller but not yet owned by them, i.e. an
-    # unclaimed local pet. The house shows these (_scope_clause is NULL-inclusive)
-    # but export_pets is exact-match, so they are invisible to the host's import
-    # until claimed — §2's asymmetry. The browser needs to know which ids to claim
-    # before linking out.
+    # claimable: this caller's own pet, still held under their ANONYMOUS owner id
+    # rather than a DatsMe user id. Such a pet is visible here but invisible to
+    # export_pets (exact-match on the DatsMe id), so it would silently vanish from
+    # the host's import list — §2's asymmetry, and why the browser needs to know
+    # which ids to claim before linking out.
+    #
+    # Since _scope_clause became exact-match, the only anon-owned rows a caller can
+    # see are that caller's own — which is what "claimable" should always have
+    # meant. Claim-at-launch (owner_scope.claim_anon_owner) normally empties this
+    # set before the house is ever rendered; it stays as the backstop for a row
+    # written after that sweep.
     out = []
     for r in rows:
         d = dict(r)
         d["in_datsme"] = d.pop("writeback_acked_at") is not None
         owner = d.pop("external_user_id")
-        d["claimable"] = external_user_id is not None and owner is None
+        d["claimable"] = owner_scope.is_anon_owner(owner)
         out.append(d)
     return out
 
 
-# A pet is accessible to a caller iff it is local (external_user_id IS NULL) or
-# owned by that caller. Enforced in the WHERE clause of every scoped mutation so
-# ownership is checked atomically with the write (no TOCTOU). The SQL fragment +
-# params are built by _scope_clause so keep/delete stay identical.
+# A pet is accessible to a caller iff it is owned by exactly that caller. Enforced
+# in the WHERE clause of every scoped mutation so ownership is checked atomically
+# with the write (no TOCTOU). The SQL fragment + params are built by _scope_clause
+# so keep/delete stay identical.
+#
+# EXACT match (SPEC_DATSPET_FEDERATED_SESSION §4.5 b). This used to union the
+# unowned rows into every launched caller's scope — which meant user B, freshly
+# signed in, saw every pet any anonymous visitor had ever kept, marked claimable,
+# and could claim and buy them. "An empty house for user B" was unreachable while
+# that union stood, no matter what sign-out did. Anonymous callers now carry a
+# per-browser owner id (owner_scope.ANON_OWNER_PREFIX) instead of sharing NULL, so
+# exact match is all that is needed and NULL means only "standalone box".
 def _scope_clause(external_user_id: Optional[str]) -> tuple[str, tuple]:
     if external_user_id is None:
-        # Standalone caller: only the local (unowned) pets.
+        # Standalone install (no DatsMe host): the local, unowned pets.
         return "external_user_id IS NULL", ()
-    # Launched caller: their own pets OR still-unclaimed local pets.
-    return "(external_user_id IS NULL OR external_user_id=?)", (external_user_id,)
+    return "external_user_id=?", (external_user_id,)
 
 
 def keep_pet(pet_id: str, external_user_id: Optional[str] = None) -> Optional[dict]:
@@ -435,43 +450,68 @@ def count_saved_pets(external_user_id: Optional[str] = None) -> int:
     return row[0]
 
 
-def claim_unowned_pets(pet_ids: list[str], external_user_id: str,
-                       activity_id: Optional[str]) -> list[str]:
-    """Bind unclaimed (external_user_id IS NULL) pets to a DatsMe user. Returns the
-    ids actually claimed.
+def claim_anon_pets(from_owner: str, to_owner: str,
+                    activity_id: Optional[str] = None) -> int:
+    """Move every pet held under one anonymous owner id onto a DatsMe user.
 
-    Why this exists (SPEC_DATSPET_HOUSE_ADOPT §2): the house shows a launched user
-    `(external_user_id IS NULL OR external_user_id=?)` but export_pets is exact
-    match, so an unclaimed pet is visible-and-selectable here yet invisible to the
-    host's import — it would silently vanish from the import list with no error.
-    The push path never had this problem because _post_pet_writeback's
-    _bind_pending claims the pet as it adopts; a pull has no equivalent, so the
-    claim has to happen before we hand the user off.
+    Keyed by OWNER, not by a list of pet ids (SPEC_DATSPET_FEDERATED_SESSION
+    §4.5 c). The old claim_unowned_pets took a list and matched
+    `external_user_id IS NULL`, which was two defects in one: at launch there is no
+    list to pass, and while the scope clause unioned NULL, "unowned" meant *anyone's*
+    anonymous pet, so a signed-in user could claim a pet they had merely seen.
 
-    Only NULL-owner rows are touched: a row already owned by this caller is a
-    no-op (the house claims a whole selection, most of which is normally already
-    theirs), and a row owned by ANOTHER user is left alone — it was never visible
-    to this caller, and the WHERE makes that atomic rather than check-then-write.
+    Why it exists at all (SPEC_DATSPET_HOUSE_ADOPT §2): export_pets is exact-match on
+    the DatsMe id, so a pet still under an anon owner is visible in the house yet
+    invisible to the host's import — it would vanish from the checkout with no error.
+
+    `activity_id` stamps provenance the same way the push path's _bind_pending did.
+    Returns the number of rows moved (0 is the normal case for a user who signed in
+    before designing anything).
     """
-    if not pet_ids:
-        return []
-    claimed = []
+    if not from_owner or not to_owner or from_owner == to_owner:
+        return 0
     with _lock:
         conn = _connect()
-        for pet_id in pet_ids:
-            cur = conn.execute(
-                """UPDATE pets SET external_user_id=?, datsme_activity_id=?
-                   WHERE id=? AND external_user_id IS NULL""",
-                (external_user_id, activity_id, pet_id))
-            if cur.rowcount:
-                claimed.append(pet_id)
+        cur = conn.execute(
+            """UPDATE pets SET external_user_id=?, datsme_activity_id=?
+               WHERE external_user_id=?""",
+            (to_owner, activity_id, from_owner))
         conn.commit()
-    return claimed
+        return cur.rowcount
+
+
+def claim_anon_jobs(from_owner: str, to_owner: str) -> int:
+    """Move persisted pool-job rows from an anonymous owner to a DatsMe user.
+
+    A job captures its owner at SUBMIT and the finished pet is stamped from it, so a
+    user who signs in during a ~3-minute build would otherwise end up with a pet
+    they cannot see. The in-memory Job objects are swept alongside this by app.py's
+    handler — the row and the object are the same fact in two places, and both are
+    read after the build finishes.
+    """
+    if not from_owner or not to_owner or from_owner == to_owner:
+        return 0
+    with _lock:
+        conn = _connect()
+        cur = conn.execute(
+            "UPDATE jobs SET external_user_id=? WHERE external_user_id=?",
+            (to_owner, from_owner))
+        conn.commit()
+        return cur.rowcount
 
 
 def revoke_user(external_user_id: str, action: str) -> int:
     """delete → remove the user's pet rows; anonymize → null their
-    external_user_id (the pets become standalone/orphaned). Returns count."""
+    external_user_id. Returns count.
+
+    NOTE what `anonymize` now means (SPEC_DATSPET_FEDERATED_SESSION §4.5 b). It used
+    to leave the rows "standalone/orphaned", i.e. still visible to callers, because
+    _scope_clause unioned NULL into every launched caller's scope. Since that clause
+    became exact-match, a NULL owner on an INTEGRATED box is reachable by nobody —
+    so anonymize is effectively a soft delete there. That is the correct outcome for
+    a row whose owner asked to be forgotten; do not "fix" it by reintroducing the
+    union. On a standalone install the behavior is unchanged (owner None, scope
+    `IS NULL`)."""
     with _lock:
         conn = _connect()
         if action == "delete":

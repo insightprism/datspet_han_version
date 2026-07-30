@@ -19,6 +19,19 @@ for p in (WEBUI, REPO):
 
 TEST_SECRET = "test-hmac-secret-0123456789abcdef"
 
+# Cookie attributes are module-level constants read at first import, so this must
+# be set HERE — at conftest import, before any test module imports the webui —
+# rather than in a fixture.
+#
+# Why `lax` for the whole suite: the anonymous-owner cookie
+# (SPEC_DATSPET_FEDERATED_SESSION §4.5) defaults to SameSite=None; Secure, and
+# TestClient speaks http://testserver, which httpx will not send a Secure cookie
+# over. Any test that creates something and reads it back on a LATER request would
+# silently see a DIFFERENT anonymous owner. `lax` is the documented same-origin
+# override (datsme_integration.py:76-83) and is what pet_env.local.sh already sets
+# for the http dev box. Production is unaffected — it is https and same-origin.
+os.environ.setdefault("DATSPET_COOKIE_SAMESITE", "lax")
+
 
 @pytest.fixture()
 def dpp_env(tmp_path, monkeypatch):
@@ -60,6 +73,20 @@ def client(dpp_env):
     app = FastAPI()
     app.include_router(dpp_env["di"].router)
     return TestClient(app)
+
+
+# A fixed per-browser anonymous owner id (SPEC_DATSPET_FEDERATED_SESSION §4.5).
+# In INTEGRATED mode — which every dpp_env test runs in — there is no such thing as
+# a cookieless "standalone" caller any more: a browser with no launch cookie owns
+# its work under an anon id minted by the middleware. Tests pin the value rather
+# than let the middleware mint a random one, so assertions stay deterministic.
+ANON_OWNER = "anon:testbrowser00000000000000000a"
+ANON_OWNER_2 = "anon:testbrowser00000000000000000b"
+
+
+def anon_cookies(owner_id=ANON_OWNER):
+    """Cookie jar for a specific anonymous browser."""
+    return {"datspet_anon": owner_id}
 
 
 def make_pet(db_mod, pet_id="testpet00001", external_user_id=None, draft=False,

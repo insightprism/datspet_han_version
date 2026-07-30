@@ -32,6 +32,7 @@ import secrets
 import time
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -223,7 +224,8 @@ def serve_manifest(request: Request):
 # Inbound: DatsMe → /launch
 # ---------------------------------------------------------------------------
 @router.get("/launch")
-def launch(token: str | None = None, return_path: str | None = Query(None, alias="return")):
+def launch(request: Request, token: str | None = None,
+           return_path: str | None = Query(None, alias="return")):
     """Verify a DatsMe launch JWT → set the launch cookie → 303 to the frontend.
 
     Lands on /design?from=datsme by default, or on a validated `return` path when
@@ -270,6 +272,23 @@ def launch(token: str | None = None, return_path: str | None = Query(None, alias
         # it from the VERIFIED token, so a tampered cookie can't spoof a name.
         "display_name": ctx.raw_claims.get("nm"),
     }
+    # Claim this browser's anonymous work, HERE — the moment it gains a DatsMe
+    # identity (SPEC_DATSPET_FEDERATED_SESSION §4.5 c). Doing it at launch rather
+    # than at hand-off means the house, the designer and every other surface
+    # inherit it without repeating the step, and a user who designed something
+    # before signing in still has it (and can still build with it) afterwards.
+    #
+    # The anon cookie is deliberately NOT cleared here — it survives until
+    # sign-out. A row can land microseconds after this sweep (a build already
+    # running finalizes into a pet), and the /api/pets/claim backstop needs the
+    # anon id to reach it. It carries no authority while a launch cookie exists:
+    # resolve_owner_scope prefers the launch cookie unconditionally.
+    import owner_scope
+    anon_owner = request.cookies.get(owner_scope.ANON_COOKIE)
+    moved = owner_scope.claim_anon_owner(anon_owner, ctx.user_id, ctx.activity_id)
+    if any(moved.values()):
+        log.info("launch: claimed %s from %s for %s", moved, anon_owner, ctx.user_id)
+
     # Where to land: a validated same-origin `return` path, else today's default.
     safe_return = _safe_return_path(return_path)
     target = f"{_frontend_url()}{safe_return}" if safe_return else f"{_frontend_url()}/design?from=datsme"
@@ -311,26 +330,21 @@ def _read_launch_cookie(request: Request) -> Optional[dict]:
     return data
 
 
-def resolve_launch_identity(request: Request) -> Optional[str]:
-    """Trusted DatsMe user_id for scoping, or None for standalone/local mode.
+def verified_launch_user_id(cookie: dict) -> Optional[str]:
+    """The DatsMe user_id from a parsed launch cookie, or None if its token no
+    longer verifies. VERIFY, never parse: the user_id decides which user's rows a
+    write is scoped to, so a forged or expired cookie must not reach another user's
+    scope.
 
-    Shared by the engine (app.py: generation, listing, draft purge) and the
-    Accept path so identity is resolved ONE way everywhere. We VERIFY the JWT
-    (not just parse the cookie): the user_id decides which user's pets a write
-    is scoped to, so a forged/expired cookie must not be able to write into
-    another user's scope — it falls back to None (standalone), never someone
-    else's id. When DATSME_HMAC_SECRET is unset (pure standalone) this always
-    returns None without error.
+    The caller distinguishes "no cookie" from "cookie that failed here" — those are
+    different states and collapsing them is what put a signed-in user's minute-61
+    pet into the anonymous pool (SPEC_DATSPET_FEDERATED_SESSION §0.7). Used by
+    owner_scope.resolve_owner_scope, which is the only identity door.
     """
-    cookie = _read_launch_cookie(request)
-    if cookie is None:
-        return None
     try:
-        ctx = verify_launch_token(cookie["token"], _hmac_secret())
-    except (LaunchError, RuntimeError):
-        # Expired/invalid token, or no secret configured → treat as standalone.
+        return verify_launch_token(cookie["token"], _hmac_secret()).user_id
+    except (LaunchError, RuntimeError, KeyError):
         return None
-    return ctx.user_id
 
 
 def resolve_launch_activity(request: Request) -> Optional[str]:
@@ -483,8 +497,14 @@ def _has_valid_admin_cookie(request: Request) -> bool:
 @router.get("/api/datsme/session")
 def datsme_session(request: Request):
     """Tell the frontend whether it was launched from DatsMe (so it can show the
-    banner + Accept button), the credit cost to show up front, and the front-door
-    fields (integrated mode + the sign-in/sign-up URLs the landing renders)."""
+    banner + Adopt button), the credit cost to show up front, and the front-door
+    fields (integrated mode + the sign-in/sign-out/sign-up URLs the landing renders).
+
+    THE ONE ENDPOINT THAT NEVER 401s ON A STALE SESSION
+    (SPEC_DATSPET_FEDERATED_SESSION §4.7). It is what tells the frontend to renew,
+    so answering 401 here would deadlock the renewal it is supposed to trigger. A
+    lapsed launch cookie comes back as `launched: false, stale: true` and the client
+    silently re-launches (§4.2)."""
     integrated = _is_integrated()
     # The DatsMe web origin the sign-in/up flows live on (front-door §3.2). The
     # frontend never hardcodes a DatsMe origin — it renders what we hand it.
@@ -504,44 +524,140 @@ def datsme_session(request: Request):
         "signin_url": signin_url,
         "signup_url": signup_url,
         "import_url": import_url,
+        "signout_url": None,
         "admin": integrated and _has_valid_admin_cookie(request),
     }
     if ctx is None:
         return {**base, "launched": False}
-    # Re-read the display name from the VERIFIED token (nm claim), not the cookie
-    # blob — so a tampered cookie can't spoof the greeting name. None if the token
-    # predates the nm claim (older host) or fails verification.
-    display_name = None
+
+    # Everything below reads the VERIFIED token, never the cookie blob, so a
+    # tampered cookie can spoof neither the greeting name nor the renewal clock.
     try:
         verified = verify_launch_token(ctx["token"], _hmac_secret())
-        display_name = verified.raw_claims.get("nm")
     except (LaunchError, RuntimeError, KeyError):
-        display_name = None
+        # Present but lapsed. Say so plainly instead of 401ing — see the docstring.
+        return {**base, "launched": False, "stale": True}
+
     return {
         **base,
+        # The host logout bounce, prebuilt server-side exactly as signin_url and
+        # import_url are, so the frontend never hardcodes a DatsMe origin. The
+        # `return` is a DatsPet BACKEND path: the host can only redirect to the
+        # origin it has registered, which is our API origin, and
+        # /api/datsme/signed-out is what translates that to the frontend (§3.1.4).
+        "signout_url": (
+            f"{_datsme_public_url()}/api/integrations/logout-launch"
+            f"?token={quote(ctx['token'], safe='')}&return=/api/datsme/signed-out"
+        ),
         "launched": True,
+        "stale": False,
         "user_id": ctx.get("user_id"),
-        "display_name": display_name,
+        "display_name": verified.raw_claims.get("nm"),
         "capabilities": ctx.get("capabilities", []),
         "cost": pet_design_cost(),
+        # Seconds until this assertion lapses, so the client can renew BEFORE it
+        # does (§4.2). From the verified exp, never the cookie's max_age.
+        "token_expires_in": _token_expires_in(verified),
     }
 
 
-@router.post("/api/datsme/logout")
-def datsme_logout():
-    """End the DatsPet session: clear the launch cookie AND the admin cookie
-    (front-door §3.3). This ends the DatsPet session only — the DatsMe session is
-    managed on DatsMe. Clearing datspet_admin here (even though the front door
-    doesn't set it — the admin flow does) is deliberate: logout owns 'end the
-    DatsPet session', so it clears every DatsPet-issued cookie. Harmless if absent."""
-    from fastapi.responses import JSONResponse
-    resp = JSONResponse({"ok": True})
-    for cookie in (LAUNCH_COOKIE, ADMIN_COOKIE):
-        resp.delete_cookie(
+def _token_expires_in(ctx: LaunchContext) -> Optional[int]:
+    """Whole seconds until the verified token's `exp`, floored at 0. None when the
+    token carries no exp (it always does today; the guard keeps a malformed one from
+    turning a session read into a 500)."""
+    exp = ctx.raw_claims.get("exp")
+    if not isinstance(exp, (int, float)):
+        return None
+    return max(0, int(exp - time.time()))
+
+
+def _clear_datspet_cookies(response: Response) -> None:
+    """Delete every cookie DatsPet issues, with the attributes their setters used —
+    browsers key cookie identity on samesite/secure, so a mismatched delete is
+    silently ignored.
+
+    ALL THREE, and the third is not housekeeping (SPEC_DATSPET_FEDERATED_SESSION
+    §4.1): if the anonymous owner id survives sign-out, user B inherits user A's
+    pre-sign-in pets and the house is not empty — which is the whole point of the
+    feature.
+    """
+    import owner_scope
+    for cookie in (LAUNCH_COOKIE, ADMIN_COOKIE, owner_scope.ANON_COOKIE):
+        response.delete_cookie(
             key=cookie,
             samesite=LAUNCH_COOKIE_SAMESITE,
             secure=LAUNCH_COOKIE_SECURE,
         )
+
+
+@router.get("/api/datsme/signout")
+def datsme_signout(request: Request):
+    """Sign out of BOTH sides, in one hop the browser navigates to.
+
+    We can clear our own cookies but not DatsMe's — they are on a different origin —
+    so the browser must visit the host to end the session there. This endpoint
+    clears ours on the SAME response that redirects to the host's logout bounce, so
+    the clear and the hop cannot half-fail (a cleared partner session with a live
+    host session is exactly the state that let only one person use a browser).
+
+    The token is forwarded WITHOUT verifying it here, deliberately. The host
+    verifies it against its own copy of the partner secret and is the only
+    authority on it; re-checking locally would add a second opinion that can only
+    disagree, and an EXPIRED token must still work (the host ignores exp on that
+    path, because refusing to sign out a user whose token just lapsed is the worst
+    failure mode available) — which the SDK's verifier cannot express. If the token
+    is forged the host 400s, and our cookies are already gone by then, so the user
+    is still correctly signed out here.
+
+    Standalone, or no launch cookie at all: clear locally and land on our own
+    page. There is no host to visit.
+    """
+    target = f"{_frontend_url()}/"
+    ctx = _read_launch_cookie(request)
+    if ctx is not None and _is_integrated() and ctx.get("token"):
+        target = (f"{_datsme_public_url()}/api/integrations/logout-launch"
+                  f"?token={quote(ctx['token'], safe='')}"
+                  f"&return=/api/datsme/signed-out")
+    response = RedirectResponse(url=target, status_code=303)
+    _clear_datspet_cookies(response)
+    return response
+
+
+@router.get("/api/datsme/signed-out")
+def datsme_signed_out():
+    """The landing hop the host redirects back to after ending its session.
+
+    It exists because the host can only redirect to the origin it has REGISTERED
+    for us, which is our API origin (the manifest's base_url), while the landing
+    page lives on the frontend origin — :19954 vs :19955 in dev. They coincide in
+    production only because one nginx vhost serves both, so a `return=/` would work
+    in prod and drop the user on the FastAPI root in dev.
+
+    This is the exact mirror of what /launch does on the way in, and it keeps the
+    frontend origin a DatsPet-side fact that no host row has to know.
+    """
+    response = RedirectResponse(url=f"{_frontend_url()}/?signedout=1", status_code=303)
+    # Belt and braces: the signout hop already cleared these, but a user who reaches
+    # the host bounce from a stale tab should still land here without them.
+    _clear_datspet_cookies(response)
+    return response
+
+
+@router.post("/api/datsme/logout")
+def datsme_logout():
+    """Clear DatsPet's own cookies and nothing else — the LOCAL primitive.
+
+    This is not "sign out" any more: it cannot touch the DatsMe session, which lives
+    on another origin, so on its own it leaves the user signed in there and the next
+    sign-in silently re-mints them. GET /api/datsme/signout is the real thing
+    (SPEC_DATSPET_FEDERATED_SESSION §4.1) and is what the nav calls.
+
+    Kept because standalone mode and the tests need a way to drop the local cookies
+    without a host round trip.
+    """
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"ok": True})
+    _clear_datspet_cookies(resp)
     return resp
 
 

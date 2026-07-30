@@ -532,12 +532,12 @@ def test_reference_is_owner_scoped(client, no_gpu, app_mod, monkeypatch):
     """A reference can now be a user's uploaded PHOTO. GET /api/preview/{id} has no
     ownership check today; its replacement must have the rule rows get — and 404, not
     403, so it never confirms the id exists."""
-    monkeypatch.setattr(app_mod.datsme_integration, "resolve_launch_identity",
-                        lambda request: "user-a")
+    monkeypatch.setattr(app_mod.owner_scope, "resolve_owner_scope",
+                        lambda request: app_mod.owner_scope.OwnerScope("user-a", False))
     ref = client.post("/api/reference", data={"animal": "blue jay"}).json()
 
-    monkeypatch.setattr(app_mod.datsme_integration, "resolve_launch_identity",
-                        lambda request: "user-b")
+    monkeypatch.setattr(app_mod.owner_scope, "resolve_owner_scope",
+                        lambda request: app_mod.owner_scope.OwnerScope("user-b", False))
     assert client.get(ref["image_url"]).status_code == 404
     assert client.post("/api/generate",
                        data={"reference_id": ref["reference_id"]}).status_code == 404

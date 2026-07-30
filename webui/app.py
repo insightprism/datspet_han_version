@@ -168,6 +168,14 @@ db.init_db()  # create tables + one-time-migrate any legacy pet.json folders
 import datsme_integration
 app.include_router(datsme_integration.router)
 
+# Caller identity — the ONE door (SPEC_DATSPET_FEDERATED_SESSION §4.5). The
+# middleware mints this browser's anonymous owner id on the first request that
+# could need one; every handler reads its owner through owner_scope, never by
+# parsing a cookie itself. Registered AFTER the DPP router so the exclusion set
+# (/partner/*, /api/datsme/bundle/*) covers routes that already exist.
+import owner_scope
+app.middleware("http")(owner_scope.anon_owner_middleware)
+
 # Motion-profile admin API (SPEC_MOTION_PROFILE_ADMIN §4). Every endpoint is gated
 # by the adm-claim cookie; inert until an admin-launch sets it.
 import motion_admin
@@ -727,11 +735,65 @@ def _save_reference(png: bytes, *, owner: Optional[str], description: str,
 
 
 def _reference_visible(meta: dict, owner: Optional[str]) -> bool:
-    """Mirrors _can_access: a reference is visible iff it is unowned (standalone)
-    or the caller's own. A reference can now be a user's uploaded PHOTO, so this
-    gives file-backed content the rule db._scope_clause gives rows (§7.3)."""
-    ref_owner = meta.get("owner")
-    return ref_owner is None or ref_owner == owner
+    """Mirrors _can_access: a reference is visible iff it is the caller's own.
+
+    EXACT match, like db._scope_clause (SPEC_DATSPET_FEDERATED_SESSION §4.5 b). The
+    old rule also admitted `ref_owner is None`, which on an integrated box handed
+    every signed-in user every anonymous visitor's reference — including uploaded
+    photos of real people. A standalone box still matches, because there both sides
+    are None.
+    """
+    return meta.get("owner") == owner
+
+
+def _claim_references(from_owner: str, to_owner: str, activity_id: Optional[str]) -> int:
+    """Move one anonymous owner's references onto a real user (§4.5 c).
+
+    Without this, signing in mid-design orphans the reference the designer is
+    holding: step 2 and the Generate button both resolve it through
+    _load_reference, which would start 404ing the moment the owner changed. That is
+    the front door's headline flow — design first, sign in to adopt.
+
+    A directory scan, which is affordable because it runs ONCE per sign-in and
+    PREVIEW_DIR is already bounded by the 24 h transient sweep. Do not build an
+    index for it until the scan is measured to matter.
+    """
+    moved = 0
+    for meta_path in PREVIEW_DIR.glob("*.json"):
+        try:
+            meta = json.loads(meta_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if meta.get("owner") != from_owner:
+            continue
+        meta["owner"] = to_owner
+        try:
+            meta_path.write_text(json.dumps(meta))
+            moved += 1
+        except OSError:
+            continue
+    return moved
+
+
+owner_scope.register_claim_handler("references", _claim_references)
+
+
+def _claim_pets_and_jobs(from_owner: str, to_owner: str,
+                         activity_id: Optional[str]) -> int:
+    """Move the DB-backed stores, plus the in-memory Job objects that shadow the
+    jobs table. JOBS is the live status object a running build mutates; the row is
+    what a restart reattaches from. Both are read after a build finishes — the
+    finished pet is stamped from Job.external_user_id — so signing in mid-build
+    has to move both or the pet lands somewhere its own owner cannot see."""
+    moved = db.claim_anon_pets(from_owner, to_owner, activity_id)
+    moved += db.claim_anon_jobs(from_owner, to_owner)
+    for job in JOBS.values():
+        if job.external_user_id == from_owner:
+            job.external_user_id = to_owner
+    return moved
+
+
+owner_scope.register_claim_handler("pets_and_jobs", _claim_pets_and_jobs)
 
 
 def _load_reference(reference_id: str, owner: Optional[str]) -> dict:
@@ -970,7 +1032,7 @@ def create_reference(
     must run in FastAPI's threadpool. The upload is read with image.file.read(),
     NOT `await image.read()` — the await is what would stall the event loop.
     """
-    owner = datsme_integration.resolve_launch_identity(request)
+    owner = owner_scope.require_owner(request)
     catalog_animal = catalog_animal.strip().lower()[:40]
     catalog_breed = catalog_breed.strip().lower()[:40]
     animal = animal.strip()[:60]
@@ -1096,8 +1158,13 @@ def create_reference(
 @app.get("/api/reference/{reference_id}.png")
 def reference_image(reference_id: str, request: Request):
     """The still. Owner-scoped, unlike the /api/preview/{id} it replaces — a
-    reference can be a user's uploaded photo, so it needs the rule rows get."""
-    owner = datsme_integration.resolve_launch_identity(request)
+    reference can be a user's uploaded photo, so it needs the rule rows get.
+
+    resolve_owner_scope, NOT require_owner: a stale launch session must not 401 an
+    <img> (SPEC_DATSPET_FEDERATED_SESSION §4.7). <img> has no 401 handler, so a
+    broken image is the honest outcome here and the page's next JSON call is what
+    raises the 401 that starts the renewal."""
+    owner = owner_scope.resolve_owner_scope(request).owner_id
     try:
         ref = _load_reference(reference_id, owner)
     except HTTPException as e:
@@ -1143,7 +1210,7 @@ def design_axes_menu(request: Request, reference_id: str = "", animal: str = "")
     if not reference_id.strip() and animal.strip():
         surface = _resolve_typed_surface(animal.strip()[:MAX_SPECIES_CHARS])
     if reference_id.strip():
-        owner = datsme_integration.resolve_launch_identity(request)
+        owner = owner_scope.require_owner(request)
         try:
             ref = _load_reference(reference_id, owner)
         except HTTPException:
@@ -1192,7 +1259,7 @@ def preview_design(
 
     Sync `def`, not `async def` (§5.3) — see _render_still.
     """
-    owner = datsme_integration.resolve_launch_identity(request)
+    owner = owner_scope.require_owner(request)
     if not reference_id.strip():
         raise HTTPException(400, "Pick a base animal first.")
     ref = _load_reference(reference_id, owner)
@@ -1417,7 +1484,7 @@ def adopt_sample(animal: str, sample: str, request: Request):
     bundle_path = animal_catalog_mod.sample_bundle_path(animal, sample)
     if bundle_path is None:
         raise HTTPException(404, "sample not found")
-    owner = datsme_integration.resolve_launch_identity(request)
+    owner = owner_scope.require_owner(request)
     # Adopt is instant, but it still adds a pet — block at the cap so the user
     # isn't handed a draft they can't keep (SPEC house-scaling).
     _enforce_house_not_full(owner)
@@ -1481,7 +1548,7 @@ async def start_job(
     # Who is generating? DatsMe-launched user (verified) or None (standalone).
     # This scopes the generated pet and the draft purge, so one user's Generate never
     # touches another user's (or the local) pets.
-    owner = datsme_integration.resolve_launch_identity(request)
+    owner = owner_scope.require_owner(request)
     # Fail fast, before ~3 min of GPU: a full house can't accept the pet this
     # build would produce, so don't build it (SPEC house-scaling).
     _enforce_house_not_full(owner)
@@ -1584,7 +1651,7 @@ def stop_job(job_id: str, request: Request):
     """§11 user Stop — cancel a build the caller owns. Owner-scoped by DatsMe identity (D-3): a
     job with no owner (standalone) is stoppable by the standalone caller. Best-effort + idempotent;
     the drive loop also observes 'canceled' and exits cleanly (mapped to a canceled job)."""
-    owner = datsme_integration.resolve_launch_identity(request)
+    owner = owner_scope.require_owner(request)
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if job is None:
@@ -1663,7 +1730,7 @@ def house_config(request: Request):
     readout, the client-side pager, and the disabled state when full. Config, not
     collection — the pets themselves come from /api/pets, which changes for a
     different reason (a new pet) than these knobs (an ops tuning)."""
-    owner = datsme_integration.resolve_launch_identity(request)
+    owner = owner_scope.require_owner(request)
     return {
         "max_pets": _house_max_pets(),
         "page_size": _house_page_size(),
@@ -1676,33 +1743,37 @@ def list_pets(request: Request):
     """Every SAVED pet the caller may see, newest first. A DatsMe-launched
     user sees only their own pets; a standalone caller sees the local
     (external_user_id IS NULL) pets. Drafts are excluded (join via /keep)."""
-    owner = datsme_integration.resolve_launch_identity(request)
+    owner = owner_scope.require_owner(request)
     return db.list_saved_pets(external_user_id=owner)
 
 
 @app.post("/api/pets/claim")
 def claim_pets(request: Request, body: dict = Body(...)):
-    """Bind unclaimed local pets to the launched caller before they are handed off
-    to DatsMe's import page (SPEC_DATSPET_HOUSE_ADOPT §2/§3.3).
+    """Move this browser's still-anonymous work onto the launched caller — the
+    hand-off's idempotent BACKSTOP (SPEC_DATSPET_FEDERATED_SESSION §4.5 c).
 
-    The house shows a launched user their own pets OR still-unclaimed local ones,
-    but /partner/export/{user_id} is exact-match — so an unclaimed pet is
-    selectable here and invisible to the host, and would silently vanish from the
-    import list. Claiming first is what the push path already does implicitly via
-    _bind_pending; the pull needs it done explicitly.
+    The real claim happens at LAUNCH, the moment the browser gains a DatsMe
+    identity, so the house and designer inherit it without asking. This endpoint
+    exists for the narrow race the launch sweep cannot cover: a row written after
+    the sweep by a build that was already running. It is therefore owner-keyed too,
+    not a list of ids — the body's `pet_ids` is accepted and ignored for
+    compatibility with the client's existing call shape.
+
+    Why it must happen before the hand-off at all: /partner/export/{user_id} is
+    exact-match on the DatsMe id, so a pet still under an anon owner is visible in
+    the house yet invisible to the host — it would silently vanish from the
+    checkout with no error.
 
     Standalone callers get 401: with no DatsMe identity there is nobody to claim
     TO, and the pets are already theirs to see.
     """
-    owner = datsme_integration.resolve_launch_identity(request)
-    if owner is None:
+    owner = owner_scope.require_owner(request)
+    if owner is None or owner_scope.is_anon_owner(owner):
         raise HTTPException(401, "Not launched from DatsMe — sign in to adopt.")
-    pet_ids = body.get("pet_ids")
-    if not isinstance(pet_ids, list) or not all(
-            isinstance(p, str) and p.isalnum() for p in pet_ids):
-        raise HTTPException(400, "pet_ids must be a list of pet ids")
+    anon_owner = request.cookies.get(owner_scope.ANON_COOKIE)
     activity_id = datsme_integration.resolve_launch_activity(request)
-    return {"claimed": db.claim_unowned_pets(pet_ids, owner, activity_id)}
+    moved = owner_scope.claim_anon_owner(anon_owner, owner, activity_id)
+    return {"claimed": sum(moved.values()), "stores": moved}
 
 
 @app.post("/api/pets/{pet_id}/keep")
@@ -1711,7 +1782,7 @@ def keep_pet(pet_id: str, request: Request):
     joins the house. Scoped: you can only keep a pet you may access."""
     if not pet_id.isalnum():
         raise HTTPException(404, "pet not found")
-    owner = datsme_integration.resolve_launch_identity(request)
+    owner = owner_scope.require_owner(request)
     # The true cap chokepoint: this is the moment a pet joins the house. Enforce
     # ONLY for a draft actually joining — re-keeping an already-saved pet is
     # idempotent and must not 409 a house that is legitimately at its cap. Access
@@ -1750,16 +1821,21 @@ def _require_pet(pet_id: str, owner: Optional[str]):
 _IMMUTABLE_ASSET_CACHE = "private, max-age=604800, immutable"  # 1 week
 
 
+# Both pet-asset endpoints use resolve_owner_scope, NOT require_owner: they are
+# fetched by <img> and by the canvas engine, which have no 401 handler, so a stale
+# launch session must degrade to the same 404 _require_pet already gives an
+# unknown pet (SPEC_DATSPET_FEDERATED_SESSION §4.7). The page's next JSON call is
+# what raises the 401 that starts the renewal.
 @app.get("/api/pets/{pet_id}/sheet.png")
 def pet_sheet(pet_id: str, request: Request):
-    row = _require_pet(pet_id, datsme_integration.resolve_launch_identity(request))
+    row = _require_pet(pet_id, owner_scope.resolve_owner_scope(request).owner_id)
     return Response(content=row["sheet_png"], media_type="image/png",
                     headers={"Cache-Control": _IMMUTABLE_ASSET_CACHE})
 
 
 @app.get("/api/pets/{pet_id}/manifest.json")
 def pet_manifest(pet_id: str, request: Request):
-    row = _require_pet(pet_id, datsme_integration.resolve_launch_identity(request))
+    row = _require_pet(pet_id, owner_scope.resolve_owner_scope(request).owner_id)
     return Response(content=row["manifest_json"], media_type="application/json",
                     headers={"Cache-Control": _IMMUTABLE_ASSET_CACHE})
 
@@ -1770,7 +1846,7 @@ def delete_pet(pet_id: str, request: Request):
     the caller may access."""
     if not pet_id.isalnum():
         raise HTTPException(404, "pet not found")
-    owner = datsme_integration.resolve_launch_identity(request)
+    owner = owner_scope.require_owner(request)
     if not db.delete_pet(pet_id, external_user_id=owner):
         raise HTTPException(404, "pet not found")
     with JOBS_LOCK:
@@ -1780,7 +1856,7 @@ def delete_pet(pet_id: str, request: Request):
 
 @app.get("/api/pets/{pet_id}/zip")
 def pet_zip(pet_id: str, request: Request):
-    row = _require_pet(pet_id, datsme_integration.resolve_launch_identity(request))
+    row = _require_pet(pet_id, owner_scope.require_owner(request))
     return Response(
         content=row["bundle_zip"], media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{row["breed_id"]}.zip"'},

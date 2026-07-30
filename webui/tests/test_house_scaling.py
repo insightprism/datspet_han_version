@@ -25,7 +25,7 @@ for p in (WEBUI, REPO):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from conftest import make_pet  # noqa: E402
+from conftest import ANON_OWNER, anon_cookies, make_pet  # noqa: E402
 
 
 @pytest.fixture()
@@ -35,7 +35,10 @@ def app_client(dpp_env):
     importlib.reload(app_mod)
     app_mod.db = dpp_env["db"]
     app_mod.datsme_integration = dpp_env["di"]
-    return TestClient(app_mod.app)
+    # An anonymous BROWSER, which is what a cookieless caller is in integrated mode
+    # (SPEC_DATSPET_FEDERATED_SESSION §4.5). Pinned rather than middleware-minted so
+    # the pets these tests create can be owned by the same id.
+    return TestClient(app_mod.app, cookies=anon_cookies())
 
 
 # ---------------------------------------------------------------------------
@@ -48,7 +51,7 @@ def test_pet_assets_are_immutably_cacheable(app_client, dpp_env, suffix):
     must be told it may cache them hard — otherwise the house re-downloads ~1 MB
     per pet on every reload and page-flip, which is what blanks cards behind 429s
     on a phone. `private`, never `public`: access is ownership-scoped."""
-    make_pet(dpp_env["db"], pet_id="assetpet0001", external_user_id=None, draft=False)
+    make_pet(dpp_env["db"], pet_id="assetpet0001", external_user_id=ANON_OWNER, draft=False)
     r = app_client.get(f"/api/pets/assetpet0001/{suffix}")
     assert r.status_code == 200
     cc = r.headers.get("cache-control", "")
@@ -65,7 +68,7 @@ def test_house_config_reports_cap_page_size_and_count(app_client, dpp_env, monke
     monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "3")
     monkeypatch.setenv("PETMAKER_HOUSE_PAGE_SIZE", "2")
     for i in range(2):
-        make_pet(dpp_env["db"], pet_id=f"cfgpet{i:06}", external_user_id=None, draft=False)
+        make_pet(dpp_env["db"], pet_id=f"cfgpet{i:06}", external_user_id=ANON_OWNER, draft=False)
     cfg = app_client.get("/api/house").json()
     assert cfg == {"max_pets": 3, "page_size": 2, "count": 2}
 
@@ -82,13 +85,13 @@ def test_keep_blocks_at_the_cap_but_never_evicts(app_client, dpp_env, monkeypatc
     untouched — we block, never evict (a bundle is irreplaceable)."""
     monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "2")
     db = dpp_env["db"]
-    make_pet(db, pet_id="full00000001", external_user_id=None, draft=False)
-    make_pet(db, pet_id="full00000002", external_user_id=None, draft=False)
-    make_pet(db, pet_id="draft0000001", external_user_id=None, draft=True)  # wants in
+    make_pet(db, pet_id="full00000001", external_user_id=ANON_OWNER, draft=False)
+    make_pet(db, pet_id="full00000002", external_user_id=ANON_OWNER, draft=False)
+    make_pet(db, pet_id="draft0000001", external_user_id=ANON_OWNER, draft=True)  # wants in
 
     r = app_client.post("/api/pets/draft0000001/keep")
     assert r.status_code == 409 and "full" in r.json()["detail"].lower()
-    assert db.count_saved_pets(None) == 2          # nothing evicted
+    assert db.count_saved_pets(ANON_OWNER) == 2    # nothing evicted
     assert db.get_pet("draft0000001")["draft"] == 1  # still a draft
 
 
@@ -97,7 +100,7 @@ def test_rekeeping_a_saved_pet_at_the_cap_is_not_blocked(app_client, dpp_env, mo
     full house is idempotent and must not 409."""
     monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "1")
     db = dpp_env["db"]
-    make_pet(db, pet_id="saved0000001", external_user_id=None, draft=False)
+    make_pet(db, pet_id="saved0000001", external_user_id=ANON_OWNER, draft=False)
     r = app_client.post("/api/pets/saved0000001/keep")
     assert r.status_code == 200
 
@@ -106,7 +109,7 @@ def test_generate_prechecks_the_cap_before_burning_gpu(app_client, dpp_env, monk
     """A full house 409s /api/generate up front, so no ~3-min build is wasted on
     a pet that could never be kept."""
     monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "1")
-    make_pet(dpp_env["db"], pet_id="full00000001", external_user_id=None, draft=False)
+    make_pet(dpp_env["db"], pet_id="full00000001", external_user_id=ANON_OWNER, draft=False)
     r = app_client.post("/api/generate", data={"reference_id": "whatever"})
     assert r.status_code == 409 and "full" in r.json()["detail"].lower()
 
@@ -116,7 +119,7 @@ def test_cap_gate_does_not_leak_another_users_pet(app_client, dpp_env, monkeypat
     so the gate can't be used to probe existence."""
     monkeypatch.setenv("PETMAKER_HOUSE_MAX_PETS", "1")
     db = dpp_env["db"]
-    make_pet(db, pet_id="mine00000001", external_user_id=None, draft=False)  # fills the cap
+    make_pet(db, pet_id="mine00000001", external_user_id=ANON_OWNER, draft=False)  # fills the cap
     make_pet(db, pet_id="theirs000001", external_user_id="user-B", draft=True)
     # standalone caller (no cookie) cannot access user-B's pet -> 404, never 409
     r = app_client.post("/api/pets/theirs000001/keep")
