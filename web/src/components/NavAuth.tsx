@@ -100,14 +100,30 @@ export default function NavAuth() {
   // full button; this keeps the toolbar consistent on inner pages).
   //
   // Returns to the CURRENT page, query included, rather than the prebuilt
-  // return=/design. This is the nav that sits above the designer, so it is the one
-  // a user clicks mid-build — and the designer keeps its running job in `?job=`.
-  // Dropping that query is what lost a finished pet on staging (usePetJob's
-  // docstring has the incident).
-  const signinHref = datsmeSignInUrlForHere(session);
-  return signinHref ? (
-    <a href={signinHref} className="text-sm font-medium hover:opacity-80" style={{ color: "var(--accent)" }}>
+  // return=/design. This is the nav above the designer, so it is the link a user
+  // clicks mid-build — and the designer keeps its running build in `?job=`.
+  //
+  // RESOLVED ON CLICK, never at render. This component renders once, when the
+  // session resolves, which is BEFORE any build has started; the job id is added
+  // later by history.replaceState, which deliberately does not re-render React. An
+  // href computed during render is therefore frozen at the job-less URL, and the
+  // user is sent back to an empty designer with their pet stranded — measured
+  // twice, staging and dev, 2026-07-30. The static href stays as the no-JS and
+  // middle-click fallback; the handler is what carries the query.
+  if (!session.signin_url) return null;
+  return (
+    <a
+      href={session.signin_url}
+      onClick={(e) => {
+        const url = datsmeSignInUrlForHere(session);
+        if (!url) return;              // fall through to the static href
+        e.preventDefault();
+        window.location.href = url;
+      }}
+      className="text-sm font-medium hover:opacity-80"
+      style={{ color: "var(--accent)" }}
+    >
       Sign in
     </a>
-  ) : null;
+  );
 }

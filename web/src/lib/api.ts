@@ -1010,8 +1010,20 @@ export function datsmeRenewUrl(session: DatsmeSession, returnPath: string): stri
  */
 export function datsmeSignInUrlForHere(session: DatsmeSession): string | null {
   if (typeof window === "undefined") return session.signin_url ?? null;
-  const here = window.location.pathname + window.location.search;
-  return signinUrlReturningTo(session, here) ?? session.signin_url ?? null;
+  return signinUrlReturningTo(session, currentReturnPath()) ?? session.signin_url ?? null;
+}
+
+/** Where "come back here" means, right now: path AND query.
+ *
+ * The query is not decoration — the designer keeps its running build in `?job=`,
+ * so a return path built from `pathname` alone silently drops a 3-minute pet.
+ * Read it at the moment of the navigation, NEVER captured earlier: the job id is
+ * written with history.replaceState, which does not re-render React, so anything
+ * computed at render time is stale by the time the user clicks.
+ */
+function currentReturnPath(): string {
+  if (typeof window === "undefined") return "/";
+  return window.location.pathname + window.location.search;
 }
 
 /** True if this page load already came back from a renewal attempt. */
@@ -1030,7 +1042,7 @@ export function maybeRenewLaunch(session: DatsmeSession | null): boolean {
   if (!session?.launched || arrivedFromRenewal()) return false;
   const left = session.token_expires_in;
   if (typeof left !== "number" || left > LAUNCH_RENEW_THRESHOLD_SEC) return false;
-  const url = datsmeRenewUrl(session, window.location.pathname);
+  const url = datsmeRenewUrl(session, currentReturnPath());
   if (!url) return false;
   window.location.href = url;
   return true;
@@ -1057,7 +1069,7 @@ export function handleSessionStale(status: number, body: unknown): boolean {
   // The session read is cheap and cannot itself be stale (it never 401s), so this
   // resolves the renew URL without keeping a session copy in module state.
   void getDatsmeSession().then((session) => {
-    const url = datsmeRenewUrl(session, window.location.pathname);
+    const url = datsmeRenewUrl(session, currentReturnPath());
     if (url) window.location.href = url;
   });
   return true;
