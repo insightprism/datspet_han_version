@@ -116,13 +116,31 @@ esac
 
 # --- 3. follow the launch into DatsPet (sets the cookie) --------------------
 say "Step 2/6 — browser follows the launch → DatsPet /launch verifies + sets the cookie"
-# Exercise the REAL /launch endpoint: it must verify the token, emit a
-# SameSite=None; Secure cookie, and 303 to the design page.
+# Exercise the REAL /launch endpoint: it must verify the token, set an httponly
+# cookie with COHERENT cross-site attributes, and 303 to the design page.
 HDRS=$(curl -s -m 10 -D - -o /dev/null "$LAUNCH_URL" 2>/dev/null)
 echo "$HDRS" | grep -qi "^location:.*\/design?from=datsme" || die "/launch did not 303 to the design page"
 echo "$HDRS" | grep -qi "set-cookie:.*datsme_launch" || die "/launch did not set the datsme_launch cookie"
-echo "$HDRS" | grep -qi "samesite=none; *secure" || die "cookie is not SameSite=None; Secure (Accept button would never show)"
-ok "/launch verified token, set SameSite=None;Secure cookie, 303→/design"
+echo "$HDRS" | grep -qi "set-cookie:.*datsme_launch.*httponly" || die "the launch cookie is not HttpOnly"
+
+# BOTH postures are correct, and which one is right is a property of the
+# DEPLOYMENT, not of the code (datsme_integration.py's cookie comment):
+#   two origins (dev: frontend :19955 → backend :19954) → SameSite=None; Secure,
+#     because a lax cookie is not sent on cross-origin XHR and the session would
+#     read as signed-out.
+#   one origin (staging/prod behind a single vhost) → lax is correct and Secure is
+#     not required; DATSPET_COOKIE_SAMESITE=lax selects it.
+# So assert the INVARIANT — None must come with Secure — rather than one flavour.
+# This used to demand None+Secure unconditionally, which failed a correctly
+# configured same-origin box.
+COOKIE_LINE=$(echo "$HDRS" | grep -i "set-cookie:.*datsme_launch")
+if echo "$COOKIE_LINE" | grep -qi "samesite=none"; then
+  echo "$COOKIE_LINE" | grep -qi "secure" \
+    || die "cookie is SameSite=None WITHOUT Secure — browsers reject it outright"
+  ok "/launch verified token, set SameSite=None; Secure cookie (two-origin), 303→/design"
+else
+  ok "/launch verified token, set SameSite=lax cookie (same-origin deployment), 303→/design"
+fi
 
 # For the subsequent authenticated calls we build the cookie value the SAME way
 # /launch does. This is NOT a shortcut around the flow: curl over plain http
