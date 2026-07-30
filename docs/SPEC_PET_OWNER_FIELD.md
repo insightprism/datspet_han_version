@@ -1,16 +1,24 @@
 # SPEC — The bundle owner fields (one pet, one owner)
 
-**Status:** **READY TO IMPLEMENT — Rev.12 (2026-07-30).** Three `owner_*` fields in
+**Status:** **Rev.13 (2026-07-30) — Phases 1–3 BUILT and on staging; Phase 4 (the render gate, §10)
+specified and unbuilt.** Three `owner_*` fields in
 `manifest.json` recording who may bring a pet to life on DatsMe and since when, plus a reserved
 `fingerprint` mark. **DatsPet stamps the unsold state at mint; DatsMe stamps the owner at every
 transfer.** One field carries the owner, and it is the DatsMe **slug** (or group tag) — the thing a
 human can look up.
 
-**All three phases are BUILT and green** (2026-07-30). DatsPet `71f3632` (584 pass); DatsMe
-`325b6909` + Phase 3 (50/50 in-process, `tsc` clean, no new lint errors). Verified end to end across
-both repos on a real 3.58 MB bundle. **The host's ingest gate ships observe-first
-(`PET_OWNER_ENFORCEMENT=observe`) and nothing is deployed** — flipping to `enforce` is its own step,
-gated on §6.16 and detailed in §9.2. That flip is the only work left.
+**Phases 1–3 are BUILT and deployed to staging**, verified end to end in a real browser: a group
+purchase by `wu.1` licensed one pet to three members. DatsPet `3afc2849` (584 pass); DatsMe
+`b518a5b9` (52/52). The ingest gates run **observe-first** (`PET_OWNER_ENFORCEMENT` unset);
+production is untouched on both sides.
+
+**For the two DatsMe use cases — purchase and gift — the answer to "what does DatsMe need to build?"
+is *nothing, it is done*.** §10.1 maps each step of both flows to where it already lives, including
+the one update function they need (`set_pet_ownership`). **§10 is the one genuinely new
+requirement**: the render gate, which decides whether a pet may animate on a given website and tells
+the owner who actually holds it. It is specified and unbuilt.
+
+Remaining work, in order: the `enforce` flip (§9.2), Phase 4 (§10), then production.
 
 > ## Rev.12 — the owner is a slug, and the HOST writes it
 >
@@ -776,6 +784,7 @@ Anonymous use stays fully supported: base-tier pet making with no login keeps wo
 | **2** | The two transfer stamps (§2.5), the access ladder + the two doors (§4), tests 12–15b | DatsMe | — | **BUILT** 2026-07-30 (`325b6909`) |
 | **2b** | Flip `PET_OWNER_ENFORCEMENT=observe` → `enforce`, staging then prod | DatsMe (config) | Phase 1 **deployed** in that environment (§6.16) | **not done** — see §9.2 |
 | **3** | The group chooser on the host's checkout page (§3, §5.2), the purchase-target check (§4.4) | DatsMe | Phase 2 | **BUILT** 2026-07-30 |
+| **4** | The render gate on `/api/pets/{slug}/active` (§10.2–§10.4) | DatsMe | Phase 2 | **not started** — the only unbuilt work in this spec |
 
 ### 9.1 What Phase 1 shipped, for whoever picks up Phase 2
 
@@ -907,3 +916,133 @@ inert until Phase 2 gives it a reader, which is exactly what makes it safe to sh
 
 **Phase 2 is where the value is.** Phase 1 alone is provenance; the leak at
 `POST /api/pets/me/upload` stays open until the ladder ships.
+
+---
+
+## 10. The DatsMe surface — what exists, and Phase 4
+
+### 10.1 The two use cases, mapped to what is already built
+
+Both flows below are **BUILT and deployed to staging**. They are written out here because the
+question "what does DatsMe need to do?" has a shorter answer than it looks: for purchase and gift,
+nothing — it is done.
+
+**Use case 1 — a user buys a pet.** From the designer or from the pet house, the partner hands the
+selection to DatsMe's checkout, which is the round trip that quotes and spends the credits. On
+confirmation the host opens the manifest, sets the owner and the transfer date, and stores it. The
+bundle is now the buyer's: it renders in their house, and they can download and re-upload it,
+because the upload door's ladder recognises them as the owner.
+
+| Step | Where | State |
+|---|---|---|
+| hand-off from the partner | `handOffToDatsme` → `/import/{partner}` | built |
+| quote + charge credits | `import_items` | pre-existing |
+| **stamp owner + date** | `handle_target_user_pet` → `set_pet_ownership` (§2.5) | **built** |
+| the buyer can re-upload it | upload door ladder (§4.2) | built |
+
+**Use case 2 — a user gifts a pet.** The offer goes to the recipient; **on accept**, the manifest is
+re-stamped to the recipient with a fresh transfer date, inside the transaction that already
+re-points `PetOwnership` — so ownership can never half-move.
+
+| Step | Where | State |
+|---|---|---|
+| offer / accept lifecycle | `pet_gift_service` | pre-existing |
+| **re-stamp to the recipient** | `accept_offer` → `set_pet_ownership` (§2.5) | **built, not yet exercised live** |
+
+**The "update function" DatsMe needs is `set_pet_ownership(manifest_json, *, category, name, at)`**
+— manifest text in, manifest text out, exactly the three fields (§2.1). It already exists at
+`api/apps/pets/pet_ownership.py`. Both call sites above use it, and any third one must too.
+
+### 10.2 Phase 4 — the render gate (NOT built)
+
+Everything above is about *acquiring* a pet. The new requirement is about *showing* one: a pet
+should only animate on a website whose owner is entitled to it, and when it is not, the owner should
+be told who actually holds it.
+
+**Home:** `GET /api/pets/{slug}/active` (`api/apps/pets/pet_routes.py:876`). It already resolves
+`owner_user_id` from the slug, already runs `_enforce_visibility`, and already inlines the manifest
+into its response — so both halves of the check are in scope with no new query.
+
+**The check is the SAME ladder, not a new rule.** Run `check_owner_access` (§4.1) with the
+**website owner** as the user — the person whose house the pet lives in, never the viewer. This
+matters because a group pet is legitimately rendered by any member: a bundle licensed to
+`wu.1#classroom#test` sitting in `sara.1`'s house is correct, and a naive `owner_name == slug`
+comparison would wrongly refuse it. One ladder, now three doors: upload, checkout, render.
+
+**Compare against `owner_name`, which is a SLUG.** Rev.12 removed the opaque id; the manifest
+carries `sara.1`, not a uuid (§0.5). The comparison is against `User.name_slug`, never
+`display_name`.
+
+### 10.3 No stamp means old — render it, and ask nothing
+
+**If the manifest carries no owner fields, skip the check entirely and render as normal.** Absence
+*is* the backward-compatibility signal. Nothing else is needed: no cutoff date, no configuration, no
+migration.
+
+This is deliberately not a date comparison, and the difference is not cosmetic:
+
+- **A legacy bundle has no date to read.** The only timestamp these fields define is
+  `owner_transferred_at`, which is written by the same stamp that writes the owner — so a bundle
+  with no owner has no date either. A date rule would have to reach for `pet_assets.created_at`
+  instead, which is host-side state rather than something travelling with the artifact.
+- **"Older than today" would make the gate permanently inert.** A rolling comparison exempts every
+  pet the day after it is created, so within 24 hours nothing is ever checked. Any date rule would
+  have to be a **fixed cutoff constant**, and then someone has to choose and maintain it.
+- **Absence is self-maintaining.** Every pet acquired through checkout or gift is stamped, so it is
+  checked. Everything older is not, so it is not. The population converges with no dated cliff and
+  nothing to revisit.
+
+**It is also safe, for a reason worth stating.** Absence cannot be used to *escape* the gate,
+because the upload door already refuses a bundle with no owner fields (§4.3) — a user cannot strip
+the fields and re-upload to launder a pet. Absence at render time can therefore only mean "this pet
+predates the stamp", which is exactly what it is being read as.
+
+### 10.4 Who sees the message
+
+**Only the website owner.** They are the one who can act on it, and it is their pet that is not
+rendering.
+
+**A visitor sees no pet at all** — the same `{"pet": null}` shape the endpoint already returns when
+`_enforce_visibility` denies (`pet_routes.py:922`). Do not surface an ownership problem to
+third parties; it is not their business and it advertises a bundle worth taking.
+
+The owner's message names the real holder — *"This pet is licensed to `sara.1`."* That discloses
+nothing new: `owner_name` is a public slug, already resolvable by anyone at
+`GET /api/profiles/{name_slug}`. For a group, name the group.
+
+### 10.5 What stays unstamped — decide this, do not discover it
+
+Under §10.3, an unstamped pet renders unchecked forever. Two populations are unstamped **today**:
+
+1. **Pets adopted before Phase 2 shipped.** Finite, shrinking, intended.
+2. **Storefront pets — `create_my_pet` (`pet_routes.py:205`) writes `manifest_json` verbatim and
+   does not stamp.** This population is **not** finite: every future storefront adoption adds to it,
+   so those pets are permanently outside the render gate.
+
+That may be the right product answer — platform-catalog pets are sold by DatsMe to whoever pays, and
+arguably need no licence check. But it should be a decision. If storefront pets *should* be gated,
+the fix is one call in `create_my_pet` matching §2.5's shape (`individual` / buyer's slug / the
+ownership row's `created_at`), and then §10.3's absence rule cleanly means "pre-feature" and nothing
+else.
+
+### 10.6 Rollout — this door is the riskiest of the three
+
+The upload and checkout doors are hit on deliberate, occasional actions. **The render gate is on
+every profile page view**, so a false refusal is a visibly broken site rather than a failed import.
+
+Ship it observing, reusing `PET_OWNER_ENFORCEMENT` (§9.2): log the mismatch, render the pet anyway,
+and read the log until every line is a refusal you meant. The staging lesson from §4.2 is exactly
+this — an unanticipated shape showed up as one log line instead of an outage, and it was not found
+by review.
+
+### 10.7 Tests
+
+- The house owner renders their own `individual` pet; a `group` pet renders for **any active
+  member**, not just the owner.
+- A pet whose `owner_name` is someone else does **not** render for the house owner, and the response
+  carries the real owner's name.
+- A **visitor** to that same site gets `{"pet": null}` with no ownership detail.
+- **A pet with no owner fields renders normally** — no check, no message. Assert this for both a
+  pre-Phase-2 pet and a fresh storefront adoption, since those are the two real populations.
+- The gate observes by default: with `PET_OWNER_ENFORCEMENT` unset, a mismatching pet still renders
+  and logs.
