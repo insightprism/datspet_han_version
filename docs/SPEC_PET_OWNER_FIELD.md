@@ -530,11 +530,30 @@ So the import door runs a transfer step *first*:
 | `group`, importing user is owner/member | admit; do not re-stamp — it stays the group's |
 | `group`, otherwise | refuse |
 | `public` | admit; **do not stamp** — public stays public |
-| missing / unknown | refuse (§4.3) |
+| **no owner fields at all** | **admit and stamp the buyer** — same as `factory` (see below) |
+| unknown category | refuse |
 
 This is also **the last moment before credits are charged**: a name that resolves to nothing here
 means a pet nobody can ever adopt, including the buyer. Fail the import with the real reason rather
 than charging for an unusable pet.
+
+> **Absent fields are ADMITTED here and REFUSED at the upload door — corrected 2026-07-30.**
+>
+> `factory` and "no owner fields" mean the same thing — *no owner yet* — so they get the same
+> answer. Buying is what assigns one, and `buying_assigns_owner(None)` already stamps it on the way
+> in; refusing would refuse a purchase the host is about to make correct.
+>
+> **The asymmetry with §4.3 is the point, and it rests on where the bytes come from.** This door
+> fetches them server-to-server from the partner, digest-verified against the listing the user was
+> quoted — a user cannot hand-craft what arrives here. The upload door takes a zip straight from the
+> user's disk, so there absent fields must be refused or any hand-made zip walks in.
+>
+> **Found on staging by the observe phase, not by review.** The first real group purchase logged
+> `pet_owner_refused door=dpp_checkout reason=no_owner_fields` — under `enforce` that import would
+> have failed. §4.3's justification ("only a fresh upload hits this") is true of the upload door and
+> false of this one: every pet minted before the stamp shipped still sits in its owner's
+> partner-side house, and **that population never drains**, because people keep old pets. The bug
+> was not "legacy pets break for a while" but "legacy pets break permanently".
 
 **2. `POST /api/pets/me/upload` (`pet_routes.py:277`). This is an ACCESS CHECK, and it is the door
 that matters.** It accepts any zip from any user by design ("Does NOT consult the platform
@@ -553,12 +572,21 @@ no drift.
 
 ### 4.3 Bundles with no owner fields
 
-**Refuse at the upload door.** Defaulting absent-to-public would make the fields opt-out, and then
-any hand-made zip walks in and the mechanism is decorative. Pets already adopted are never
-re-validated, so nothing in a user's house breaks; only a fresh upload hits this.
+**Refuse at the upload door — and ONLY there.** Defaulting absent-to-public would make the fields
+opt-out, and then any hand-made zip walks in and the mechanism is decorative. That door takes bytes
+straight from the user, which is what makes the refusal necessary.
 
-**This is the whole reason for §6.16's ordering gate.** Ship the ladder warn-only until DatsPet's
-mint stamp is live in the same environment.
+**Not at the checkout door**, where the same absence means "not sold yet" and is stamped rather than
+refused (§4.2). An earlier revision applied one rule to both doors and justified it with *"pets
+already adopted are never re-validated, so nothing in a user's house breaks; only a fresh upload
+hits this."* That sentence is true of the upload door and **false of the checkout door** — the
+bundles it sees live in the *partner's* house, not DatsMe's, and every one minted before the stamp
+shipped is still there. Staging proved it on the first real purchase (§4.2's box).
+
+**§6.16's ordering gate is still the reason the ladder ships warn-only**, but note what the gate is
+now for. It is not "wait for legacy bundles to drain" — they never do. It is: ship observing, read
+the refusal log, confirm every line is a *genuine* refusal rather than a shape nobody anticipated,
+and only then enforce. That is exactly the job it did here.
 
 ### 4.4 The purchase TARGET is validated separately, and always enforces
 
