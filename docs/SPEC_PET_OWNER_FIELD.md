@@ -808,6 +808,44 @@ development it can never fire.
 lookup, the unresolvable-name warning path, and the partner-signed `owner-check` endpoint Rev.11
 would have needed.
 
+### 9.1c Deployed to staging and verified (2026-07-30)
+
+Both tiers are live on staging; production is untouched on both sides (DatsPet `fe8ba0c`).
+
+| | Before | After |
+|---|---|---|
+| DatsPet staging | `ab63ce7e` | `3afc2849` |
+| DatsMe staging | `4dc46630` | `3fb1c8cb` |
+
+**DatsPet**: `verify_deployment.sh` 14/14. No fleet roll — the diff touches nothing under
+`pool_handler/` or `pet_factory/`. The stamp was then read back out of the **`.zip` the bundle
+endpoint actually serves**, not the stored column, on a real GPU-built pet: `factory` / `datspet` /
+a UTC-`Z` timestamp, with `fingerprint` present and all three zip members intact. A curated sample
+adopted as `public` / `""`.
+
+**DatsMe**: `BUILD_ID` moved, both units clean, `PET_OWNER_ENFORCEMENT` unset → observe. The
+in-process suite runs 50/50 on the box's own interpreter, and the chooser is present in the shipped
+JS chunks (a 200 on `/import/datspet` proves nothing — `try_files` serves `index.html` for missing
+routes).
+
+**The real-Postgres gap is closed.** The committed suite stubs `social_db`, so §4.1's actual SQL had
+never executed. Run against wu.1's real groups on staging — 12/12:
+
+- `group` admits the owner; refuses a genuine outsider with `not_a_group_member`; returns
+  `group_not_found` for a tag that does not exist.
+- `individual` admits self, refuses another user.
+- `normalize_group_tag` reproduces the **stored** `normalized_tag` from a scrambled, mixed-case
+  input, and round-trips a tag containing a comma.
+- `assert_may_own` passes for a member and **403s an outsider before credits move**.
+- A stamped `group` bundle admits the member and refuses the outsider.
+
+**And the membership query specifically.** The owner short-circuits on `Group.owner_id`, so testing
+with wu.1 alone would have left the `Relationship` lookup unexercised. Re-run as `sara.1` — a plain
+member, not the owner — which is what put the `ix_relationship_lookup` path through real Postgres.
+
+Not yet exercised: a **browser** purchase through the chooser end to end (needs a signed-in session),
+and DatsPet's C3 (hard-reload + the DatsMe launch click).
+
 ### 9.2 The remaining step is a config flip, not code
 
 `PET_OWNER_ENFORCEMENT` defaults to `observe`: the ladder logs a self-identifying refusal and
