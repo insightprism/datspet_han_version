@@ -79,6 +79,13 @@ function donationThanks(d: Donation): string {
     return `— thank you! DatsMe credited you ${n} social point${n === 1 ? "" : "s"}.`;
   }
   if (d.reward_state === "owed") return "— thank you! Your thank-you is on its way.";
+  if (d.reward_state === "declined") {
+    // Almost always the one cause: DatsMe has not been given permission to
+    // award points for this app. Saying so beats a cheerful non-answer,
+    // because the donor gave up a pet permanently and got nothing back.
+    return "— thank you! DatsMe could not award points for this one; allow "
+      + "DatsPet to thank you in DatsMe and future donations will earn them.";
+  }
   return "— thank you, it is with the store now.";
 }
 

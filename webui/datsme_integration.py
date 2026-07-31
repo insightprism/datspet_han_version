@@ -187,6 +187,24 @@ def _build_manifest_body() -> dict:
             required=True,
         )
         .request_capability(
+            # SPEC_PET_STORE §10.7. Asked for OPTIONALLY: a user who does not
+            # grant it can still design, adopt and donate — she simply cannot
+            # be thanked, and the donate door says so rather than failing. A
+            # required capability here would gate the whole app on a feature
+            # most users never touch.
+            #
+            # Nothing in this request names an amount, and the capability
+            # cannot spend anything: it only lets DatsMe recognise something
+            # the user did here. That is why it is low risk host-side and
+            # auto-granted for an official partner.
+            "social.award",
+            justification=(
+                "Ask DatsMe to thank you with social points when you donate a "
+                "pet you designed to the Pet Store."
+            ),
+            required=False,
+        )
+        .request_capability(
             "profile.read",
             justification="Greet the user by their DatsMe name while designing.",
             required=False,

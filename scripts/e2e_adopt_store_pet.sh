@@ -36,6 +36,13 @@ PYRUN() {
     PYTHONPATH="$DATSME_API/sdk:$DATSME_API" "$py" -c "$1" )
 }
 
+# DatsPet's own store, read the way the backend reads it (pet_env.sh supplies
+# PETMAKER_DB_PATH). Used to assert the SALE ledger, which no other check sees.
+DATSPET_PYRUN() {
+  ( cd "$REPO"; set -a; . ./pet_env.sh >/dev/null 2>&1; set +a
+    PYTHONPATH="$REPO/webui:$REPO" python3 -c "$1" )
+}
+
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 ok()   { printf '   \033[1;32m✓ %s\033[0m\n' "$*"; }
 die()  { printf '   \033[1;31m✗ %s\033[0m\n' "$*" >&2; exit 1; }
@@ -185,4 +192,33 @@ echo "   credits:      $BAL_BEFORE → $BAL_AFTER   (charged $CHARGED)"
 [ "$GAINED" -ge 1 ] || die "NO new partner pet appeared in the DatsMe house"
 ok "the store pet is in the DatsMe user's house"
 
-say "E2E PASSED — the Pet Store round trip works, priced by the flat store lane."
+# --- 5. the TRANSACTION RECORD (SPEC_PET_STORE §1.5.3) ----------------------
+# The half no other check covers, and the reason it matters: the amount is
+# unrecoverable after the fact. If the host's imported notification did not
+# carry it, or the partner did not record it, the sale exists nowhere and
+# nothing anywhere reports an error.
+say "Step 5/5 — the sale is in DatsPet's transaction ledger"
+SALE=$(DATSPET_PYRUN "
+import db
+row = None
+with db._lock:
+    row = db._connect().execute(
+        'SELECT store_pet_id, buyer_user_id, credits_paid FROM store_sales WHERE pet_id=?',
+        ('$PET_ID',)).fetchone()
+print('|'.join(['MISSING' if row is None else 'FOUND',
+                '' if row is None else str(row['store_pet_id']),
+                '' if row is None else str(row['buyer_user_id']),
+                '' if row is None else ('NULL' if row['credits_paid'] is None else str(row['credits_paid']))]))
+" 2>/dev/null)
+IFS='|' read -r SALE_FOUND SALE_LISTING SALE_BUYER SALE_PAID <<<"$SALE"
+
+[ "$SALE_FOUND" = "FOUND" ] || die "NO store_sales row for $PET_ID — the host's imported notification never landed, or it carried no listing id. The purchase happened and the shop has no record of it."
+ok "sale recorded: listing=$SALE_LISTING buyer=$SALE_BUYER paid=$SALE_PAID"
+
+[ "$SALE_BUYER" = "$DATSME_USER_ID" ] || die "sale attributed to $SALE_BUYER, expected $DATSME_USER_ID"
+[ "$SALE_LISTING" = "$STORE_ID" ] || die "sale names listing $SALE_LISTING, expected $STORE_ID"
+[ "$SALE_PAID" = "NULL" ] && die "credits_paid is NULL — the host did not report the amount. It is computed at checkout and discarded if the notification does not carry it; it cannot be reconstructed later."
+[ "$SALE_PAID" = "$CHARGED" ] || die "ledger says $SALE_PAID credits, the user was actually charged $CHARGED"
+ok "the amount matches what the user was charged ($CHARGED)"
+
+say "E2E PASSED — the Pet Store round trip works, priced by the flat store lane, and the sale is on the books."
