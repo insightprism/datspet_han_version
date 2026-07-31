@@ -561,6 +561,16 @@ def datsme_session(request: Request):
         "display_name": verified.raw_claims.get("nm"),
         "capabilities": ctx.get("capabilities", []),
         "cost": pet_design_cost(),
+        # Would this user PASS the admin bounce? A display hint, nothing more:
+        # `admin` above is the real thing (a verified adm-claim cookie) and is
+        # what every admin route gates on. This only decides whether the nav
+        # offers an admin entry point at all, so a non-admin is not invited to
+        # click something the host will bounce back with ?signin=admin_denied.
+        #
+        # Read from the VERIFIED token like every other claim here, never the
+        # cookie blob. Absent on a pre-`sadm` host → False → the nav simply keeps
+        # its current behaviour for that user, which is the safe degradation.
+        "system_admin": verified.raw_claims.get("sadm") is True,
         # Seconds until this assertion lapses, so the client can renew BEFORE it
         # does (§4.2). From the verified exp, never the cookie's max_age.
         "token_expires_in": _token_expires_in(verified),

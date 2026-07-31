@@ -972,7 +972,12 @@ export interface DatsmeSession {
   // Seconds until the launch assertion lapses, so the client can renew BEFORE it
   // does rather than after (§4.2).
   token_expires_in?: number | null;
-  admin?: boolean;              // a valid admin session is present (show the Admin toolbar link)
+  admin?: boolean;              // a valid admin session is present (show the admin tools)
+  // Would this user PASS the admin bounce? A display hint only — `admin` above is
+  // the real grant. This decides whether the nav offers the Admin entry point at
+  // all, so a non-admin is never invited to click something the host will bounce
+  // straight back with ?signin=admin_denied.
+  system_admin?: boolean;
 }
 
 export async function getDatsmeSession(): Promise<DatsmeSession> {

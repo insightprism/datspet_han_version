@@ -98,7 +98,7 @@ def test_require_admin_launch_rejects_without_cookie(dpp_env):
 
 
 # --- /launch return-redirect + adm-cookie branches, end to end (Item 5) ---
-def _launch_token(secret, *, adm=False, nm=None, ttl=1800):
+def _launch_token(secret, *, adm=False, nm=None, sadm=None, ttl=1800):
     """A signed launch token in DatsMe's shape; optionally adm=true. The SDK
     testkit has no adm param, so add the claim and re-sign with the same secret.
     Uses python-jose (the SDK's JWT lib), not PyJWT."""
@@ -107,13 +107,15 @@ def _launch_token(secret, *, adm=False, nm=None, ttl=1800):
     tok = make_test_launch_token(
         hmac_secret=secret, user_id="user-A", activity_id="design_a_pet",
         partner_slug="datspet", capabilities=["pets.write"], ttl_seconds=ttl)
-    if not adm and nm is None:
+    if not adm and nm is None and sadm is None:
         return tok
     claims = jwt.decode(tok, secret, algorithms=["HS256"])
     if adm:
         claims["adm"] = True
     if nm is not None:
         claims["nm"] = nm
+    if sadm is not None:
+        claims["sadm"] = sadm
     return jwt.encode(claims, secret, algorithm="HS256")
 
 
@@ -155,12 +157,12 @@ def test_launch_rejects_offorigin_return_falls_back_to_default(client, dpp_env):
     assert r.headers["location"].endswith("/design?from=datsme")
 
 
-def _launch_cookie(secret, *, nm=None):
+def _launch_cookie(secret, *, nm=None, sadm=None):
     """The datsme_launch cookie blob /launch would set for a token — built directly
     (the TestClient won't store the Secure cookie over the non-HTTPS test transport,
     same pattern as test_scoping)."""
     import json
-    tok = _launch_token(secret, nm=nm)
+    tok = _launch_token(secret, nm=nm, sadm=sadm)
     return json.dumps({"token": tok, "user_id": "user-A", "activity_id": "design_a_pet",
                        "jti": "t", "capabilities": ["pets.write"], "display_name": nm})
 
@@ -191,6 +193,39 @@ def test_session_display_name_from_verified_token_not_cookie_blob(client, dpp_en
                            "jti": "t", "capabilities": [], "display_name": "SpoofedName"})
     body = client.get("/api/datsme/session", cookies={"datsme_launch": tampered}).json()
     assert body["display_name"] == "RealName"    # from the token, not the blob
+
+
+def test_session_system_admin_hint_is_display_only(client, dpp_env):
+    """The nav must not offer an Admin door to someone the host would bounce.
+
+    `sadm` says "this user would PASS /admin-launch"; `admin` says "this user HAS
+    admin here" (a verified adm cookie). They are different questions and the nav
+    needs the first: before this claim existed the Admin link was shown to every
+    launched user, so a normal user could click it and be told the area is for
+    system admins only.
+
+    Critically, the hint must not GRANT anything — `admin` stays False on a token
+    that only carries `sadm`, because a grant still requires the explicit bounce.
+    """
+    cookie = _launch_cookie(dpp_env["secret"], sadm=True)
+    body = client.get("/api/datsme/session", cookies={"datsme_launch": cookie}).json()
+    assert body["system_admin"] is True
+    assert body["admin"] is False, "a hint must never grant admin — the bounce does"
+
+
+def test_session_system_admin_false_for_a_normal_user(client, dpp_env):
+    body = client.get("/api/datsme/session",
+                      cookies={"datsme_launch": _launch_cookie(dpp_env["secret"], sadm=False)}).json()
+    assert body["system_admin"] is False
+
+
+def test_session_system_admin_false_on_a_pre_sadm_host(client, dpp_env):
+    """A host that predates the claim → False, never an error. The nav then keeps
+    the Admin link hidden, which is the safe degradation: an admin can still reach
+    the bounce URL directly, whereas failing open would restore the original bug."""
+    body = client.get("/api/datsme/session",
+                      cookies={"datsme_launch": _launch_cookie(dpp_env["secret"])}).json()
+    assert body["system_admin"] is False
 
 
 # --- /design must survive the trip to prod (SPEC_PET_DESIGNER_FLOW §11) ---------

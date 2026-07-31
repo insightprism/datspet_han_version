@@ -70,7 +70,17 @@ export default function NavAuth() {
               Settings
             </Link>
           </span>
-        ) : adminBounce ? (
+        ) : adminBounce && session.system_admin ? (
+          // Offered ONLY to someone who would pass the bounce. This link is not a
+          // page — it is a round trip to the host's /admin-launch, which mints an
+          // adm token for a system admin and sends everyone else back to the
+          // landing with ?signin=admin_denied. Showing it to every launched user
+          // meant a normal user could click "Admin" and be told off for it.
+          //
+          // `system_admin` is a hint, not a grant: it only decides whether the
+          // door is visible. Walking through it still requires the bounce, and
+          // every admin route still gates on the verified adm cookie — so a
+          // forged hint would reveal a link and nothing behind it.
           <a href={adminBounce} className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
             Admin
           </a>
