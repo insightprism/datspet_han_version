@@ -968,12 +968,36 @@ The page reads `GET /api/store` (replacing the per-animal samples of
   tags.
 - **Animal filter** — chips derived from the animals present in the listing
   (never a hardcoded list).
-- **Tag filter** — tap a tag on any card to filter by it.
-- **Cards** — portrait, name, animal, description, tags, pose count. **No
+- **Tag filter** — a chip row under the animal chips, most-used tag first
+  (`tagsPresent`, capped at `TAG_CHIP_LIMIT`; ties break alphabetically so the
+  bar does not reshuffle between refreshes). An ACTIVE tag is always shown even
+  when it falls outside the top slice, or a rare tag could not be cleared once
+  chosen.
+- **Cards** — portrait, name, animal, and **the pose names**. **No
   price** (§0.6.1): the copy stays "you'll see the exact cost on DatsMe
   before anything is charged", and makes **no cheaper-than-designing claim**
   — the relation between the two prices is a host knob (§0.2) that can change
   under the page. The host's checkout remains the one place a number appears.
+
+**Description and tags are NOT on the card** (corrected 2026-07-31). They were
+until an owner looked at a real shelf: the picture already says what the pet is,
+so the prose was decoration, and the tags were vocabulary for the filter rather
+than something to read per row. Rendering both made card height depend on how
+much text a listing happened to carry — a shelf of four showed three nearly
+empty cards beside one wall of prose and eight tag chips.
+
+Both stay in the listing payload and both stay **searchable**: `filterListings`
+still matches over name + description + tags, and a test asserts a query
+matching only the now-hidden text still finds the pet. Hiding them from the card
+had to tidy the layout without deleting a feature.
+
+The tag filter moved **up into the bar** rather than away, because tapping a tag
+on a card was the only way to SET it — the chip at the top merely cleared it.
+
+**Pose names replace the pose count.** "8 poses" was the one fact on the card a
+shopper could not act on; it does not say whether the bird flies. The names are
+already in the listing (`store_listing_view` derives `poses` from the manifest),
+so this renders data that was being fetched and thrown away.
 - **Adopt this one** — the existing adopt handler, including the
   adopt-then-sign-in resume via `?adopted=<pet_id>`, re-pointed at
   `POST /api/store/{id}/adopt`.

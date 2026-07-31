@@ -38,7 +38,8 @@ import {
   type Entitlement,
   type StoreListing,
 } from "@/lib/api";
-import { animalsPresent, filterListings, NO_FILTER, type StoreFilter } from "./storeFilter";
+import { animalsPresent, filterListings, NO_FILTER, tagsPresent,
+         type StoreFilter } from "./storeFilter";
 
 /** Carries an adopted pet across the sign-in bounce, so the hand-off can resume
  *  on the way back. Same idea as the designer's `?job=`. */
@@ -103,6 +104,7 @@ export default function PetStorePage() {
   // the server enforces it too; this only spares the user a doomed click.
   const canAdopt = entitlement ? entitlement.can_adopt_samples !== false : true;
   const animals = animalsPresent(listings ?? []);
+  const tags = tagsPresent(listings ?? []);
   const shown = filterListings(listings ?? [], filter);
   const filtering = filter !== NO_FILTER &&
     (filter.query.trim() !== "" || filter.animal !== null || filter.tag !== null);
@@ -181,17 +183,33 @@ export default function PetStorePage() {
                 ))}
               </div>
             )}
-            {filter.tag && (
-              <button
-                type="button"
-                onClick={() => setFilter((f) => ({ ...f, tag: null }))}
-                className="mono rounded-lg border px-3 py-1.5 text-xs transition hover:opacity-85"
-                style={{ background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }}
-              >
-                #{filter.tag} ✕
-              </button>
-            )}
           </div>
+
+          {/* The tag filter, which used to live on every card. Tags are filter
+              vocabulary, not card content — but they were also the only way to
+              SET this filter, so they move here rather than disappear (§6.1).
+              An active tag stays visible even outside the top slice, otherwise
+              a rare tag could not be cleared once chosen. */}
+          {tags.length > 0 && (
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              {(filter.tag && !tags.includes(filter.tag)
+                ? [filter.tag, ...tags] : tags).map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => setFilter((f) => ({
+                    ...f, tag: f.tag === tag ? null : tag,
+                  }))}
+                  className="mono rounded border px-2 py-1 text-[11px] transition hover:opacity-85"
+                  style={filter.tag === tag
+                    ? { background: "rgba(99,102,241,0.12)", color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }
+                    : { color: "var(--faint)", borderColor: "var(--line)" }}
+                >
+                  #{tag}{filter.tag === tag ? " ✕" : ""}
+                </button>
+              ))}
+            </div>
+          )}
 
           {shown.length === 0 && filtering && (
             <p className="mono text-sm" style={{ color: "var(--faint)" }}>
@@ -213,29 +231,24 @@ export default function PetStorePage() {
                     {pet.display_name}
                   </span>
                   <span className="mono text-[11px]" style={{ color: "var(--faint)" }}>
-                    {pet.animal} · {pet.pose_count} pose{pet.pose_count === 1 ? "" : "s"}
+                    {pet.animal}
                   </span>
-                  {pet.description && (
-                    <span className="text-xs leading-relaxed" style={{ color: "var(--muted)" }}>
-                      {pet.description}
-                    </span>
-                  )}
-                  {pet.tags.length > 0 && (
+                  {/* WHAT it can do, not how many things it can do (§6.1). The
+                      count was the one fact a shopper could not act on: "8
+                      poses" does not say whether it flies. Description and tags
+                      are gone from the card entirely — the picture says what
+                      the pet is, and both remain searchable and, for tags,
+                      filterable from the bar above. */}
+                  {pet.poses.length > 0 && (
                     <span className="flex flex-wrap gap-1">
-                      {pet.tags.map((tag) => (
-                        <button
-                          key={tag}
-                          type="button"
-                          onClick={() => setFilter((f) => ({
-                            ...f, tag: f.tag === tag ? null : tag,
-                          }))}
-                          className="mono rounded border px-1.5 py-0.5 text-[10px] transition hover:opacity-85"
-                          style={filter.tag === tag
-                            ? { color: "var(--accent)", borderColor: "rgba(99,102,241,0.4)" }
-                            : { color: "var(--faint)", borderColor: "var(--line)" }}
+                      {pet.poses.map((pose) => (
+                        <span
+                          key={pose}
+                          className="mono rounded border px-1.5 py-0.5 text-[10px]"
+                          style={{ color: "var(--muted)", borderColor: "var(--line)" }}
                         >
-                          #{tag}
-                        </button>
+                          {pose}
+                        </span>
                       ))}
                     </span>
                   )}

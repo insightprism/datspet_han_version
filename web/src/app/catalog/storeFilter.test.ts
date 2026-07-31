@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { StoreListing } from "@/lib/api";
-import { animalsPresent, filterListings, NO_FILTER } from "./storeFilter";
+import { animalsPresent, filterListings, NO_FILTER, TAG_CHIP_LIMIT,
+         tagsPresent } from "./storeFilter";
 
 function listing(overrides: Partial<StoreListing>): StoreListing {
   return {
@@ -52,5 +53,57 @@ describe("animalsPresent", () => {
   it("derives sorted, deduplicated chips from the shelf", () => {
     expect(animalsPresent(SHELF)).toEqual(["bat", "cat", "dog"]);
     expect(animalsPresent([])).toEqual([]);
+  });
+});
+
+describe("the tag chips that replaced per-card tags (§6.1)", () => {
+  const shelf = [
+    listing({ display_name: "A", animal: "cat", tags: ["fluffy", "blue"] }),
+    listing({ display_name: "B", animal: "dog", tags: ["fluffy"] }),
+    listing({ display_name: "C", animal: "cat", tags: ["fluffy", "blue"] }),
+    listing({ display_name: "D", animal: "bird", tags: ["rare"] }),
+  ];
+
+  it("orders by how many listings carry the tag, not alphabetically", () => {
+    // A tag on one listing filters to one listing — a worse chip than one
+    // shared by three.
+    expect(tagsPresent(shelf)).toEqual(["fluffy", "blue", "rare"]);
+  });
+
+  it("breaks ties alphabetically so the bar does not reshuffle on refresh", () => {
+    expect(tagsPresent([listing({ tags: ["zebra", "aardvark"] })]))
+      .toEqual(["aardvark", "zebra"]);
+  });
+
+  it("caps the bar, leaving the long tail to the search box", () => {
+    const many = listing({
+      tags: Array.from({ length: TAG_CHIP_LIMIT + 5 }, (_, i) => `t${i}`),
+    });
+    expect(tagsPresent([many])).toHaveLength(TAG_CHIP_LIMIT);
+  });
+
+  it("is empty when nothing is tagged, so the row does not render", () => {
+    expect(tagsPresent([listing({ tags: [] })])).toEqual([]);
+  });
+});
+
+describe("text hidden from the card is still searchable", () => {
+  // The whole premise of removing description and tags from the card: they are
+  // filter vocabulary, not card content. If hiding them stopped them matching,
+  // the change would have deleted a feature rather than tidied a layout.
+  const shelf = [
+    listing({ display_name: "Blue Butterfly", animal: "butterfly",
+              description: "iridescent wings that dance", tags: ["magical"] }),
+    listing({ display_name: "Black Cobra", animal: "cobra" }),
+  ];
+
+  it("matches on a word only the (now hidden) description contains", () => {
+    expect(filterListings(shelf, { ...NO_FILTER, query: "iridescent" })
+      .map((p) => p.display_name)).toEqual(["Blue Butterfly"]);
+  });
+
+  it("matches on a word only the (now hidden) tags contain", () => {
+    expect(filterListings(shelf, { ...NO_FILTER, query: "magical" })
+      .map((p) => p.display_name)).toEqual(["Blue Butterfly"]);
   });
 });
