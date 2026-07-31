@@ -109,11 +109,23 @@ Migration is one step with no dual-write: add `status`, backfill from
 `DROP COLUMN`). It touches a live table in three environments, so §13 gives it
 its own small deploy between Phase 1 and Phase 2.
 
-New §1.5 answers a question this raised: there is **no adoption or view
-counter**, adoptions are already derivable from `pets.source_store_pet_id` but
-would count surviving copies rather than sales, and views are not cheaply
-countable at all given the single cached listing payload. Both are recorded as
-deliberate gaps with a named tripwire rather than built on speculation.
+New §1.5 answers a question this raised — and corrects a first answer that was
+too pessimistic. **The store already knows exactly how many times a listing was
+sold and to whom**: the host confirms every purchase with a signed
+`POST /partner/imported/{user_id}`, and DatsPet stamps `writeback_acked_at` on
+the adopted copy, which carries both `source_store_pet_id` and the buyer's
+`external_user_id`. The count is one WHERE clause today.
+
+The flaw is *where* it is kept, not whether it is known: that row lives in the
+buyer's house and `delete_pet` is a hard delete, so a user tidying up silently
+decrements a number meant to record history. §1.5.3 specifies the fix as an
+append-only `store_sales` ledger written where the ack already lands — one
+insert, `pet_id` as the primary key so a retried host notification cannot
+double-count, and deliberately **no price column**, because DatsPet is not the
+pricer and a stale copy of the host's knob would be a number two systems
+disagree about. Views stay unbuilt and are a genuinely harder problem (§1.5.4):
+one cached listing payload and a 24-hour preview cache mean there is no request
+to count without a purpose-built beacon.
 
 </details>
 
@@ -288,60 +300,95 @@ where `0`, then `DROP COLUMN published` — SQLite on these boxes is 3.37, so
 a compatibility shim: a transition layer here would mean two sources of truth
 for "is this for sale", which is the failure this revision exists to remove.
 
-### §1.5 What the store does NOT count, and what it could
+### §1.5 Sales — known but not kept, and views, which are neither
 
-There is **no adoption counter and no view counter**, and neither is an
-oversight — but only one of them is cheap to add later.
+**The store knows exactly how many times a listing was sold, and to whom. It
+just throws the evidence away when a buyer tidies up.** Rev.9 records the fix
+and does not build it.
 
-**Adoptions are already recorded, just not counted.** Every store adopt writes
-`pets.source_store_pet_id` (§7.2), so "how many copies of this listing exist"
-is a `COUNT(*)`, and "how many reached DatsMe" is that plus
-`datsme_activity_id IS NOT NULL`. Nothing needs to be added to learn either.
+#### §1.5.1 The sale is already a precise, host-confirmed event
 
-The catch, and the reason this spec does not simply expose that count: it
-counts **surviving copies, not sales**. A user who deletes an adopted pet
-decrements it, so the number answers "how many exist" when merchandising wants
-"how many times was this ever taken". Those diverge permanently and silently.
-If adoption counts are ever surfaced, the right shape is an **append-only
-adoption ledger** written at adopt time (the `ai_usage` pattern — a re-run is a
-new row, never an update), *not* a counter column on `store_pets` and not a
-live count of `pets`. A counter column would also have to be incremented by the
-adopt path, giving the row a fact its own bundle cannot verify — the
-by-construction rule §1.2 follows everywhere else.
+Nothing has to be inferred. The chain exists end to end today:
 
-**Views are not recorded and would not be cheap.** The shop paints from ONE
-cacheable listing response (§6.1), so there is no per-pet request to count, and
-`preview.png` ships a 24-hour cache header (§3.1) precisely so it is *not*
-re-fetched. Counting image loads would undercount by design and miss every
-repeat viewer. A view metric means a deliberate client-side beacon, which is a
-new surface with its own privacy question — out of scope here, and it should be
-argued on its own rather than smuggled in beside a status column.
+1. A store adopt writes a `pets` row carrying `source_store_pet_id` (which
+   listing) and `external_user_id` (which DatsMe user) — `webui/pet_store.py`.
+2. The buyer hands off; the host quotes, charges, and pulls the bundle.
+3. **The host tells us**: a signed `POST /partner/imported/{user_id}` names the
+   pet ids it took (`datsme_integration.partner_imported`), and DatsPet stamps
+   `writeback_acked_at` on each (`db.stamp_writeback_acked`).
 
-*Tripwire:* the first time an admin has to guess whether a `backroom` pet is
-worth promoting, adoption counts have become load-bearing — build the ledger
-then, and read view counts as a separate decision.
+That stamp *is* the sale — it is set only after the host's checkout has run, it
+is host-signed, and the handler already refuses to stamp a pet the named user
+does not own. The house UI reads it today as `in_datsme`.
 
-### §1.3 Listing metadata: two kinds of facts, two sources
+So the count is one WHERE clause:
 
-- **Mechanical facts** are derived from the bundle at insert and are never
-  editable: `breed_id`, `pose_count`, pose names (read from
-  `manifest["animations"]` at read time). Editing these would let a listing
-  lie about its artifact.
-- **`animal` is seeded, then confirmed** (Rev.3). A bundle carries no
-  canonical species key — a typed-animal pet's `breed_id`
-  (`white_snow_leopard`) appears in no `catalog.json`. Publish-from-pet seeds
-  it by catalog breed lookup, falling back to the last word of `breed_id`,
-  and the admin may correct it **while the row is off the shelf**; the
-  sellability validator refuses to shelve an empty one. Once it is on the shelf
-  the value is fixed — the shop's filter chips depend on it.
-- **Merchandising facts** are authored: `display_name`, `description`,
-  `tags_json`, `status`. The AI drafts the first two-and-a-half (§4); the
-  admin owns the final text.
+```sql
+SELECT COUNT(*) FROM pets
+ WHERE source_store_pet_id = ? AND writeback_acked_at IS NOT NULL;
+```
 
-Tags are plain lowercase strings, not an enum. The design-axes vocabulary
-(`pet_factory/design_axes/`) is a natural *source* of tag suggestions, but the
-store does not enforce it — a closed tag vocabulary is an abstraction with one
-consumer today, and the three-instances rule says wait.
+and the buyers are the `external_user_id`s on those same rows.
+
+#### §1.5.2 Why that query is still the wrong place to read it
+
+It counts rows in the **buyer's house**, and `delete_pet` is a hard `DELETE`.
+A user who sells a pet's slot back — deletes it to make room — silently
+decrements a number that is supposed to mean "how many times was this ever
+bought". The sale happened; the record of it was collateral damage to an
+unrelated action. That divergence is invisible and permanent, and it gets worse
+the longer the store runs, which is exactly when the number starts mattering.
+
+#### §1.5.3 The fix: an append-only sale ledger, written where the ack lands
+
+```sql
+CREATE TABLE IF NOT EXISTS store_sales (
+    pet_id         TEXT PRIMARY KEY,  -- the adopted copy; UNIQUE, so a retried
+                                      -- host notification cannot double-count
+    store_pet_id   TEXT NOT NULL,     -- which listing was sold
+    buyer_user_id  TEXT NOT NULL,     -- external_user_id at the time of sale
+    sold_at        REAL NOT NULL
+);
+```
+
+- **One insert, in a handler that already exists.** `partner_imported` already
+  loops the acked pet ids and already has the row in hand; the ledger row goes
+  in beside `stamp_writeback_acked`, guarded so a pet with no
+  `source_store_pet_id` (a designed pet) writes nothing.
+- **`pet_id` is the primary key, and that is the idempotency.** The host may
+  re-notify; the stamp is naturally idempotent because it overwrites, but an
+  INSERT is not — so the key does that job. `INSERT OR IGNORE`, never an
+  UPDATE: **append-only ledgers stay append-only**, the `ai_usage` rule.
+- **No price column, deliberately.** DatsPet does not know what the buyer was
+  charged and must never guess — the host is the only pricer (§0.5.1), the
+  amount is a host knob that changes under us, and a stale copy of it here
+  would be a number two systems disagree about. If revenue reporting is ever
+  wanted, it is a host-side question against the host's own ledger.
+- **Deleting the store listing does not delete its sales.** The ledger outlives
+  the inventory row, like the donation ledger outlives the pet it became
+  (§10.2). History is not tidied.
+
+Then "how many times was this sold" is a `COUNT` on a table nothing else
+mutates, and it stays true through house cleanups, archiving, and deletion of
+the listing itself.
+
+**Buyer identity is stored but not casually displayed.** `buyer_user_id` is what
+makes the ledger auditable and would answer "did this actually reach a person",
+but the admin shelf does not need names to make merchandising decisions — a
+count does. Default the admin surface to counts, and treat exposing buyer
+identity as its own decision with its own reason, not a free consequence of
+having the column.
+
+#### §1.5.4 Views are a different problem, and not a cheap one
+
+There is no view counter and adding one is not a WHERE clause. The shop paints
+from **one cacheable listing response** (§6.1), so there is no per-pet request
+to count, and `preview.png` ships a 24-hour cache header (§3.1) precisely so it
+is *not* re-fetched — counting image loads would undercount by design and miss
+every repeat viewer entirely. A real view metric needs a deliberate client-side
+beacon: a new surface, a new write path on a public endpoint, and its own
+privacy question. It should be argued on its own merits rather than arriving
+beside a sale counter because the two sound similar.
 
 ---
 
@@ -1419,8 +1466,10 @@ that called it. Fixed; the ordering rule is now written down.
    written (Rev.6, reshaped by Rev.7 and Rev.8): §10 is build-ready and needs
    the owner's sign-off, not more design. Nothing about it is coded in either
    repo.
-7. **The §1.5 gaps** — no adoption ledger, no view counting. Deliberate, with a
-   named tripwire; do not build either on speculation.
+7. **§1.5.3's `store_sales` ledger** — specified, not built. Small (one insert
+   in `partner_imported`), and every day it is not built is sales history that
+   a buyer's house cleanup can still erase. View counting stays unbuilt and
+   unspecified beyond §1.5.4 — it is a beacon, not a counter.
 
 ### §14.4 Deployed (Rev.5, 2026-07-31)
 
