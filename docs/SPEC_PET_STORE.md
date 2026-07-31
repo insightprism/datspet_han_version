@@ -1178,6 +1178,7 @@ CREATE TABLE IF NOT EXISTS store_donations (
     display_name        TEXT NOT NULL,     -- as donated; the shelf row may be renamed
     donated_at          REAL NOT NULL,
     reward_state        TEXT NOT NULL,     -- owed | delivered | capped | disabled | declined
+    points_awarded      INTEGER,           -- what the HOST said it gave; NULL until it answers
     reward_delivered_at REAL
 );
 ```
@@ -1294,9 +1295,10 @@ the shorthand "the donation pays a social point" invites the wrong picture:
 
 - DatsPet has **no ledger, no balance, and no write access to DatsMe's**. The
   only thing it can do is send a signed message naming a donation it approved.
-- **The amount is not on the wire.** DatsPet never states a figure, because a
-  partner that could name one could name a bigger one. The host reads its own
-  knob.
+- **DatsPet never DECIDES a figure.** It names no amount when asking; the host
+  reads its own knob. What comes back is the host's report of what it actually
+  did, which DatsPet stores and repeats — the same way it records what the host
+  charged for a sale (§1.5.3). Repeating the host's answer is not pricing.
 - **The host may decline, and declining is normal, not an error.** The knob at
   0 (`disabled`), the donor already thanked today (`capped`), the capability
   revoked (`capability_not_granted`) — each is a legitimate answer that DatsPet
@@ -1353,7 +1355,9 @@ endpoint (step 9) and the launch handler.
   launch must reuse the same key). **The idempotency key is derived from the
   donation ids in the batch**, so a retry is byte-identical and both the host's
   replay cache and its business key recognise it.
-- **Outcomes**: HTTP 200 marks every id in the batch `delivered`. A per-entry
+- **Outcomes**: HTTP 200 marks every id in the batch `delivered` and stores
+  the `points_awarded` the host reported, so the thank-you survives a reload
+  and never has to be recomputed. A per-entry
   `capped` verdict from the host marks that row `capped` — **terminal, never
   retried**; the donor gave several things and was thanked once, which is what
   a daily cap means. A permanent refusal (`capability_not_granted`) marks them
@@ -1405,23 +1409,34 @@ one writeback per launch):
 { "awards": [ { "award_key": "<donation id>", "reason": "pet_donation" } ] }
 ```
 
-The **amount is not on the wire**: the host reads its own knob. A partner that
-could name a figure could name a bigger one, and §0.6.1's rule — DatsPet never
-prices anything — applies to what it earns as much as to what it charges.
-
-The response carries a per-entry verdict, because §10.7.3's delivery states
-depend on it:
+**The direction is what matters, and the two directions differ.** DatsPet may
+not NAME an amount when asking — a partner that could name a figure could name
+a bigger one — so the request carries no number and the host reads its own
+knob. But the host REPORTING what it did is a different act, and it is exactly
+what the sale path already does (`credits_charged`, §1.5.3). So the response
+carries both the verdict and the figure:
 
 ```jsonc
-{ "results": [ { "award_key": "…", "outcome": "awarded" | "duplicate" | "capped" | "disabled" } ] }
+{ "results": [
+    { "award_key": "…", "outcome": "awarded",   "points_awarded": 1 },
+    { "award_key": "…", "outcome": "duplicate", "points_awarded": 1 },
+    { "award_key": "…", "outcome": "capped",    "points_awarded": 0 }
+] }
 ```
 
-- `awarded` / `duplicate` → the partner marks it `delivered` (a duplicate means
-  a previous delivery already landed; both are terminal successes).
-- `capped` → `capped`, terminal, never retried (§10.7.3).
-- `disabled` → the knob is 0; terminal, and *not* an error — the owner turned it
-  off deliberately.
+- `awarded` → the partner marks it `delivered` and stores `points_awarded`.
+- `duplicate` → also `delivered`; `points_awarded` is what the FIRST delivery
+  wrote, read off the host's claim row, so a retry reports the same number
+  rather than a fresh one.
+- `capped` → `capped`, terminal, never retried (§10.7.3). `points_awarded` is
+  0, and 0 is unambiguous here because the outcome word already says why.
+- `disabled` → the knob is 0; terminal, and *not* an error — the owner turned
+  it off deliberately.
 - An entry missing from `results` stays `owed` and rides the next launch.
+
+This is what lets the donor be thanked accurately (§10.8). Without the figure,
+DatsPet could only say "thanked" — or, worse, hardcode a number that a knob
+change would quietly turn into a lie.
 
 Transport failures map the way §10.7.3 already states: a permanent
 `capability_not_granted` (403) marks the batch `declined`; **any other 4xx is
@@ -1575,12 +1590,24 @@ completed the moment she clicked. What remains worth showing is the record of
 what she gave.
 
 A **Donations** section on the house page, fed by `GET /api/donations` (own rows
-only, scoped like every other read): the name, when she gave it, and whether the
-thank-you has landed. Nothing is actionable — no restore, no appeal, no verdict
-— which is the point of the model. Point totals are never rendered here: DatsPet
-shows no balances (§0.6.1), so a delivered award reads "thanked with a social
-point" and the number lives on DatsMe, in the Social Point History where every
-other award appears.
+only, scoped like every other read): the name, when she gave it, and the
+thank-you. Nothing is actionable — no restore, no appeal, no verdict — which is
+the point of the model.
+
+**The thank-you names the number, and the number is the host's.** A delivered
+row reads *"Thank you — DatsMe credited you 1 social point."* using
+`points_awarded` exactly as the host reported it (§10.7.4), never a figure
+DatsPet computed or remembered from a knob it does not own. Before the host has
+answered, the row reads *"thank-you on its way"*; when the host declined —
+capped for the day, or the reward turned off — it reads that the pet was
+accepted and says nothing about points, because nothing was given.
+
+This does not cross §0.6.1. That rule forbids DatsPet from **quoting a price or
+holding a balance** — a number it computed, or a running total that can go
+stale. Echoing what the host just said it did is neither: it is the same act as
+recording `credits_paid` on a sale (§1.5.3). What stays off this page is any
+*total* — "you have 47 social points" is a balance, and balances live on
+DatsMe.
 
 It is a section on a page the donor already visits, not a new route and not a
 nav entry. If the list stays this thin in practice, folding it into the house's
@@ -1648,6 +1675,11 @@ host a workflow.
   second launch sends nothing; a `capped` verdict is terminal and never
   retried; the idempotency key is derived from the donation ids, so a retry is
   byte-identical.
+- `webui/tests/test_donation_thanks.py` — a delivered award stores the host's
+  `points_awarded` and the donor's row renders that number, not a constant; a
+  `capped` or `disabled` outcome says the pet was accepted and claims no
+  points; a `duplicate` reports the FIRST award's figure rather than a fresh
+  one; no page anywhere renders a point TOTAL (that is a balance, §0.6.1).
 - Host `api/tests/test_social_award.py` (in-process, registered in
   `test_all.py` — the §14.2 rule): the four registry entries are consistent;
   a missing `social.award` grant 403s; the same donation id delivered twice
