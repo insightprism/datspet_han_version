@@ -107,6 +107,7 @@ def test_every_route_requires_the_admin_gate(dpp_env):
     client = _fresh_admin_app(dpp_env, gate_open=False)
     assert client.get("/api/admin/store").status_code == 401
     assert client.get("/api/admin/store/x").status_code == 401
+    assert client.get("/api/admin/store/x/preview.png").status_code == 401
     assert client.post("/api/admin/store/publish-from-pet",
                        json={"pet_id": "x"}).status_code == 401
     assert client.put("/api/admin/store/x", json={
@@ -314,3 +315,63 @@ def test_delete_removes_inventory_but_not_adopted_copies(admin_client, dpp_env):
     assert dpp_env["db"].get_store_pet("storerow0001") is None
     # The copy is a copy (§3.2) — it survives its source.
     assert dpp_env["db"].get_pet("adoptedcopy1") is not None
+
+
+# --- the inventory list ----------------------------------------------------
+# All three cases below pin things that were broken in production while every
+# gate was green, because the list route served the raw byteless projection
+# and every existing assertion was made against the single-row routes.
+def test_inventory_list_carries_what_only_the_list_renders(admin_client, dpp_env):
+    """The list is the ONLY surface that draws the donated badge and the
+    sellability warning, so serving it a shape without them makes both
+    unreachable — which is what shipped (§10.4, §5.3)."""
+    db = dpp_env["db"]
+    make_store_row(db, store_id="gift00000001", display_name="Gifted Cat")
+    make_store_row(db, store_id="stocked00001", display_name="Stocked Cat")
+    # A row that cannot be sold: no animations at all.
+    make_store_row(db, store_id="broken000001", display_name="Broken Cat",
+                   animations={})
+    db.insert_donation(donation_id="don000000001",
+                       external_user_id="datsme-donor-1",
+                       store_pet_id="gift00000001", display_name="Gifted Cat",
+                       donated_at=1783800002.0)
+
+    by_id = {p["id"]: p for p in
+             admin_client.get("/api/admin/store").json()["pets"]}
+
+    assert by_id["gift00000001"]["donated_by"] == "datsme-donor-1"
+    # Present and null, not absent: the badge's absence has to be a fact the
+    # list states, not a key the browser never received.
+    assert by_id["stocked00001"]["donated_by"] is None
+    assert by_id["stocked00001"]["sellability_errors"] == []
+    assert by_id["broken000001"]["sellability_errors"] != []
+
+
+def test_inventory_list_and_detail_agree_field_for_field(admin_client, dpp_env):
+    """One builder for both routes. A list row that is a strict subset of the
+    detail view is how the two silently drifted in the first place."""
+    make_store_row(dpp_env["db"], store_id="storerow0001")
+    listed = admin_client.get("/api/admin/store").json()["pets"][0]
+    detail = admin_client.get("/api/admin/store/storerow0001").json()
+    assert listed == detail
+
+
+def test_admin_preview_serves_every_shelf_state(admin_client, dpp_env):
+    """The admin's portraits must NOT resolve through the shopper's shelf gate.
+    Pointing them there made every intake row — i.e. every donation, the rows
+    she most needs to look at — a broken image (§1.4)."""
+    make_store_row(dpp_env["db"], store_id="offshelf0001", shelved=False)
+    make_store_row(dpp_env["db"], store_id="onshelf00001", shelved=True)
+
+    for store_id in ("offshelf0001", "onshelf00001"):
+        r = admin_client.get(f"/api/admin/store/{store_id}/preview.png")
+        assert r.status_code == 200, f"{store_id}: {r.text}"
+        assert r.content == FAKE_PNG
+        # Behind the admin gate — never cacheable by a shared proxy.
+        assert "private" in r.headers["cache-control"]
+
+    assert admin_client.get(
+        "/api/admin/store/nosuchrow0001/preview.png").status_code == 404
+    # And the listing points at THAT route, not the shopper's.
+    listing = admin_client.get("/api/admin/store/offshelf0001").json()
+    assert listing["preview_url"] == "/api/admin/store/offshelf0001/preview.png"

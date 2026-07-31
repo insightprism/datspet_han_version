@@ -751,8 +751,9 @@ a deploy.
 
 | Route | Does |
 |---|---|
-| `GET /api/admin/store` | all rows in every state, listing shape + `status` + `admin_note` + `first_shelved_at` (the editor gates the animal field on it). Default sort newest-first, so `intake` surfaces without a queue |
-| `GET /api/admin/store/{id}` | one row, full metadata |
+| `GET /api/admin/store` | all rows in every state, newest-first so `intake` surfaces without a queue. Built row-by-row through the **same `_admin_view` builder the detail route uses** — the list and the detail are field-for-field identical, and a test asserts it. It served the raw byteless projection until 2026-07-31, which silently dropped `donated_by` and `sellability_errors`: the list is the only surface that renders either, so both were unreachable in production while every gate was green. |
+| `GET /api/admin/store/{id}` | one row, full metadata: the listing shape + `status` + `admin_note` + `first_shelved_at` (the editor gates the animal field on it) + `donated_by` (§10.4) + `sellability_errors` (§5.3) |
+| `GET /api/admin/store/{id}/preview.png` | the portrait **in every shelf state**. The shopper's preview route (§3.1) resolves through the shelf gate and 404s anything off it — correct there and exactly wrong here, since most of this surface is `intake`. Same bytes, same 24 h immutability, but `Cache-Control: private` (`ADMIN_PREVIEW_CACHE_CONTROL`) because it is served from behind the admin gate. Pointing the admin at the shopper's route made every donation a broken image. |
 | `POST /api/admin/store/publish-from-pet` | body `{pet_id}` — **the stocking door**, §5. The source pet is read through the caller's OWN owner scope (the same scoped access keep/delete use): an admin publishes only a pet she can see in her house, never an arbitrary row by id. |
 | `PUT /api/admin/store/{id}` | edit `display_name`, `description`, `tags`, `animal` (only while `first_shelved_at` is NULL — §1.3), `status`, `admin_note`. Tags are normalized on write — lowercased, trimmed, deduplicated, capped by named constants (`STORE_MAX_TAGS = 16`, `STORE_MAX_TAG_LEN = 32`). **Moving to `status: 'shelf'` re-runs the sellability validator** (§5.3) and refuses on failure — the admin cannot shelve a listing the build would reject. Every other transition is free (§1.4). |
 | `POST /api/admin/store/{id}/ai-tag` | write description + tags with AI (§4) — the ONE generator of listing text, overwriting both, **only if the row is off the shelf** (a live listing is the admin's text, and regenerating it would change what shoppers are reading) |
@@ -765,6 +766,14 @@ a deploy.
 `insert_store_pet` (derives the four derived columns; the only writer),
 `list_store_pets(shelf_only)`, `get_store_pet`, `update_store_listing`,
 `set_store_status`, `delete_store_pet`.
+
+Plus `list_store_rows(shelf_only=False)` — FULL rows for the admin inventory.
+The byteless `list_store_pets` projection cannot back that surface: "sellable"
+is defined over the bundle (§5.3), so the admin list has to read the blobs to
+show the same verdict the publish gate enforces. That cost is accepted on a
+cold, single-user, admin-only route; inventing a cheaper second definition of
+sellable is how the list and the gate start disagreeing. The shopper's hot
+route keeps the byteless projection.
 
 Three of those names change in Phase 1b and the rename is part of that phase's
 work, not a silent drift: `list_store_pets(published_only)` →
@@ -929,6 +938,19 @@ listing editor (name, description, tags, the four-state status selector and
 `admin_note` of §1.4, and the ✨ that writes description + tags — §4, behind its
 confirm).
 Linked from the admin nav exactly as motions/design/ai/settings are.
+
+Two things the first build got wrong, both found by an owner testing a real
+donation on 2026-07-31 and both fixed the same day:
+
+- **The section is "Inventory", never "Shelf".** It lists all four states, and
+  heading it "Shelf" told the admin a row sitting in `intake` was already for
+  sale. The stocking button says "Copy to store", for the same reason: it
+  copies to `intake` (§5.1), not onto the shelf.
+- **Opening the editor scrolls it into view.** It renders *below* the inventory,
+  so on any list longer than a screen "Edit" appeared to do nothing — and since
+  the shelf state lives in that panel, the surface read as "I cannot promote
+  this pet". The effect keys on the listing id, so re-opening a different row
+  scrolls again while typing in the open one does not.
 
 ### §6.2b The admin editor after Phase 1b
 

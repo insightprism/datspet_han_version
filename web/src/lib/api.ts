@@ -857,6 +857,11 @@ const storeFetch = (path: string, init?: RequestInit) =>
 
 export const storeAdmin = {
   list: (): Promise<{ pets: StoreAdminListing[] }> => storeFetch(""),
+  /** The card portrait as the ADMIN may see it — every shelf state, not just
+   *  `shelf`. `storePreviewUrl` is the shopper's, and it 404s anything off the
+   *  shelf (§1.4), which is most of this surface. */
+  previewUrl: (id: string): string =>
+    `${API_URL}/api/admin/store/${encodeURIComponent(id)}/preview.png`,
   get: (id: string): Promise<StoreAdminListing> =>
     storeFetch(`/${encodeURIComponent(id)}`),
   publishFromPet: (petId: string): Promise<StoreDraftResult> =>

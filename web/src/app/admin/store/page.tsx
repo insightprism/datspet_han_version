@@ -18,7 +18,7 @@
  * merge, and therefore a confirm in front of it.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   AdminApiError,
@@ -27,7 +27,6 @@ import {
   getDatsmeSession,
   listPets,
   storeAdmin,
-  storePreviewUrl,
   type PetSummary,
   type StoreAdminListing,
   type StoreStatus,
@@ -83,6 +82,19 @@ export default function StoreAdminPage() {
   const [aiTagOpen, setAiTagOpen] = useState(false);
   const [aiTagPending, setAiTagPending] = useState(false);
   const [aiTagError, setAiTagError] = useState("");
+  const editorRef = useRef<HTMLElement | null>(null);
+
+  // The editor renders BELOW the inventory, so on any list longer than a
+  // screen "Edit" opened a panel nobody could see and read as a dead button —
+  // the shelf state lives in that panel, so it read as "I cannot promote this
+  // pet". Keyed on the id, so re-opening a DIFFERENT row scrolls again while
+  // typing in the one that is open does not.
+  const openEditorId = editor?.id ?? null;
+  useEffect(() => {
+    if (openEditorId) {
+      editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [openEditorId]);
 
   const refresh = useCallback(async () => {
     const r = await storeAdmin.list();
@@ -238,8 +250,8 @@ export default function StoreAdminPage() {
           Stock from your house
         </h2>
         <p className="mono mb-3 text-xs" style={labelStyle}>
-          Design a pet the normal way, then copy it onto the shelf. Copying never
-          moves your pet — the shelf gets its own.
+          Design a pet the normal way, then copy it into the store. Copying never
+          moves your pet — the store gets its own, and it lands in intake.
         </p>
         {housePets.length === 0 ? (
           <p className="mono text-xs" style={{ color: "var(--faint)" }}>
@@ -261,7 +273,7 @@ export default function StoreAdminPage() {
                   className="mono shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition hover:opacity-85 disabled:opacity-40"
                   style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}
                 >
-                  Copy to shelf →
+                  Copy to store →
                 </button>
               </div>
             ))}
@@ -269,13 +281,20 @@ export default function StoreAdminPage() {
         )}
       </section>
 
-      {/* The shelf. */}
+      {/* The inventory — every shelf state, not just the shelf. Calling this
+          "Shelf" was a straight lie about `intake` rows: it told the admin the
+          donation she was looking at was already for sale (§1.4). */}
       <section className="mb-8">
         <h2 className="mb-2 text-sm font-semibold" style={{ color: "var(--heading)" }}>
-          Shelf ({(inventory ?? []).length})
+          Inventory ({(inventory ?? []).length})
         </h2>
+        <p className="mono mb-3 text-xs" style={labelStyle}>
+          Every state, newest first — donations land at the top in{" "}
+          <span style={{ color: "var(--gold)" }}>intake</span>. Edit a listing to
+          put it on the shelf.
+        </p>
         {(inventory ?? []).length === 0 && (
-          <p className="mono text-xs" style={{ color: "var(--faint)" }}>Nothing on the shelf yet.</p>
+          <p className="mono text-xs" style={{ color: "var(--faint)" }}>Nothing in the store yet.</p>
         )}
         <div className="flex flex-col gap-2">
           {(inventory ?? []).map((listing) => (
@@ -286,7 +305,7 @@ export default function StoreAdminPage() {
                    borderColor: editor?.id === listing.id ? "var(--accent)" : "var(--line)",
                  }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={storePreviewUrl(listing.id)} alt="" width={40} height={40}
+              <img src={storeAdmin.previewUrl(listing.id)} alt="" width={40} height={40}
                    style={{ borderRadius: 8, objectFit: "contain" }} />
               <div className="min-w-0 flex-1">
                 <span className="text-sm" style={{ color: "var(--heading)" }}>{listing.display_name}</span>
@@ -337,7 +356,8 @@ export default function StoreAdminPage() {
 
       {/* The editor. */}
       {editor && (
-        <section className="rounded-xl border p-4" style={{ background: "#151515", borderColor: "var(--line)" }}>
+        <section ref={editorRef} className="scroll-mt-4 rounded-xl border p-4"
+                 style={{ background: "#151515", borderColor: "var(--line)" }}>
           <h2 className="mb-3 text-sm font-semibold" style={{ color: "var(--heading)" }}>
             Listing: {editor.id}
           </h2>

@@ -207,6 +207,10 @@ CREATE INDEX IF NOT EXISTS idx_store_donations_donor
     ON store_donations(external_user_id);
 CREATE INDEX IF NOT EXISTS idx_store_donations_owed
     ON store_donations(reward_state);
+-- The §10.4 read-time join, run once per row of the admin inventory. Without
+-- it that badge costs a full scan of every donation ever made, per listing.
+CREATE INDEX IF NOT EXISTS idx_store_donations_store_pet
+    ON store_donations(store_pet_id);
 """
 
 
@@ -1123,6 +1127,22 @@ def list_store_pets(shelf_only: bool = True) -> list[dict]:
                 FROM store_pets {where}
                 ORDER BY created_at DESC""").fetchall()
     return [store_listing_view(r) for r in rows]
+
+
+def list_store_rows(shelf_only: bool = False) -> list[sqlite3.Row]:
+    """FULL store rows, newest first — the admin inventory's reader.
+
+    Deliberately not the byteless `list_store_pets` projection: the admin list
+    shows the live sellability verdict, and "sellable" is defined over the
+    BUNDLE (§5.3). Sharing one definition with the publish gate is worth
+    reading the blobs on a cold, single-user, admin-only route; inventing a
+    cheaper second definition of sellable is how the list and the gate start
+    disagreeing. The shopper's route keeps the byteless projection.
+    """
+    where = f"WHERE status='{STORE_STATUS_SHELF}'" if shelf_only else ""
+    with _lock:
+        return _connect().execute(
+            f"SELECT * FROM store_pets {where} ORDER BY created_at DESC").fetchall()
 
 
 def get_store_pet(store_id: str) -> Optional[sqlite3.Row]:

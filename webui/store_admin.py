@@ -23,7 +23,7 @@ import uuid
 import zipfile
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 import admin_common
@@ -48,6 +48,11 @@ LISTING_PURPOSE_KEY = "store_listing"
 # Tag normalization bounds (§3.2). Named constants, never inline literals.
 STORE_MAX_TAGS = 16
 STORE_MAX_TAG_LEN = 32
+
+#: A preview is immutable per id, so it caches as hard as the shopper's does —
+#: but `private`, because this copy is served from behind the admin gate and
+#: must never be held by a shared proxy.
+ADMIN_PREVIEW_CACHE_CONTROL = "private, max-age=86400"
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +148,9 @@ def _admin_view(row) -> dict:
     state and the live sellability verdict (so a broken row is visibly broken
     on the shelf, not first discovered at the publish click)."""
     listing = db.store_listing_view(row)
-    listing["preview_url"] = f"/api/store/{row['id']}/preview.png"
+    # The ADMIN route, not the shopper's: hers serves every shelf state, and
+    # most of what this surface shows is off the shelf.
+    listing["preview_url"] = f"{router.prefix}/{row['id']}/preview.png"
     # §10.4 — the admin's one new thing: a read-time badge saying this arrived
     # as a gift. Never a column on store_pets, and never on the shopper's
     # listing: who gave it is the shop's business, not the buyer's.
@@ -187,11 +194,31 @@ class ListingBody(BaseModel):
 @router.get("")
 def list_inventory():
     """The whole inventory in every state, newest first — which is what makes
-    `intake` an inbox without a queue (§1.4)."""
-    listings = db.list_store_pets(shelf_only=False)
-    for item in listings:
-        item["preview_url"] = f"/api/store/{item['id']}/preview.png"
-    return {"pets": listings}
+    `intake` an inbox without a queue (§1.4).
+
+    Every row goes through `_admin_view`, the same builder the detail route
+    uses. It used to serve the raw byteless projection, which silently dropped
+    the two fields the list is the ONLY place that renders: the §10.4 donated
+    badge and the sellability warning. Neither could ever appear, and no test
+    saw it because both were populated on the routes that return a single row.
+    """
+    return {"pets": [_admin_view(row) for row in db.list_store_rows()]}
+
+
+@router.get("/{store_id}/preview.png")
+def admin_store_preview(store_id: str):
+    """The card portrait for the ADMIN, in any shelf state.
+
+    The shopper's `/api/store/{id}/preview.png` resolves through the shelf gate
+    and 404s anything off it (§1.4) — correct there, and exactly wrong here:
+    the admin surface is mostly `intake`, so pointing it at the shopper route
+    made every row she most needs to look at a broken image. Same bytes, same
+    immutability, different audience; `private` because this one sits behind
+    the admin gate the router already applies.
+    """
+    row = _store_row_or_404(store_id)
+    return Response(content=row["preview_png"], media_type="image/png",
+                    headers={"Cache-Control": ADMIN_PREVIEW_CACHE_CONTROL})
 
 
 @router.get("/{store_id}")
