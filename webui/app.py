@@ -209,6 +209,11 @@ app.include_router(pet_store.router)
 import store_admin
 app.include_router(store_admin.router)
 
+# Donations (SPEC_PET_STORE §10) — the donate door and the donor's own record.
+# Not admin-gated: this is a user surface, scoped by owner like the house.
+import donations  # noqa: E402
+app.include_router(donations.router)
+
 # The Motion Lab (SPEC_MOTION_LAB): the fifth admin surface — a visual workbench for
 # authoring pose_prompt clauses (§3.9.1) by running the generation STEPS. LOCAL backend
 # only: it drives ComfyUI through pet_factory, so its router is mounted only here, never

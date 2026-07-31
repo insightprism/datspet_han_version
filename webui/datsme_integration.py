@@ -316,7 +316,28 @@ def launch(request: Request, token: str | None = None,
             samesite=LAUNCH_COOKIE_SAMESITE,
             secure=LAUNCH_COOKIE_SECURE,
         )
+
+    # SPEC_PET_STORE §10.7.1 — a donation's social point is EARNED at the
+    # donate click but can only be DELIVERED with a live launch token, and this
+    # is the moment one exists. Runs as a BackgroundTask so the redirect is
+    # already on its way: a slow or unreachable host may not make a donor's
+    # visit wait, and anything undelivered simply stays owed for next time.
+    redirect.background = BackgroundTask(
+        _deliver_owed_rewards_quietly, ctx.user_id, ctx.token)
     return redirect
+
+
+def _deliver_owed_rewards_quietly(user_id: str, launch_token: str) -> None:
+    """Never raises, never logs an error a user could care about — an
+    undelivered reward is a retry, not a failure."""
+    try:
+        import reward_delivery
+        settled = reward_delivery.deliver_owed_rewards(user_id, launch_token)
+        if settled:
+            log.info("launch: settled %s owed donation reward(s) for %s",
+                     settled, user_id)
+    except Exception as e:                       # noqa: BLE001
+        log.info("launch: reward delivery skipped: %s", e)
 
 
 def _read_launch_cookie(request: Request) -> Optional[dict]:

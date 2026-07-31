@@ -70,6 +70,13 @@ export interface PetSummary {
   // silently vanish from it (SPEC_DATSPET_HOUSE_ADOPT §2,
   // SPEC_DATSPET_FEDERATED_SESSION §4.5).
   claimable: boolean;
+  // A pet the user DESIGNED, so the donate door would accept it
+  // (SPEC_PET_STORE §10.1 gate 3). A projected column like the two above, not
+  // a gate: the door re-checks it server-side. The other two gates — a DatsMe
+  // identity and the entitlement — are request-scoped and cannot be answered
+  // from a row, so the page ANDs them in. Getting that wrong shows a button
+  // that 403s, never a donation that should not have happened.
+  donatable: boolean;
 }
 
 // Bind unclaimed local pets to the launched caller. Called with the ids the user
@@ -1214,4 +1221,55 @@ export async function handOffToDatsme(
   await claimPets(petIds);
   await Promise.all(petIds.map((id) => keepPet(id)));
   window.location.href = `${session.import_url}?items=${petIds.join(",")}`;
+}
+
+// ── Donations (SPEC_PET_STORE §10) ──────────────────────────────────────────
+//
+// Donating is FINAL: the pet becomes store inventory at the click and the donor
+// does not get it back (§0.5). She is thanked with a social point — awarded by
+// DatsMe, which decides the amount and may decline (§10.7).
+
+export type RewardState =
+  | "owed" | "delivered" | "capped" | "disabled" | "declined";
+
+export interface Donation {
+  id: string;
+  store_pet_id: string;
+  display_name: string;
+  donated_at: number;
+  reward_state: RewardState;
+  /** What the HOST said it gave. NULL until it has answered — never a number
+   *  DatsPet computed or remembered from a knob it does not own (§10.8). */
+  points_awarded: number | null;
+}
+
+export interface DonationResult {
+  donation_id: string;
+  display_name: string;
+  thanks: string;
+}
+
+/** Give a pet to the store. Irreversible — the caller confirms first. */
+export async function donatePet(petId: string): Promise<DonationResult> {
+  const r = await apiFetch(
+    `${API_URL}/api/pets/${encodeURIComponent(petId)}/donate`,
+    { method: "POST" });
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    const detail = data.detail;
+    // The door refuses with a REASON (§10.1) — show it, because "could not
+    // donate" tells a user nothing about which pet to try instead.
+    const reasons = detail && Array.isArray(detail.errors) ? detail.errors : null;
+    throw new Error(
+      reasons ? reasons.join("; ")
+        : (typeof detail === "string" ? detail : "Could not donate that pet"));
+  }
+  return r.json();
+}
+
+export async function listMyDonations(): Promise<Donation[]> {
+  const r = await apiFetch(`${API_URL}/api/donations`);
+  if (!r.ok) return [];
+  const data = await r.json().catch(() => ({ donations: [] }));
+  return data.donations ?? [];
 }

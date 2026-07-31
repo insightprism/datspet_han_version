@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Optional
 
 import owner_scope
+import pet_ownership
 
 # The DB lives next to the pet output dir so "move the collection elsewhere"
 # (PETMAKER_OUTPUT_DIR) moves the pets with it. One file, one source of truth.
@@ -177,6 +178,35 @@ CREATE TABLE IF NOT EXISTS store_sales (
     sold_at         REAL NOT NULL       -- WHEN (unix epoch float)
 );
 CREATE INDEX IF NOT EXISTS idx_store_sales_listing ON store_sales(store_pet_id);
+
+-- Donations (SPEC_PET_STORE §10.2). An append-only LEDGER, not a queue: under
+-- §0.5 a donation is final, so the pet is already store inventory by the time
+-- a row exists here and there is no verdict to track. It holds no bytes for
+-- the same reason — those live in store_pets.
+--
+-- Deliberately NOT registered with the claim registry (owner_scope.py): it is
+-- an append-only ledger, a claim handler would rewrite history, and §10.1's
+-- first gate means a donation can never be created under an anonymous id in
+-- the first place. Do not "complete" the registry by adding it.
+--
+-- reward_state tracks DELIVERY, not the admin's decision, because those move
+-- on different clocks: the point is earned at the click and delivered when the
+-- donor next launches. points_awarded is what the HOST said it gave — NULL
+-- until it answers, and the number the donor is thanked with (§10.8).
+CREATE TABLE IF NOT EXISTS store_donations (
+    id                  TEXT PRIMARY KEY,   -- the award key the host dedupes on
+    external_user_id    TEXT NOT NULL,      -- the donor; NEVER NULL (§10.1)
+    store_pet_id        TEXT NOT NULL,      -- what it became
+    display_name        TEXT NOT NULL,      -- as donated; the shelf may rename it
+    donated_at          REAL NOT NULL,
+    reward_state        TEXT NOT NULL,      -- owed|delivered|capped|disabled|declined
+    points_awarded      INTEGER,
+    reward_delivered_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_store_donations_donor
+    ON store_donations(external_user_id);
+CREATE INDEX IF NOT EXISTS idx_store_donations_owed
+    ON store_donations(reward_state);
 """
 
 
@@ -408,7 +438,8 @@ def list_saved_pets(external_user_id: Optional[str] = None) -> list[dict]:
     with _lock:
         rows = _connect().execute(
             f"""SELECT id, breed_id, display_name, created_at,
-                       writeback_acked_at, external_user_id FROM pets
+                       writeback_acked_at, external_user_id, manifest_json
+                    FROM pets
                 WHERE draft=0 AND {clause}
                 ORDER BY created_at DESC""", params).fetchall()
     # in_datsme: already in the caller's DatsMe house. A projected column, NOT a
@@ -427,12 +458,22 @@ def list_saved_pets(external_user_id: Optional[str] = None) -> list[dict]:
     # meant. Claim-at-launch (owner_scope.claim_anon_owner) normally empties this
     # set before the house is ever rendered; it stays as the backstop for a row
     # written after that sweep.
+    #
+    # donatable: this pet is one the user DESIGNED, so the donate door would
+    # accept it (SPEC_PET_STORE §10.1 gate 3). A projected column like the two
+    # above, never a visibility rule — the door re-checks it server-side, and
+    # this only decides whether a button is worth showing. The other two gates
+    # (a DatsMe identity, the entitlement) are request-scoped and cannot be
+    # answered from a row, so the client ANDs them in; getting that wrong shows
+    # a button that 403s, never a donation that should not have happened.
     out = []
     for r in rows:
         d = dict(r)
         d["in_datsme"] = d.pop("writeback_acked_at") is not None
         owner = d.pop("external_user_id")
         d["claimable"] = owner_scope.is_anon_owner(owner)
+        category, _n, _a = pet_ownership.read_pet_ownership(d.pop("manifest_json"))
+        d["donatable"] = category == pet_ownership.FACTORY_CATEGORY
         out.append(d)
     return out
 
@@ -732,6 +773,86 @@ def burn_bundle_token(token: str) -> None:
 # ai_usage: one row per sale, never an UPDATE, and every report is a GROUP BY
 # over it rather than a counter anyone has to keep in step.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Donations (SPEC_PET_STORE §10.2). Append-only: statuses move forward, rows
+# are never deleted, and the ledger outlives the store pet it became.
+# ---------------------------------------------------------------------------
+REWARD_OWED = "owed"
+REWARD_DELIVERED = "delivered"
+REWARD_CAPPED = "capped"
+REWARD_DISABLED = "disabled"
+REWARD_DECLINED = "declined"
+
+#: Delivery is finished for these — the host answered and will not change its
+#: mind, so asking again would only annoy it. `owed` is the only retryable one.
+REWARD_TERMINAL = (REWARD_DELIVERED, REWARD_CAPPED, REWARD_DISABLED,
+                   REWARD_DECLINED)
+
+
+def insert_donation(*, donation_id: str, external_user_id: str,
+                    store_pet_id: str, display_name: str,
+                    donated_at: float) -> None:
+    """Record that a user gave a pet. The reward starts `owed` — it is EARNED
+    at this moment (§10.7.1) and delivered whenever the donor's next launch
+    gives us a token to speak with."""
+    with _lock:
+        conn = _connect()
+        conn.execute(
+            """INSERT INTO store_donations
+                   (id, external_user_id, store_pet_id, display_name,
+                    donated_at, reward_state, points_awarded,
+                    reward_delivered_at)
+               VALUES (?,?,?,?,?,?,NULL,NULL)""",
+            (donation_id, external_user_id, store_pet_id, display_name,
+             donated_at, REWARD_OWED))
+        conn.commit()
+
+
+def owed_donations(external_user_id: str) -> list[dict]:
+    """This donor's undelivered rewards, oldest first — the batch that rides
+    her next launch (§10.7.2). One writeback per launch, so they travel
+    together."""
+    with _lock:
+        rows = _connect().execute(
+            """SELECT id, display_name FROM store_donations
+                WHERE external_user_id=? AND reward_state=?
+                ORDER BY donated_at""",
+            (external_user_id, REWARD_OWED)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def settle_donation_reward(donation_id: str, *, state: str,
+                           points_awarded: Optional[int],
+                           settled_at: float) -> bool:
+    """Record what the host said. Only ever moves a row OUT of `owed`, so a
+    late duplicate answer cannot overwrite a settled one — the donor was
+    already told a number and it must not change under her."""
+    if state not in REWARD_TERMINAL:
+        raise ValueError(f"not a terminal reward state: {state!r}")
+    with _lock:
+        conn = _connect()
+        cur = conn.execute(
+            """UPDATE store_donations
+                  SET reward_state=?, points_awarded=?, reward_delivered_at=?
+                WHERE id=? AND reward_state=?""",
+            (state, points_awarded, settled_at, donation_id, REWARD_OWED))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def donations_for_donor(external_user_id: str) -> list[dict]:
+    """What she gave, newest first — the Donations section (§10.8). Scoped like
+    every other read; a donor sees only her own."""
+    with _lock:
+        rows = _connect().execute(
+            """SELECT id, store_pet_id, display_name, donated_at,
+                      reward_state, points_awarded
+                 FROM store_donations WHERE external_user_id=?
+                ORDER BY donated_at DESC""",
+            (external_user_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
 def insert_store_sale(*, pet_id: str, store_pet_id: str, buyer_user_id: str,
                       credits_paid: Optional[int], sold_at: float) -> bool:
     """Record one sale. Returns True if this call wrote it, False if it was

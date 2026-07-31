@@ -92,6 +92,10 @@ def entitlement(tier_key: str) -> dict:
         "price_per_extra_pose": int(t.get("price_per_extra_pose", 0)),
         "can_generate": bool(t.get("can_generate", True)),
         "can_adopt_samples": bool(t.get("can_adopt_samples", True)),
+        # SPEC_PET_STORE §10.1 gate 2. True on every tier today, so nothing is
+        # user-visible until the lever is pulled — it exists so that turning
+        # donations off is a data edit rather than a deploy.
+        "can_donate": bool(t.get("can_donate", True)),
         "upsell": t.get("upsell", ""),
     }
 

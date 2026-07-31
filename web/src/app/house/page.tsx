@@ -5,11 +5,14 @@ import Link from "next/link";
 import {
   handOffToDatsme,
   deletePet,
+  donatePet,
   getDatsmeSession,
   getHouseConfig,
+  listMyDonations,
   listPets,
   petZipUrl,
   type DatsmeSession,
+  type Donation,
   type HouseConfig,
   type PetSummary,
 } from "@/lib/api";
@@ -61,6 +64,22 @@ const HOUSE_TABS: { key: HouseTab; label: string }[] = [
  * PRESELECTION, so the picking done here survives the trip. Selection is by id,
  * so it spans pages: a pet picked on page 1 stays picked on page 2.
  */
+/** What a donor is told, per row (SPEC_PET_STORE §10.8).
+ *
+ *  `delivered` names the host's own figure — never a constant, because the
+ *  amount is a knob DatsPet does not own and hardcoding "1 social point" would
+ *  become a lie the day it changes. When DatsMe declined (capped for the day,
+ *  or the reward switched off) the pet was still accepted, so the row says so
+ *  and claims no points. */
+function donationThanks(d: Donation): string {
+  if (d.reward_state === "delivered" && (d.points_awarded ?? 0) > 0) {
+    const n = d.points_awarded as number;
+    return `— thank you! DatsMe credited you ${n} social point${n === 1 ? "" : "s"}.`;
+  }
+  if (d.reward_state === "owed") return "— thank you! Your thank-you is on its way.";
+  return "— thank you, it is with the store now.";
+}
+
 export default function HousePage() {
   const [pets, setPets] = useState<PetSummary[] | null>(null);
   const [house, setHouse] = useState<HouseConfig | null>(null);
@@ -68,7 +87,13 @@ export default function HousePage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adopting, setAdopting] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [petToRemove, setPetToRemove] = useState<PetSummary | null>(null);
+  // Donating is FINAL (SPEC_PET_STORE §0.5), so it gets its own confirm rather
+  // than sharing Remove's — the two dialogs have to say different things.
+  const [petToDonate, setPetToDonate] = useState<PetSummary | null>(null);
+  const [donating, setDonating] = useState(false);
+  const [donations, setDonations] = useState<Donation[]>([]);
   const [page, setPage] = useState(0);
   const [tab, setTab] = useState<HouseTab>("all");
   const [isNarrow, setIsNarrow] = useState(false);
@@ -80,6 +105,9 @@ export default function HousePage() {
       .catch((e) => setError(e instanceof Error ? e.message : "Could not load pets"));
     getHouseConfig().then(setHouse).catch(() => { /* pager falls back to a default */ });
     getDatsmeSession().then(setSession).catch(() => setSession({ launched: false }));
+    // Own rows only, and an anonymous caller gets an empty list rather than an
+    // error — a house page should not break because nobody has donated.
+    listMyDonations().then(setDonations).catch(() => setDonations([]));
   }, []);
 
   useEffect(() => { loadHouse(); }, [loadHouse]);
@@ -180,6 +208,29 @@ export default function HousePage() {
     }
   }
 
+  /** Give a pet to the store. It does not come back (§10.5), and the slot
+   *  frees at once — which is why the card disappears optimistically here the
+   *  same way Remove's does. */
+  async function confirmDonate() {
+    if (!petToDonate) return;
+    const pet = petToDonate;
+    setPetToDonate(null);
+    setDonating(true);
+    setError("");
+    try {
+      const r = await donatePet(pet.id);
+      setPets((cur) => (cur ? cur.filter((p) => p.id !== pet.id) : cur));
+      // Re-read rather than push a local row: the thank-you's NUMBER comes
+      // from DatsMe, and this is the read that picks it up once it answers.
+      listMyDonations().then(setDonations).catch(() => {});
+      setNotice(r.thanks);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not donate that pet");
+    } finally {
+      setDonating(false);
+    }
+  }
+
   async function confirmRemove() {
     if (!petToRemove) return;
     const pet = petToRemove;
@@ -211,6 +262,29 @@ export default function HousePage() {
       </Link>
 
       {error && <div className="mono text-sm" style={{ color: "var(--accent)" }}>{error}</div>}
+      {notice && <div className="mono text-sm" style={{ color: "var(--green)" }}>{notice}</div>}
+
+      {/* Donations (SPEC_PET_STORE §10.8). Nothing here is actionable — no
+          restore, no appeal, no verdict — which is the point of the model. The
+          NUMBER is the host's, echoed exactly as it reported it; DatsPet never
+          computes one and never shows a TOTAL, because a total is a balance and
+          balances live on DatsMe (§0.6.1). */}
+      {donations.length > 0 && (
+        <section className="card mb-4 p-4">
+          <h2 className="mb-2 text-sm font-semibold" style={{ color: "var(--heading)" }}>
+            Pets you donated
+          </h2>
+          <ul className="flex flex-col gap-1">
+            {donations.map((d) => (
+              <li key={d.id} className="mono flex flex-wrap items-baseline gap-2 text-xs"
+                  style={{ color: "var(--muted)" }}>
+                <span style={{ color: "var(--heading)" }}>{d.display_name}</span>
+                <span>{donationThanks(d)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       {pets && pets.length === 0 && (
         <div className="card p-8 text-center">
@@ -285,7 +359,7 @@ export default function HousePage() {
                   / {house.max_pets} pets
                   {total >= house.max_pets && (
                     <span className="ml-2" style={{ color: "#f87171" }}>
-                      house full — remove one to make room
+                      house full — remove one to make room, or donate one
                     </span>
                   )}
                 </>
@@ -394,6 +468,18 @@ export default function HousePage() {
                   >
                     ⬇ DatsMe zip
                   </a>
+                  {p.donatable && canAdopt && (
+                    <button
+                      type="button"
+                      onClick={() => setPetToDonate(p)}
+                      disabled={donating}
+                      title="Give this pet to the Pet Store — permanent"
+                      className="rounded-md border px-3 py-1.5 text-xs font-semibold transition hover:opacity-85 disabled:opacity-40"
+                      style={{ background: "rgba(167,139,250,0.12)", color: "var(--gold)", borderColor: "rgba(167,139,250,0.4)" }}
+                    >
+                      🎁 Donate
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => setPetToRemove(p)}
@@ -438,6 +524,16 @@ export default function HousePage() {
           <PetStage pets={pagedPets.map((p) => ({ id: p.id, display_name: p.display_name }))} />
         </>
       )}
+
+      <ConfirmModal
+        open={petToDonate !== null}
+        title={`Donate ${petToDonate?.display_name ?? "this pet"} to the Pet Store?`}
+        body={"This is permanent. The pet leaves your house for good and you cannot get it back — like giving something to a charity shop. DatsMe thanks you with social points."}
+        confirmLabel="Donate — permanently"
+        tone="primary"
+        onConfirm={confirmDonate}
+        onCancel={() => setPetToDonate(null)}
+      />
 
       <ConfirmModal
         open={petToRemove !== null}
