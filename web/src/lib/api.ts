@@ -838,6 +838,11 @@ export interface StoreAdminListing extends StoreListing {
   /** Stamped by the server on the FIRST shelving, never cleared. Read-only:
    *  it is what freezes `animal` for good (§1.3). */
   first_shelved_at: number | null;
+  /** Who gave this listing to the store, when it arrived as a donation
+   *  (§10.4). A READ-TIME join from the donation ledger — never a column on
+   *  store_pets, because the engine must not be able to ask where a listing
+   *  came from (§1.2). Null for anything an admin stocked herself. */
+  donated_by?: string | null;
   sellability_errors?: string[];
 }
 

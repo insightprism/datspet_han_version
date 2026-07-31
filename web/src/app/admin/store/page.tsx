@@ -299,6 +299,16 @@ export default function StoreAdminPage() {
                   </span>
                 )}
               </div>
+              {/* §10.4 — the ONE new thing donations add to the admin surface:
+                  a read-time badge saying this arrived as a gift. With the
+                  newest-first sort, that is the whole triage story; there is no
+                  review queue and deliberately no workflow. */}
+              {listing.donated_by && (
+                <span className="mono text-[11px]" title={`Donated by ${listing.donated_by}`}
+                      style={{ color: "var(--gold)" }}>
+                  🎁 donated
+                </span>
+              )}
               <span className="mono text-[11px]"
                     style={{ color: listing.status === "shelf" ? "var(--green)"
                       : listing.status === "intake" ? "var(--gold)" : "var(--faint)" }}>

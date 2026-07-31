@@ -221,6 +221,12 @@ def test_the_request_carries_no_amount(dpp_env, monkeypatch):
     settled = reward_delivery.deliver_owed_rewards(DONOR, "tok")
     assert settled == 1
 
+    # §10.11 — the body must carry the RAW launch token from the cookie. It is
+    # what the host authenticates against; without it every delivery 401s and
+    # the rewards sit owed forever.
+    assert captured["body"]["launch_token"] == "tok"
+    assert captured["body"]["target"] == reward_delivery.AWARD_TARGET
+
     payload = captured["body"]["payload"]
     blob = json.dumps(payload)
     for money_word in ("points", "amount", "credits"):
@@ -455,6 +461,15 @@ def test_a_donated_row_is_handled_by_the_ORDINARY_phase_1_admin_routes(
         "tags": ["red panda"], "animal": "panda", "status": "shelf"})
     assert r.status_code == 200, r.text
     assert db.get_store_pet(store_pet_id)["status"] == "shelf"
+
+    # §1.2 — the ENGINE must never be able to ask where a listing came from.
+    # The badge above is a read-time join; a column here would let a query, a
+    # filter or a price branch on provenance, which is the whole prohibition.
+    cols = {r["name"] for r in
+            db._connect().execute("PRAGMA table_info(store_pets)")}
+    assert not (cols & {"donated_by", "donor", "external_user_id",
+                        "source", "donation_id"}), \
+        f"store_pets grew a provenance column: {cols}"
 
     # Deleting the listing leaves the ledger — history is not tidied.
     assert client.delete(f"/api/admin/store/{store_pet_id}").status_code == 200

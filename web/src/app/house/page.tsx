@@ -22,6 +22,7 @@ import PetStage from "@/components/PetStage";
 import PetThumbnail from "@/components/PetThumbnail";
 import ConfirmModal from "@/components/ConfirmModal";
 import { HOUSE_NAME } from "@/lib/houseCopy";
+import { canBeThanked as canBeThankedFor, canOfferDonate } from "./donateVisibility";
 
 // On a phone, showing fewer pets per page is the memory fix that matters: each
 // mounted card decodes a sprite sheet and each PetStage actor RETAINS one
@@ -160,12 +161,10 @@ export default function HousePage() {
   // it rather than staying visible and 403-ing (SPEC_PET_STORE §10.1 gate 2).
   // Launched-ness is required too: an anonymous owner has no account for a
   // reward to land in, which is the door's first gate.
-  const canDonate = Boolean(session?.launched)
-    && entitlement?.can_donate !== false;
-  // Deliberately NOT part of canDonate: freeing a house slot is a legitimate
-  // reason to give a pet away, so we never block the action — we only make sure
-  // nobody gives one up expecting a thank-you they have turned down.
-  const canBeThanked = session?.can_be_thanked !== false;
+  // The two donate rules live in donateVisibility.ts as pure functions — the
+  // page's only real decision, with three inputs from three places, is worth
+  // pinning with a test rather than leaving in a JSX conditional.
+  const canBeThanked = canBeThankedFor(session);
 
   const pageSize = Math.max(
     1,
@@ -495,7 +494,7 @@ export default function HousePage() {
                   >
                     ⬇ DatsMe zip
                   </a>
-                  {p.donatable && canDonate && (
+                  {canOfferDonate(p, session, entitlement) && (
                     <button
                       type="button"
                       onClick={() => setPetToDonate(p)}
