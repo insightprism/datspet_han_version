@@ -244,7 +244,10 @@ old numbers is actively dangerous**, which is the whole reason for the change.
       `pet_factory/animal_catalog/*/samples/` from the repo, and
       `webui/tests/test_sample_migration_input.py` with it — that test guards the
       physical files and skips once they are gone. This line is where that deletion
-      was promised.
+      was promised. *(Executed in dev 2026-07-31, the day both environments migrated
+      — the deletion rides the NEXT deploy, so every deployed tree keeps its
+      migration input through a Phase-D rollback of the store deploy itself. The
+      B9 step stays for any future `<animal>/samples/` drop-in. SPEC_PET_STORE §14.4.)*
 
 ---
 

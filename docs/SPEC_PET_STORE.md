@@ -1,8 +1,10 @@
 # SPEC_PET_STORE — The Pet Store: a database-backed shop of ready-made pets
 
-**Status: Rev.4 (2026-07-31) — PHASE 1 BUILT, not yet deployed.** Both repos
-green; nothing has shipped to staging or production. §14 is the as-built ledger
-and the only place to read for "what is done".
+**Status: Rev.5 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION.** Deployed host-first
+(§13) to staging and then production the same day, C1-verified 14/14 on both
+tiers, and the §12 store E2E passed on staging's real infrastructure (flat 50
+quoted + charged; the pose formula would have said 110). §14 is the as-built
+ledger and the only place to read for "what is done"; §14.4 records the deploys.
 
 Supersedes the file-based samples surface of `SPEC_DATSPET_CATALOG_PURCHASE`
 (archived, executed 2026-07-30) — see §8 for exactly what it absorbs and retires.
@@ -27,6 +29,9 @@ bundle carries no canonical species key to derive it from.
 which it had stopped being. Adds §14 (as-built ledger) and §8.1 (the retirement
 ordering rule the build violated). Records that the host's price-basis test ran
 nowhere and how that was fixed.
+
+**Rev.5 (2026-07-31)** — deployed. §14.4 records the staging and production
+deploys, the E2E results, and the completed §8 sample-file deletion.
 
 </details>
 
@@ -656,13 +661,35 @@ that called it. Fixed; the ordering rule is now written down.
 
 ### §14.3 What is genuinely left
 
-1. **Deploy.** Host first (§13), staging then production. Nothing has shipped.
-2. **Stock the shelf** before the production flip — run the migration, then §5 for
-   anything more. The launch line stands: *not visibly emptier than the grid it
-   replaced.*
-3. **Delete the sample content files** one deploy cycle after the last environment
-   migrates (§8) — a checklist line, not a follow-up someone remembers.
-4. **The §12 E2E store pass** — publish → shop → adopt → hand off → verify the host
-   charged the flat knob. The one gate that exercises the whole lane; everything
-   above it is unit-level.
+1. ~~**Deploy.**~~ Done — §14.4.
+2. **Stock the shelf deeper** — the migrated sample satisfies the launch line
+   (*not visibly emptier than the grid it replaced*), but one pet is a thin
+   store. Count, captions, and the knob's value are the owner's calls; the §5
+   flow is live in both environments.
+3. ~~**Delete the sample content files.**~~ Done — §14.4 (rides the next deploy).
+4. ~~**The §12 E2E store pass.**~~ Done — dev stack and staging, §14.4.
 5. **§10 donations** — unstarted by design, needs its own revision first.
+
+### §14.4 Deployed (Rev.5, 2026-07-31)
+
+Host-first (§13), staging before production, all in one day:
+
+| Tier | Commit | Verification |
+|---|---|---|
+| DatsMe staging host | `f120feb7` | knob live (50); clean journal |
+| DatsPet staging web | `0a3f63e1` | C1 `verify_deployment.sh` **14/14**; §12 store E2E **PASSED on staging** (markly.3: flat 50 quoted + charged; per-pose would say 110) |
+| DatsMe prod host | `f120feb7` | knob live (50); clean journal; BUILD_ID rolled |
+| DatsPet prod web | `0a3f63e1` | C1 **14/14**; shelf serves the migrated sample; `/design` 307 intact |
+
+B9 migration ran once per environment (idempotent re-runs verified no-op). The
+§8 sample content files and their interim guard test
+(`test_sample_migration_input.py`, which asked for deletion alongside them) are
+deleted in dev and ship with the next deploy cycle — the migration script
+remains, now a no-op, for any future `<animal>/samples/` drop-in.
+
+Operational notes from the deploys: the staging vhost served 403/500 for ~3
+minutes when a rebuild replaced `out/` without the B8 vhost restart (the bind
+mount follows the directory inode — B8 is unconditional for a reason); and
+staging's live nginx conf carries a house-asset location block that exists
+neither in the repo conf nor on prod — a drift to reconcile deliberately, not
+during a deploy.
