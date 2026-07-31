@@ -1,7 +1,8 @@
 # SPEC_PET_STORE — The Pet Store: a database-backed shop of ready-made pets
 
-**Status: Rev.9 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASE 2 SPECIFIED,
-NOT STARTED.** Phase 1 deployed host-first (§13) to staging and then production
+**Status: Rev.10 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASES 1a, 1b AND 2
+BUILT AND DEPLOYED NOWHERE.** There is no Phase 3 — §13's table is the whole
+plan, and §14.5 is the build ledger for what has not shipped. Phase 1 deployed host-first (§13) to staging and then production
 the same day, C1-verified 14/14 on both tiers, with the §12 store E2E passing on
 staging's real infrastructure (flat 50 quoted + charged; the pose formula would
 have said 110). §14 is the as-built ledger and the only place to read for "what
@@ -1829,9 +1830,14 @@ owner has always been told it is.
 |---|---|---|---|---|
 | 0 | this spec, reviewed | — | — | done |
 | 1 | the store | DatsPet + host | — | **live in production** (§14.4) |
-| 1a | **the transaction ledger** (§1.5.3) — `store_sales`, the amount on the imported notification, and making that notification at-least-once | DatsPet + host | Phase 1 | specified, not built |
-| 1b | **the shelf lifecycle** (§1.4) — `published` → four-state `status`, with the migration | DatsPet only | Phase 1 | specified, not built |
-| 2 | **donations** (§10) | DatsPet + host | Phase 1 **and 1b** | specified, awaiting sign-off |
+| 1a | **the transaction ledger** (§1.5.3) — `store_sales`, the amount on the imported notification, and making that notification at-least-once | DatsPet + host | Phase 1 | **built, not deployed** (§14.5) |
+| 1b | **the shelf lifecycle** (§1.4) — `published` → four-state `status`, with the migration | DatsPet only | Phase 1 | **built, not deployed** (§14.5) |
+| 2 | **donations** (§10) | DatsPet + host | Phase 1 **and 1b** | **built, not deployed** (§14.5) |
+
+**There is no Phase 3.** Phase 2 is the last one this spec defines; everything
+beyond it is either the deploy of what exists, an owner's merchandising call,
+or one of the named tripwires in §11 / §10.13 that only becomes work if its
+condition is actually met.
 
 **Why 1a and 1b are not folded into Phase 2.** Neither has anything to do with
 donations. 1a is about sales that are happening *today* through the shipped
@@ -1929,34 +1935,54 @@ that called it. Fixed; the ordering rule is now written down.
 
 ### §14.3 What is genuinely left
 
-1. ~~**Deploy.**~~ Done — §14.4.
-2. **Stock the shelf deeper** — the migrated sample satisfies the launch line
+**Every phase this spec defines is now built. Nothing after Phase 1 is
+deployed.** What remains is shipping, stocking, and a short list of things
+deliberately not done.
+
+1. **Deploy 1a, 1b and 2** — §13's order, staging before production, with the
+   `datspet.db` backup before 1b (checklist B8b: that migration drops a column,
+   so rollback is a file restore). 1a is the one with a cost to waiting — every
+   store sale that completes before it ships is a transaction whose amount
+   cannot be reconstructed afterwards.
+2. **Stock the shelf deeper** — one migrated sample satisfies the launch line
    (*not visibly emptier than the grid it replaced*), but one pet is a thin
-   store. Count, captions, and the knob's value are the owner's calls; the §5
+   store. Count, captions and the knobs' values are the owner's calls; the §5
    flow is live in both environments.
-3. ~~**Delete the sample content files.**~~ Done **in the repo** (`77b955e`); the
-   boxes still carry them until the next deploy rolls, which is the one-cycle
-   rollback buffer §8 asks for.
-4. ~~**The §12 E2E store pass.**~~ Done — dev stack and staging, §14.4.
-5. **The shelf lifecycle — §13's Phase 1b** (§1.4). Specified, NOT built.
-   Changes a live Phase 1 table (`store_pets.published` → `status`). DatsPet
-   only. Phase 2 depends on it (donations land in `intake`); nothing else
-   does.
-6. **Donations — §13's Phase 2** (§10). Unstarted by design. The revision it
-   was waiting on is written (Rev.6, reshaped by Rev.7 and Rev.8): it is
-   build-ready and needs the owner's sign-off, not more design. Nothing about
-   it is coded in either repo. **It does not contain 1a or 1b** — those are
-   fixes to the store that is already live.
-7. **The transaction ledger — §13's Phase 1a** (§1.5.3). Specified, not
-   built, and **the only item on this list that is losing something while it
-   waits.** Three changes that ship together: one insert in `partner_imported`
-   (DatsPet), one enriched field on `notify_partner_imported` (host, which
-   already computes the amount and drops it), and making that notification
-   at-least-once — it is fire-and-forget today, which is fine for a badge and
-   not for a transaction. Every completed sale before it ships is a transaction
-   with no record: the amount is unrecoverable afterwards, and a buyer's house
-   cleanup erases the rest. View counting stays unbuilt and unspecified beyond
-   §1.5.4 — it is a beacon, not a counter.
+3. **Turn donations on when ready** — `pet_donation_social_reward_amount`
+   ships at 1 and the daily cap at 1. Both are live knobs; 0 on either disables
+   the reward rather than uncapping it (§10.7.5).
+4. **The deliberately-not-done lists stand** (§11, §10.13, §1.5.4). None is a
+   phase. Each becomes work only if its named tripwire trips: server-side
+   filtering at ~200+ listings (§6.1), a closed tag vocabulary at three
+   consumers (§1.3), a daily donation cap if inventory spam becomes real
+   (§10.1), a sales *reporting* surface once the ledger has rows worth reading
+   (§1.5.3 ships write-only on purpose), and view counting only as a
+   purpose-built beacon with its own privacy argument (§1.5.4).
+5. **Design provenance is a different spec**, not a phase of this one —
+   `SPEC_PET_DESIGN_PROVENANCE.md`, draft, nothing built.
+
+### §14.5 Built after the Phase 1 deploy, shipped nowhere
+
+| Phase | DatsPet | Host | Gates at the commit |
+|---|---|---|---|
+| 1a | `b4d35d0` | `485b2e86` | 602 pytest · outbox 11/11 |
+| 1b | `2256ed3` | — | 614 pytest · tsc · vitest 36 |
+| 2 | `99bf84d` | `a1b0bef1` | 631 pytest · social award 21/21 · registry 5/5 |
+
+`pre-phase-2` is tagged in both repos as the rewind point before Phase 2
+(DatsPet `4f8c31c`, host `485b2e86` — the host tag deliberately points at the
+store commit, not its HEAD, because unrelated work landed there since).
+
+Two defects the build caught that are worth remembering, both found by tests
+within seconds:
+
+- **A helper inserted between `@router.post` and its handler silently rebound
+  the route to the helper.** Every ledger test failed at once with a validation
+  error on a body it had never been sent. A decorator attaches to whatever
+  follows it.
+- **A test fixture built a bundle with no animations**, so the sellability gate
+  refused the donation. The gate was right; the fixture was lying about what a
+  real pet looks like.
 
 ### §14.4 Deployed (Rev.5, 2026-07-31)
 
