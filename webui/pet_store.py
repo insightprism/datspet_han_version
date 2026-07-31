@@ -30,9 +30,10 @@ from pet_factory import tiers as tiers_mod
 
 router = APIRouter(prefix="/api/store")
 
-#: A preview is immutable per id (derived once at insert; redraft touches only
-#: text), so aggressive caching is safe (§3.1).
-PREVIEW_CACHE_CONTROL = "public, max-age=86400"
+#: Every byte-serving store route is immutable per id — the portrait is derived
+#: once at insert, and the sheet and manifest ARE the stocked bundle; ai-tag
+#: only ever rewrites text. So all three cache hard (§3.1, §6.3).
+STORE_ASSET_CACHE_CONTROL = "public, max-age=86400"
 
 
 def _shelved_store_pet(store_id: str):
@@ -66,7 +67,38 @@ def store_preview(store_id: str):
     precedent, owner_scope.py: an <img> has no 401 handler)."""
     row = _shelved_store_pet(store_id)
     return Response(content=row["preview_png"], media_type="image/png",
-                    headers={"Cache-Control": PREVIEW_CACHE_CONTROL})
+                    headers={"Cache-Control": STORE_ASSET_CACHE_CONTROL})
+
+
+@router.get("/{store_id}/sheet.png")
+def store_sheet(store_id: str):
+    """The full sprite sheet, so a shopper can WATCH the pet move before paying
+    (§6.3). Same shelf gate and same no-owner-resolution posture as the
+    portrait: a <canvas> has no 401 handler either.
+
+    **This publishes the asset.** The sheet is the thing being sold, and every
+    frame of it is now downloadable by anyone who opens devtools on the shop
+    page. That is a deliberate, owner-made trade (2026-07-31): the sheet
+    becomes public the moment a pet renders on someone's DatsMe page anyway,
+    and what the purchase actually buys is the DatsMe integration — the pet in
+    a house, on the ledger, with its credits — not the secrecy of a PNG.
+    Recorded here rather than left implicit, because "the preview leaks the
+    product" is the kind of decision that should never look accidental.
+    """
+    row = _shelved_store_pet(store_id)
+    return Response(content=row["sheet_png"], media_type="image/png",
+                    headers={"Cache-Control": STORE_ASSET_CACHE_CONTROL})
+
+
+@router.get("/{store_id}/manifest.json")
+def store_manifest(store_id: str):
+    """The sheet's geometry and pose frame lists — useless without the sheet,
+    and the sheet is useless without it. Served as raw stored text, not
+    re-serialized, so what the player reads is byte-for-byte what was stocked.
+    """
+    row = _shelved_store_pet(store_id)
+    return Response(content=row["manifest_json"], media_type="application/json",
+                    headers={"Cache-Control": STORE_ASSET_CACHE_CONTROL})
 
 
 @router.post("/{store_id}/adopt")

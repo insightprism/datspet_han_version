@@ -38,11 +38,15 @@ interface Props {
   source?: PoseSource;
   pose: string;
   size?: number;
+  /** Fill the parent's width instead of a fixed px box, keeping it square. For
+   *  callers whose column width is responsive — the store card's grid is 2/3/4
+   *  columns by breakpoint, so no single `size` is right. */
+  fill?: boolean;
   /** Draw a checkerboard behind the frames, so MISSING ALPHA is visible (§2.5). */
   checkered?: boolean;
 }
 
-export default function PosePlayer({ petId, source, pose, size = 128, checkered }: Props) {
+export default function PosePlayer({ petId, source, pose, size = 128, fill, checkered }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const src: PoseSource | null = source ?? (petId ? { petId } : null);
   // Depend on the resolved URLs, not the object identity: `source={{…}}` is a fresh
@@ -111,7 +115,10 @@ export default function PosePlayer({ petId, source, pose, size = 128, checkered 
       width={256}
       height={256}
       style={{
-        width: size, height: size, imageRendering: "auto",
+        ...(fill
+          ? { width: "100%", height: "auto", aspectRatio: "1" }
+          : { width: size, height: size }),
+        imageRendering: "auto",
         // A checkerboard, drawn in CSS so nothing lands in the pixels being judged. On
         // white, missing alpha is invisible — and a matte defect that only shows against
         // a background is the exact class of bug this substrate exists to catch (§2.5).

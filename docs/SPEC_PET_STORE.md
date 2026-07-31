@@ -999,6 +999,47 @@ shopper could not act on; it does not say whether the bird flies. The names are
 already in the listing (`store_listing_view` derives `poses` from the manifest),
 so this renders data that was being fetched and thrown away.
 
+### §6.3 Watching a pet move before buying it
+
+A still frame says what a pet looks like; it says nothing about what a shopper
+is actually buying, which is **motion**. Each card carries **▶ Animate**, which
+replaces the portrait with the live pet and tours its poses — `POSE_DWELL_MS`
+(2.6 s) each, about two loops of a 16-frame pose at 12 fps, so eight poses run a
+~20 s tour and loop. The pose chips double as the progress readout: the one
+playing is highlighted, so "which pose is this" is answered by the card itself.
+
+**It reuses `PosePlayer`, the component the result panel and the Motion Lab
+already use** — on the `{sheetUrl, manifestUrl}` source shape those two already
+forced it to grow. No second frame-cycling implementation, which is what keeps
+the shop, the result panel and the Lab from ever disagreeing about fps, column
+count or the final-frame duplicate. The only component change was an optional
+`fill` prop: the existing callers size a fixed px box, and a shop card's column
+is responsive.
+
+**One card animates at a time.** Each player fetches a multi-megabyte sheet and
+runs its own rAF loop, so a grid of them is both heavy and unreadable — and
+"which pet was that" is the question the feature exists to answer. Starting one
+stops the other. Starting always restarts at the first pose, so a second viewing
+shows what the first did.
+
+Two new public routes, both shelf-gated exactly as the portrait is
+(`_shelved_store_pet`), both cached with `STORE_ASSET_CACHE_CONTROL`:
+`GET /api/store/{id}/sheet.png` and `GET /api/store/{id}/manifest.json`. The
+manifest is served as **raw stored text**, never re-serialized: the player crops
+frames using its geometry, so a value coerced in a round-trip would be a
+rendering bug nobody would think to look for in a JSON encoder.
+
+**This publishes the asset, deliberately (owner decision, 2026-07-31).** The
+sprite sheet is the thing being sold, and every frame of it is now downloadable
+by anyone who opens devtools on the shop page. Two alternatives were weighed and
+declined: a half-resolution preview sheet derived at intake (animates at card
+size, useless as a real pet) and exposing only walk+idle. The reasoning for
+serving it whole: the sheet becomes public the moment a pet renders on someone's
+DatsMe page anyway, and what the purchase buys is the DatsMe integration — the
+pet in a house, on the ledger, with its credits — not the secrecy of a PNG. It
+is written down here because "the preview leaks the product" must never look
+like something that happened by accident.
+
 ### §6.1a The admin's ⓘ on a shop card
 
 An admin needs to see the listing text the card no longer shows — to check what

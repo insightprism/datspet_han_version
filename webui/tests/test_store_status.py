@@ -69,9 +69,13 @@ OFF_SHELF = ("intake", "backroom", "archived")
 
 
 def _row(db_mod, store_id, status="intake", animations=None, animal="cat"):
+    # The geometry keys a real manifest carries — the sprite-sheet crop the
+    # pose player does is defined by them (§6.3), so a fixture without them
+    # cannot exercise what the animation routes actually serve.
     zip_bytes, manifest_json = make_bundle_zip(
         breed_id="shelfcat",
-        animations=animations if animations is not None else dict(WALK_IDLE))
+        animations=animations if animations is not None else dict(WALK_IDLE),
+        columns=8, frame_width=256, frame_height=256)
     db_mod.insert_store_pet(
         store_id=store_id, display_name="Shelf Cat", breed_id="shelfcat",
         animal=animal, description="", tags=[], created_at=1783800000.0,
@@ -294,3 +298,36 @@ def test_a_PUT_without_admin_note_preserves_the_stored_one(admin_client, dpp_env
                             json=body).status_code == 200
     assert db.get_store_pet("storerow0001")["admin_note"] == \
         "muddy colours, never sold"
+
+
+def test_the_animation_assets_follow_the_same_shelf_gate(store_client, dpp_env):
+    """The sheet and manifest that let a shopper WATCH a pet move (§6.3) are
+    bytes, so they obey the same rule the portrait does: on the shelf they
+    serve, off it they 404 exactly like an absent id. An off-shelf pet that
+    leaked its sprite sheet would be visible to anyone who guessed the id."""
+    db = dpp_env["db"]
+    _row(db, "onshelf00001", status="shelf")
+    _row(db, "offshelf0001", status="intake")
+
+    for asset in ("sheet.png", "manifest.json"):
+        live = store_client.get(f"/api/store/onshelf00001/{asset}")
+        assert live.status_code == 200, (asset, live.text)
+        assert "max-age" in live.headers.get("cache-control", "")
+        assert store_client.get(
+            f"/api/store/offshelf0001/{asset}").status_code == 404
+        assert store_client.get(
+            f"/api/store/nosuchrow0001/{asset}").status_code == 404
+
+
+def test_the_manifest_is_served_byte_for_byte_as_stocked(store_client, dpp_env):
+    """The player crops frames using the manifest's geometry, so a re-serialized
+    manifest that reordered or coerced a value would be a rendering bug nobody
+    would look for here. Serve exactly what was stored."""
+    db = dpp_env["db"]
+    _row(db, "onshelf00001", status="shelf")
+    stored = db.get_store_pet("onshelf00001")["manifest_json"]
+    r = store_client.get("/api/store/onshelf00001/manifest.json")
+    assert r.text == stored
+    # And it really is the geometry the player needs.
+    assert set(json.loads(r.text)) >= {"animations", "columns",
+                                       "frame_width", "frame_height"}

@@ -276,6 +276,17 @@ export function storePreviewUrl(storeId: string): string {
   return `${API_URL}/api/store/${encodeURIComponent(storeId)}/preview.png`;
 }
 
+/** The sprite sheet + its geometry, for animating a listing in place (§6.3).
+ *  The pet equivalents (`petSheetUrl`/`petManifestUrl`) are owner-scoped; these
+ *  are public and shelf-gated, because a shop card has no signed-in caller. */
+export function storeSheetUrl(storeId: string): string {
+  return `${API_URL}/api/store/${encodeURIComponent(storeId)}/sheet.png`;
+}
+
+export function storeManifestUrl(storeId: string): string {
+  return `${API_URL}/api/store/${encodeURIComponent(storeId)}/manifest.json`;
+}
+
 export interface AdoptedStorePet {
   pet_id: string;
   display_name: string;

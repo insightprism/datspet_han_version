@@ -33,7 +33,9 @@ import {
   getDatsmeSession,
   fetchEntitlement,
   handOffToDatsme,
+  storeManifestUrl,
   storePreviewUrl,
+  storeSheetUrl,
   type DatsmeSession,
   type Entitlement,
   type StoreListing,
@@ -41,10 +43,16 @@ import {
 import { animalsPresent, filterListings, NO_FILTER, tagsPresent,
          type StoreFilter } from "./storeFilter";
 import ModalOverlay from "@/components/ModalOverlay";
+import PosePlayer from "@/components/PosePlayer";
 
 /** Carries an adopted pet across the sign-in bounce, so the hand-off can resume
  *  on the way back. Same idea as the designer's `?job=`. */
 const ADOPTED_PARAM = "adopted";
+
+/** How long each pose holds before the tour moves on (§6.3). A pose is 16
+ *  frames at 12 fps ≈ 1.33 s, so this is about two full loops — enough to read
+ *  the motion, short enough that eight poses stay a ~20 s tour. */
+const POSE_DWELL_MS = 2600;
 
 const LISTING_TEXT_LABEL = "Listing text — description and tags (admin)";
 const NO_DESCRIPTION = "No description.";
@@ -61,6 +69,23 @@ export default function PetStorePage() {
   // description and tags are already in the payload every browser receives —
   // that is what makes search work — so this only chooses to render them.
   const [details, setDetails] = useState<StoreListing | null>(null);
+  // ONE card animates at a time (§6.3). Each player fetches a multi-megabyte
+  // sheet and runs its own rAF loop, so a grid of them would be both heavy and
+  // visually unreadable — and "which pet was that" is the question the feature
+  // exists to answer. Starting one stops the other.
+  const [playingId, setPlayingId] = useState<string | null>(null);
+  const [poseIndex, setPoseIndex] = useState(0);
+
+  // The tour: advance through the playing pet's poses, looping. Keyed on the id
+  // alone, so the interval is not torn down and rebuilt on every pose change.
+  useEffect(() => {
+    if (playingId === null) return;
+    const poses = listings?.find((p) => p.id === playingId)?.poses ?? [];
+    if (poses.length <= 1) return;
+    const timer = setInterval(
+      () => setPoseIndex((i) => (i + 1) % poses.length), POSE_DWELL_MS);
+    return () => clearInterval(timer);
+  }, [playingId, listings]);
 
   useEffect(() => {
     fetchStoreListings().then(setListings).catch(() =>
@@ -246,12 +271,25 @@ export default function PetStorePage() {
                     ⓘ
                   </button>
                 )}
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={storePreviewUrl(pet.id)}
-                  alt={`${pet.display_name} — a ready-made ${pet.animal}`}
-                  style={{ width: "100%", aspectRatio: "1", objectFit: "contain" }}
-                />
+                {playingId === pet.id && pet.poses.length > 0 ? (
+                  // The SAME player the result panel and the Motion Lab use, on
+                  // its already-existing arbitrary-sheet source shape — not a
+                  // second frame-cycling implementation that could disagree
+                  // about fps or column count.
+                  <PosePlayer
+                    source={{ sheetUrl: storeSheetUrl(pet.id),
+                              manifestUrl: storeManifestUrl(pet.id) }}
+                    pose={pet.poses[poseIndex % pet.poses.length]}
+                    fill
+                  />
+                ) : (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={storePreviewUrl(pet.id)}
+                    alt={`${pet.display_name} — a ready-made ${pet.animal}`}
+                    style={{ width: "100%", aspectRatio: "1", objectFit: "contain" }}
+                  />
+                )}
                 <figcaption className="flex flex-col gap-1">
                   <span className="text-sm font-semibold" style={{ color: "var(--heading)" }}>
                     {pet.display_name}
@@ -267,18 +305,44 @@ export default function PetStorePage() {
                       filterable from the bar above. */}
                   {pet.poses.length > 0 && (
                     <span className="flex flex-wrap gap-1">
-                      {pet.poses.map((pose) => (
-                        <span
-                          key={pose}
-                          className="mono rounded border px-1.5 py-0.5 text-[10px]"
-                          style={{ color: "var(--muted)", borderColor: "var(--line)" }}
-                        >
-                          {pose}
-                        </span>
-                      ))}
+                      {pet.poses.map((pose, i) => {
+                        // While the tour runs, the chip list doubles as its
+                        // progress readout — you can see WHICH pose you are
+                        // watching, which is the whole point of naming them.
+                        const live = playingId === pet.id
+                          && i === poseIndex % pet.poses.length;
+                        return (
+                          <span
+                            key={pose}
+                            className="mono rounded border px-1.5 py-0.5 text-[10px]"
+                            style={live
+                              ? { background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }
+                              : { color: "var(--muted)", borderColor: "var(--line)" }}
+                          >
+                            {pose}
+                          </span>
+                        );
+                      })}
                     </span>
                   )}
                 </figcaption>
+                {pet.poses.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Starting a tour always restarts at the first pose, so a
+                      // second viewing shows the same thing as the first.
+                      setPoseIndex(0);
+                      setPlayingId((id) => (id === pet.id ? null : pet.id));
+                    }}
+                    className="mono rounded-lg border px-3 py-1.5 text-xs transition hover:opacity-85"
+                    style={playingId === pet.id
+                      ? { background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }
+                      : { color: "var(--muted)", borderColor: "var(--line)" }}
+                  >
+                    {playingId === pet.id ? "■ Stop" : "▶ Animate"}
+                  </button>
+                )}
                 {canAdopt && (
                   <button
                     onClick={() => adopt(pet.id)}
