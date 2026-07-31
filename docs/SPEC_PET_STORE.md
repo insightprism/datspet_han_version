@@ -679,7 +679,7 @@ Two rules that follow, and both belong in the tests:
 There is no view counter and adding one is not a WHERE clause. The shop paints
 from **one cacheable listing response** (§6.1), so there is no per-pet request
 to count, and `preview.png` ships a 24-hour cache header
-(`PREVIEW_CACHE_CONTROL`, §3.1) precisely so it
+(`STORE_ASSET_CACHE_CONTROL`, §3.1) precisely so it
 is *not* re-fetched — counting image loads would undercount by design and miss
 every repeat viewer entirely. A real view metric needs a deliberate client-side
 beacon: a new surface, a new write path on a public endpoint, and its own
@@ -727,7 +727,7 @@ pattern (`webui/app.py:170-208`).
 | Route | Auth | Returns |
 |---|---|---|
 | `GET /api/store` | none (anonymous browsing, §0.4 of the catalog spec) | `{pets: [Listing]}` — **`status = 'shelf'` only**, newest first. `Listing = {id, display_name, animal, breed_id, description, tags, pose_count, poses, preview_url}`. Never bytes, never an off-shelf row. |
-| `GET /api/store/{id}/preview.png` | none (an `<img>` has no 401 handler — `owner_scope.py:120-122` precedent) | the `preview_png` blob, `Cache-Control: public, max-age=86400` — 24 h, the `PREVIEW_CACHE_CONTROL` constant — safe because a preview is immutable per id (derived once at insert; ai-tag touches only text). 404 for unknown *or off-shelf* ids — intake, backroom and archived must be invisible, not merely unlisted. |
+| `GET /api/store/{id}/preview.png` | none (an `<img>` has no 401 handler — `owner_scope.py:120-122` precedent) | the `preview_png` blob, `Cache-Control: public, max-age=86400` — 24 h, the `STORE_ASSET_CACHE_CONTROL` constant — safe because a preview is immutable per id (derived once at insert; ai-tag touches only text). 404 for unknown *or off-shelf* ids — intake, backroom and archived must be invisible, not merely unlisted. |
 | `POST /api/store/{id}/adopt` | `require_owner` | `{pet_id, display_name, breed_id}` |
 
 **Adopt** is the existing adopt-a-sample primitive re-pointed at the DB, and
@@ -999,47 +999,6 @@ shopper could not act on; it does not say whether the bird flies. The names are
 already in the listing (`store_listing_view` derives `poses` from the manifest),
 so this renders data that was being fetched and thrown away.
 
-### §6.3 Watching a pet move before buying it
-
-A still frame says what a pet looks like; it says nothing about what a shopper
-is actually buying, which is **motion**. Each card carries **▶ Animate**, which
-replaces the portrait with the live pet and tours its poses — `POSE_DWELL_MS`
-(2.6 s) each, about two loops of a 16-frame pose at 12 fps, so eight poses run a
-~20 s tour and loop. The pose chips double as the progress readout: the one
-playing is highlighted, so "which pose is this" is answered by the card itself.
-
-**It reuses `PosePlayer`, the component the result panel and the Motion Lab
-already use** — on the `{sheetUrl, manifestUrl}` source shape those two already
-forced it to grow. No second frame-cycling implementation, which is what keeps
-the shop, the result panel and the Lab from ever disagreeing about fps, column
-count or the final-frame duplicate. The only component change was an optional
-`fill` prop: the existing callers size a fixed px box, and a shop card's column
-is responsive.
-
-**One card animates at a time.** Each player fetches a multi-megabyte sheet and
-runs its own rAF loop, so a grid of them is both heavy and unreadable — and
-"which pet was that" is the question the feature exists to answer. Starting one
-stops the other. Starting always restarts at the first pose, so a second viewing
-shows what the first did.
-
-Two new public routes, both shelf-gated exactly as the portrait is
-(`_shelved_store_pet`), both cached with `STORE_ASSET_CACHE_CONTROL`:
-`GET /api/store/{id}/sheet.png` and `GET /api/store/{id}/manifest.json`. The
-manifest is served as **raw stored text**, never re-serialized: the player crops
-frames using its geometry, so a value coerced in a round-trip would be a
-rendering bug nobody would think to look for in a JSON encoder.
-
-**This publishes the asset, deliberately (owner decision, 2026-07-31).** The
-sprite sheet is the thing being sold, and every frame of it is now downloadable
-by anyone who opens devtools on the shop page. Two alternatives were weighed and
-declined: a half-resolution preview sheet derived at intake (animates at card
-size, useless as a real pet) and exposing only walk+idle. The reasoning for
-serving it whole: the sheet becomes public the moment a pet renders on someone's
-DatsMe page anyway, and what the purchase buys is the DatsMe integration — the
-pet in a house, on the ledger, with its credits — not the secrecy of a PNG. It
-is written down here because "the preview leaks the product" must never look
-like something that happened by accident.
-
 ### §6.1a The admin's ⓘ on a shop card
 
 An admin needs to see the listing text the card no longer shows — to check what
@@ -1094,6 +1053,36 @@ donation on 2026-07-31 and both fixed the same day:
   this pet". Superseded the same day by §6.2c, which removes the reason to
   leave the row at all.
 
+### §6.2b The admin editor after Phase 1b
+
+§13 calls 1b "DatsPet only", which is true of the repos and misleading about the
+work: the admin page is built around a boolean and every part of that has to
+move. What exists today and what replaces it:
+
+| Today | After 1b |
+|---|---|
+| `EditorState.published: boolean` | `status: StoreStatus` (the four-value union) + `admin_note: string` |
+| Two buttons: "Save draft" / "Publish to shop" | **One Save**, plus a four-way status control; the save is what applies the chosen status |
+| Table cell renders `published`/`staging` | Renders the status, with `intake` visually distinct — it is the inbox |
+| AI button, animal field and hint gated on `!published` | Gated on `status !== 'shelf'` (ai-tag) and on `first_shelved_at == null` (animal, §1.3) |
+| `StoreAdminListing.published` in `api.ts`; PUT body `{…, published}` | `status` + `admin_note` + read-only `first_shelved_at`; PUT body matches |
+
+Two behaviours worth stating rather than leaving to taste:
+
+- **The inventory table defaults to newest-first** so `intake` rows surface
+  without a queue. That sort is what makes Phase 2's "one badge and one sort"
+  claim true (§10.4), and it ships here rather than there.
+- **Archiving asks for a note, shelving does not.** `admin_note` is optional in
+  the schema, but the UI prompts for it on the way to `archived` — the one
+  transition whose reason nobody will remember in three months. Nothing enforces
+  it server-side; a required field would just collect the word "no".
+
+The shopper-facing `Listing` shape (§3.1) gains **nothing**: `status` is an
+admin fact, and the public listing is `shelf` rows by definition, so exposing it
+would be a field with one possible value. `db.store_listing_view` keeps emitting
+it for the admin view, and `pet_store.py` keeps popping it — the same shape the
+`published` flag has today.
+
 ### §6.2c The row owns the lifecycle; the dialog owns the text
 
 The fix above made the editor reachable. It did not make it *right*: moving one
@@ -1133,36 +1122,6 @@ longer in the dialog, so there is no moment there to ask. It is a plain optional
 field; nothing enforces it, because a required one would only ever collect the
 word "no".
 
-### §6.2b The admin editor after Phase 1b
-
-§13 calls 1b "DatsPet only", which is true of the repos and misleading about the
-work: the admin page is built around a boolean and every part of that has to
-move. What exists today and what replaces it:
-
-| Today | After 1b |
-|---|---|
-| `EditorState.published: boolean` | `status: StoreStatus` (the four-value union) + `admin_note: string` |
-| Two buttons: "Save draft" / "Publish to shop" | **One Save**, plus a four-way status control; the save is what applies the chosen status |
-| Table cell renders `published`/`staging` | Renders the status, with `intake` visually distinct — it is the inbox |
-| AI button, animal field and hint gated on `!published` | Gated on `status !== 'shelf'` (ai-tag) and on `first_shelved_at == null` (animal, §1.3) |
-| `StoreAdminListing.published` in `api.ts`; PUT body `{…, published}` | `status` + `admin_note` + read-only `first_shelved_at`; PUT body matches |
-
-Two behaviours worth stating rather than leaving to taste:
-
-- **The inventory table defaults to newest-first** so `intake` rows surface
-  without a queue. That sort is what makes Phase 2's "one badge and one sort"
-  claim true (§10.4), and it ships here rather than there.
-- **Archiving asks for a note, shelving does not.** `admin_note` is optional in
-  the schema, but the UI prompts for it on the way to `archived` — the one
-  transition whose reason nobody will remember in three months. Nothing enforces
-  it server-side; a required field would just collect the word "no".
-
-The shopper-facing `Listing` shape (§3.1) gains **nothing**: `status` is an
-admin fact, and the public listing is `shelf` rows by definition, so exposing it
-would be a field with one possible value. `db.store_listing_view` keeps emitting
-it for the admin view, and `pet_store.py` keeps popping it — the same shape the
-`published` flag has today.
-
 ### §6.3 `api.ts`
 
 New client functions in the one adapter: `fetchStoreListings`,
@@ -1170,6 +1129,48 @@ New client functions in the one adapter: `fetchStoreListings`,
 helpers (§8) are deleted in the same change — no dual client surface.
 
 ---
+
+### §6.4 Watching a pet move before buying it
+
+A still frame says what a pet looks like; it says nothing about what a shopper
+is actually buying, which is **motion**. Each card carries **▶ Animate**, which
+replaces the portrait with the live pet and tours its poses — `POSE_DWELL_MS`
+(2.6 s) each, about two loops of a 16-frame pose at 12 fps, so eight poses run a
+~20 s tour and loop. The pose chips double as the progress readout: the one
+playing is highlighted, so "which pose is this" is answered by the card itself.
+
+**It reuses `PosePlayer`, the component the result panel and the Motion Lab
+already use** — on the `{sheetUrl, manifestUrl}` source shape those two already
+forced it to grow. No second frame-cycling implementation, which is what keeps
+the shop, the result panel and the Lab from ever disagreeing about fps, column
+count or the final-frame duplicate. The only component change was an optional
+`fill` prop: the existing callers size a fixed px box, and a shop card's column
+is responsive.
+
+**One card animates at a time.** Each player fetches a multi-megabyte sheet and
+runs its own rAF loop, so a grid of them is both heavy and unreadable — and
+"which pet was that" is the question the feature exists to answer. Starting one
+stops the other. Starting always restarts at the first pose, so a second viewing
+shows what the first did.
+
+Two new public routes, both shelf-gated exactly as the portrait is
+(`_shelved_store_pet`), both cached with `STORE_ASSET_CACHE_CONTROL`:
+`GET /api/store/{id}/sheet.png` and `GET /api/store/{id}/manifest.json`. The
+manifest is served as **raw stored text**, never re-serialized: the player crops
+frames using its geometry, so a value coerced in a round-trip would be a
+rendering bug nobody would think to look for in a JSON encoder.
+
+**This publishes the asset, deliberately (owner decision, 2026-07-31).** The
+sprite sheet is the thing being sold, and every frame of it is now downloadable
+by anyone who opens devtools on the shop page. Two alternatives were weighed and
+declined: a half-resolution preview sheet derived at intake (animates at card
+size, useless as a real pet) and exposing only walk+idle. The reasoning for
+serving it whole: the sheet becomes public the moment a pet renders on someone's
+DatsMe page anyway, and what the purchase buys is the DatsMe integration — the
+pet in a house, on the ledger, with its credits — not the secrecy of a PNG. It
+is written down here because "the preview leaks the product" must never look
+like something that happened by accident.
+
 
 ## §7 Pricing: one new basis on the host
 
@@ -2214,15 +2215,14 @@ that called it. Fixed; the ordering rule is now written down.
 
 ### §14.3 What is genuinely left
 
-**Every phase this spec defines is now built. Nothing after Phase 1 is
-deployed.** What remains is shipping, stocking, and a short list of things
-deliberately not done.
+**Every phase this spec defines is built, and 1a/1b/2 are deployed to both
+environments (§14.6).** What remains is a production deploy of the post-launch
+work in §14.7, plus stocking and a short list of things deliberately not done.
 
-1. **Deploy 1a, 1b and 2** — §13's order, staging before production, with the
-   `datspet.db` backup before 1b (checklist B8b: that migration drops a column,
-   so rollback is a file restore). 1a is the one with a cost to waiting — every
-   store sale that completes before it ships is a transaction whose amount
-   cannot be reconstructed afterwards.
+1. **Deploy §14.7 to production** — staging carries eleven commits production
+   does not, including the admin preview fix, move-not-copy stocking, and the
+   bundle-uniqueness guard. Staging first is satisfied; production is the open
+   step. *(1a/1b/2 themselves shipped 2026-07-31 — §14.6.)*
 2. **Stock the shelf deeper** — one migrated sample satisfies the launch line
    (*not visibly emptier than the grid it replaced*), but one pet is a thin
    store. Count, captions and the knobs' values are the owner's calls; the §5
@@ -2240,42 +2240,30 @@ deliberately not done.
 5. **Design provenance is a different spec**, not a phase of this one —
    `SPEC_PET_DESIGN_PROVENANCE.md`, draft, nothing built.
 
-### §14.6 Deployed — 1a, 1b and 2 (Rev.12, 2026-07-31)
+### §14.4 Deployed (Rev.5, 2026-07-31)
 
-Host-first (§13), staging verified before production, both tiers at the same
-commit (Rule 0). DatsPet `79bf3b3c`; host `cd7c2ff0` (prod picked it up inside
-`868bfe9e`).
+Host-first (§13), staging before production, all in one day:
 
-| Check | Staging | Production |
+| Tier | Commit | Verification |
 |---|---|---|
-| C1 `verify_deployment.sh` | **14/14** | **14/14** |
-| 1b migration on real data | `published` dropped; the shelved row → `shelf` + `first_shelved_at` stamped; two others → `intake` | same, on its one row |
-| Store E2E (incl. the sale ledger) | **PASSED** — charged 50, `store_sales` recorded 50 | shelf serves; C5 pass |
-| Donation E2E (the reward loop) | **PASSED** — donor's social balance moved 10 → 11, claim row written, re-delivery paid nothing | — |
-| Shop surface in a real browser | only the `shelf` row visible; no price; no admin state leaked | same |
+| DatsMe staging host | `f120feb7` | knob live (50); clean journal |
+| DatsPet staging web | `0a3f63e1` | C1 `verify_deployment.sh` **14/14**; §12 store E2E **PASSED on staging** (markly.3: flat 50 quoted + charged; per-pose would say 110) |
+| DatsMe prod host | `f120feb7` | knob live (50); clean journal; BUILD_ID rolled |
+| DatsPet prod web | `0a3f63e1` | C1 **14/14**; shelf serves the migrated sample; `/design` 307 intact |
 
-`datspet.db` was copied before each restart (B8b) — 93 MB staging, 251 MB
-production — because 1b drops a column and rollback is a file restore.
+B9 migration ran once per environment (idempotent re-runs verified no-op). The
+§8 sample content files and their interim guard test
+(`test_sample_migration_input.py`, which asked for deletion alongside them) are
+deleted in the repo and reach the boxes on the next deploy — the one-cycle
+rollback buffer §8 asks for — the migration script
+remains, now a no-op, for any future `<animal>/samples/` drop-in.
 
-**What only the live run could find.** The donation E2E failed on its first
-execution, twice, for two different real reasons:
-
-1. **DatsPet's manifest never requested `social.award`.** The user could
-   therefore never grant it, the host correctly answered
-   `capability_not_granted`, and the donation was marked `declined` — *after*
-   the donor had irreversibly given the pet away. Every unit test passed
-   because they stub the HTTP call entirely.
-2. **The E2E read the wrong database.** It sourced `pet_env.sh`, but a deployed
-   box takes its env from `webui/.env`; it reported a sale as missing that had
-   been recorded correctly. A false failure is safer than a false pass and is
-   still a bug in a check whose job is to be believed.
-
-**The rollout fact to carry forward: `datspet` is `community` tier, so
-`social.award` does NOT auto-grant** (that needs `official` + low risk).
-Every existing user must consent on a later launch. Until they do, donations
-complete and settle `declined` — so the donor surface says so plainly rather
-than thanking someone who received nothing. Verified deliberately in both
-directions on staging: `declined` without the grant, `delivered` with it.
+Operational notes from the deploys: the staging vhost served 403/500 for ~3
+minutes when a rebuild replaced `out/` without the B8 vhost restart (the bind
+mount follows the directory inode — B8 is unconditional for a reason); and
+staging's live nginx conf carries a house-asset location block that exists
+neither in the repo conf nor on prod — a drift to reconcile deliberately, not
+during a deploy.
 
 ### §14.5 Built after the Phase 1 deploy, shipped nowhere
 
@@ -2325,27 +2313,74 @@ Two earlier build defects, both caught by tests within seconds:
 - **A test fixture built a bundle with no animations**, so the sellability gate
   refused the donation. The gate was right; the fixture was lying.
 
-### §14.4 Deployed (Rev.5, 2026-07-31)
+### §14.6 Deployed — 1a, 1b and 2 (Rev.12, 2026-07-31)
 
-Host-first (§13), staging before production, all in one day:
+Host-first (§13), staging verified before production, both tiers at the same
+commit (Rule 0). DatsPet `79bf3b3c`; host `cd7c2ff0` (prod picked it up inside
+`868bfe9e`).
 
-| Tier | Commit | Verification |
+| Check | Staging | Production |
 |---|---|---|
-| DatsMe staging host | `f120feb7` | knob live (50); clean journal |
-| DatsPet staging web | `0a3f63e1` | C1 `verify_deployment.sh` **14/14**; §12 store E2E **PASSED on staging** (markly.3: flat 50 quoted + charged; per-pose would say 110) |
-| DatsMe prod host | `f120feb7` | knob live (50); clean journal; BUILD_ID rolled |
-| DatsPet prod web | `0a3f63e1` | C1 **14/14**; shelf serves the migrated sample; `/design` 307 intact |
+| C1 `verify_deployment.sh` | **14/14** | **14/14** |
+| 1b migration on real data | `published` dropped; the shelved row → `shelf` + `first_shelved_at` stamped; two others → `intake` | same, on its one row |
+| Store E2E (incl. the sale ledger) | **PASSED** — charged 50, `store_sales` recorded 50 | shelf serves; C5 pass |
+| Donation E2E (the reward loop) | **PASSED** — donor's social balance moved 10 → 11, claim row written, re-delivery paid nothing | — |
+| Shop surface in a real browser | only the `shelf` row visible; no price; no admin state leaked | same |
 
-B9 migration ran once per environment (idempotent re-runs verified no-op). The
-§8 sample content files and their interim guard test
-(`test_sample_migration_input.py`, which asked for deletion alongside them) are
-deleted in the repo and reach the boxes on the next deploy — the one-cycle
-rollback buffer §8 asks for — the migration script
-remains, now a no-op, for any future `<animal>/samples/` drop-in.
+`datspet.db` was copied before each restart (B8b) — 93 MB staging, 251 MB
+production — because 1b drops a column and rollback is a file restore.
 
-Operational notes from the deploys: the staging vhost served 403/500 for ~3
-minutes when a rebuild replaced `out/` without the B8 vhost restart (the bind
-mount follows the directory inode — B8 is unconditional for a reason); and
-staging's live nginx conf carries a house-asset location block that exists
-neither in the repo conf nor on prod — a drift to reconcile deliberately, not
-during a deploy.
+**What only the live run could find.** The donation E2E failed on its first
+execution, twice, for two different real reasons:
+
+1. **DatsPet's manifest never requested `social.award`.** The user could
+   therefore never grant it, the host correctly answered
+   `capability_not_granted`, and the donation was marked `declined` — *after*
+   the donor had irreversibly given the pet away. Every unit test passed
+   because they stub the HTTP call entirely.
+2. **The E2E read the wrong database.** It sourced `pet_env.sh`, but a deployed
+   box takes its env from `webui/.env`; it reported a sale as missing that had
+   been recorded correctly. A false failure is safer than a false pass and is
+   still a bug in a check whose job is to be believed.
+
+**The rollout fact to carry forward: `datspet` is `community` tier, so
+`social.award` does NOT auto-grant** (that needs `official` + low risk).
+Every existing user must consent on a later launch. Until they do, donations
+complete and settle `declined` — so the donor surface says so plainly rather
+than thanking someone who received nothing. Verified deliberately in both
+directions on staging: `declined` without the grant, `delivered` with it.
+
+
+### §14.7 Post-launch — the owner's first real use of the store (2026-07-31)
+
+Everything below came from the owner *using* the shipped store rather than from
+review. That is the section's point: eleven commits, and not one was found by a
+test, because each lived where no test was looking. Staging `bd9ed0c`+ ; **none
+of it is in production.**
+
+| # | What was wrong / missing | Fix | §  |
+|---|---|---|---|
+| 1 | Every off-shelf row was a **broken image** in the admin — its portraits pointed at the shopper's route, which 404s anything off the shelf | a gated admin preview route serving every state | §3.2 |
+| 2 | The inventory list carried neither `donated_by` nor `sellability_errors`, and the list is the **only** surface that renders either | both routes build rows through one `_admin_view`; a test asserts list == detail | §3.2 |
+| 3 | "Edit" looked dead — the editor mounted below the fold | superseded by #4 | §6.2 |
+| 4 | Moving one pet one state opened a whole form | the **row owns lifecycle, a dialog owns text**; a per-row state select + Save-when-dirty, and `POST /{id}/status`, sized for triage by hand or by script | §6.2c, §3.2 |
+| 5 | Stocking **copied**, leaving a house duplicate that could not be sold and invited stocking the same pet twice (two Vampires, two Blue Butterflies in one session) | `intake-from-pet` **moves**, the same transfer a donation performs | §5.1 |
+| 6 | Nothing stopped the store holding the same bundle twice | both doors refuse a duplicate **bundle digest** before writing | §5.4 |
+| 7 | Cards showed a description and a tag wall; heights tracked how much text a listing carried | description and tags off the card (still searchable); tag filter moved into the bar | §6.1 |
+| 8 | "8 poses" was the one card fact a shopper could not act on | the **pose names**, so you can see the maccaw flies and the cobra swims | §6.1 |
+| 9 | An admin could not see listing text on the shopper's surface | an admin-only ⓘ per card, keyed on the **verified** `admin` claim | §6.1a |
+| 10 | A still frame says nothing about **motion**, which is what is being bought | **▶ Animate** tours the poses, reusing `PosePlayer` | §6.4 |
+| 11 | `next build` recreates `web/out`, orphaning the nginx bind mount → 500 on every route with a green build | `deploy/CHECKLIST.md` B8 now requires the vhost restart **and** an inside-the-container check | — |
+
+**Two decisions recorded here because they must never look accidental:**
+`GET /api/store/{id}/sheet.png` publishes the full asset (§6.4), and the
+uniqueness guard is enforced at the doors rather than as a `UNIQUE` index
+because existing environments already hold duplicates (§5.4).
+
+**Known content defect, not a store defect:** the pose measurement in
+§6.4's wake found `limbless_serpentine` animates nothing (cobra walk 0.35,
+swim 0.19 mean frame delta) while locomotion on avian/quadruped/primate scores
+4–12; rest poses (idle/sleep/sit) are near-frozen on every body type. That is
+pipeline work (a serpentine pose clause), and the cheap store-side answer is a
+static-pose check beside `store_validation` so an unanimated pet cannot reach
+the shelf. Neither is built.

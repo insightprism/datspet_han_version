@@ -49,7 +49,7 @@ import PosePlayer from "@/components/PosePlayer";
  *  on the way back. Same idea as the designer's `?job=`. */
 const ADOPTED_PARAM = "adopted";
 
-/** How long each pose holds before the tour moves on (§6.3). A pose is 16
+/** How long each pose holds before the tour moves on (§6.4). A pose is 16
  *  frames at 12 fps ≈ 1.33 s, so this is about two full loops — enough to read
  *  the motion, short enough that eight poses stay a ~20 s tour. */
 const POSE_DWELL_MS = 2600;
@@ -69,7 +69,7 @@ export default function PetStorePage() {
   // description and tags are already in the payload every browser receives —
   // that is what makes search work — so this only chooses to render them.
   const [details, setDetails] = useState<StoreListing | null>(null);
-  // ONE card animates at a time (§6.3). Each player fetches a multi-megabyte
+  // ONE card animates at a time (§6.4). Each player fetches a multi-megabyte
   // sheet and runs its own rAF loop, so a grid of them would be both heavy and
   // visually unreadable — and "which pet was that" is the question the feature
   // exists to answer. Starting one stops the other.

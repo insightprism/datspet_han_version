@@ -70,7 +70,7 @@ OFF_SHELF = ("intake", "backroom", "archived")
 
 def _row(db_mod, store_id, status="intake", animations=None, animal="cat"):
     # The geometry keys a real manifest carries — the sprite-sheet crop the
-    # pose player does is defined by them (§6.3), so a fixture without them
+    # pose player does is defined by them (§6.4), so a fixture without them
     # cannot exercise what the animation routes actually serve.
     zip_bytes, manifest_json = make_bundle_zip(
         breed_id="shelfcat",
@@ -301,7 +301,7 @@ def test_a_PUT_without_admin_note_preserves_the_stored_one(admin_client, dpp_env
 
 
 def test_the_animation_assets_follow_the_same_shelf_gate(store_client, dpp_env):
-    """The sheet and manifest that let a shopper WATCH a pet move (§6.3) are
+    """The sheet and manifest that let a shopper WATCH a pet move (§6.4) are
     bytes, so they obey the same rule the portrait does: on the shelf they
     serve, off it they 404 exactly like an absent id. An off-shelf pet that
     leaked its sprite sheet would be visible to anyone who guessed the id."""

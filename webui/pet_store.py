@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/store")
 
 #: Every byte-serving store route is immutable per id — the portrait is derived
 #: once at insert, and the sheet and manifest ARE the stocked bundle; ai-tag
-#: only ever rewrites text. So all three cache hard (§3.1, §6.3).
+#: only ever rewrites text. So all three cache hard (§3.1, §6.4).
 STORE_ASSET_CACHE_CONTROL = "public, max-age=86400"
 
 
@@ -73,7 +73,7 @@ def store_preview(store_id: str):
 @router.get("/{store_id}/sheet.png")
 def store_sheet(store_id: str):
     """The full sprite sheet, so a shopper can WATCH the pet move before paying
-    (§6.3). Same shelf gate and same no-owner-resolution posture as the
+    (§6.4). Same shelf gate and same no-owner-resolution posture as the
     portrait: a <canvas> has no 401 handler either.
 
     **This publishes the asset.** The sheet is the thing being sold, and every
