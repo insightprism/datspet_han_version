@@ -1,16 +1,37 @@
 # SPEC_PET_DESIGN_PROVENANCE — how a pet was designed, kept on purpose
 
-**Status: Rev.2 (2026-07-31) — DRAFT FOR OWNER REVIEW; NOTHING BUILT.** No code, no
+**Status: Rev.3 (2026-07-31) — DRAFT FOR OWNER REVIEW; NOTHING BUILT.** No code, no
 migration, no deploy. §0 is the decision set that needs sign-off; everything after it is the
 consequence of those decisions.
 
-> ### Rev.2 — the prompt ships in the bundle
+> ### Rev.3 — the design is part of the pet's identity, and it is published whole
 >
-> Rev.1 kept the design record entirely private and published only an opaque `design_ref`. **The
-> owner's direction is that the prompt is useful to know about a pet and belongs in the bundle**, so
-> Rev.2 puts a `design` block in `manifest.json` carrying the composed prompt and the structured
-> picks. §3.4 is the mechanism, §3.6 records what publishing costs so it is a decision on the record
-> rather than an oversight, and §5 narrows to the one input that stays private by default.
+> **The owner's decision, in their words: "the prompt and how the pet design is part of its
+> identity. That is what the manifest is supposed to hold… It is like publishing a book. It is an
+> honor to know who the author is, and have a biography."**
+>
+> That framing settles Rev.2's one open carve-out and reframes the whole spec. Rev.2 held the
+> free-text field back and published a `prompt` composed without it; **Rev.3 publishes the composed
+> prompt exactly as it was rendered, free text included.** A colophon that omits a line is not a
+> colophon.
+>
+> What the decision changes: `prompt_public` and its second `compose_design` call are **deleted**
+> (§4.1); the double-compose mechanism is gone; `strip_design_block` and the donate-door redaction
+> seam are **deleted** (§5.3) — under the book analogy a donated pet keeps its authorship exactly as
+> a sold book keeps its author; and §5 stops being a privacy section and becomes the statement of
+> what the manifest is *for*.
+>
+> **One correction to Rev.2's framing, which overstated the delta.** The user's typed noun already
+> ships in every bundle today and always has: the typed-animal door and the upload door both set
+> `display_name` from it (`webui/app.py:1108`, `:1181`), `start_job` reads it (`:1553`), and the
+> packer writes it into `package.json` (`pet_factory/factory.py:947`). So two of the three free-text
+> inputs Rev.2 worried about were already public. The genuinely new text in a bundle is the axis
+> fragment wording and the `extra` clause — which is what this decision publishes.
+>
+> **What still does not go in the bundle, and it is not about privacy** (§5.2): the seed, the build
+> tier, the owner id, and the reference-chain handles. The block carries **what the pet is**; the
+> ledger keeps **what the factory did**. A book's colophon names the author and the edition, not the
+> print shop's job number.
 >
 > One fact found while designing the mechanism **supports** the direction and kills the obvious
 > alternative: DatsMe stores a pet as three *parts* — `write_assets(sheet_png, manifest_json,
@@ -18,9 +39,24 @@ consequence of those decisions.
 > (`:349`) rebuilds the archive from exactly those three. **A fourth zip member does not survive the
 > first host import.** `manifest.json` is not merely the best carrier; it is the only durable one.
 >
-> The private ledger of Rev.1 is **kept, not replaced** (§3.3). The bundle answers "what is this
-> pet"; the ledger answers "what did people build and what happened to it", and only the ledger
-> survives a deleted pet (§8.2) — which is the corpus's negative class.
+> The private ledger of Rev.1 is **kept, not replaced** (§3.3) — not as a privacy boundary but as the
+> corpus. The bundle answers "what is this pet"; the ledger answers "what did people build and what
+> happened to it", and only the ledger survives a deleted pet (§8.2), which is the corpus's negative
+> class.
+>
+> **The analogy raises a field the block does not yet have: the author** (§14.1). Ownership is
+> already published (`owner_name`, SPEC_PET_OWNER_FIELD), but who *owns* a copy and who *made* it are
+> different facts, and only the first is in a bundle today. That one is a real identity disclosure
+> and is left as an explicit decision rather than folded in.
+>
+> <details><summary>Rev.2 (superseded)</summary>
+>
+> Rev.2 introduced the `design` block and the §3.4 mechanism, and held back only the free-text
+> field, publishing a `prompt` composed with `extra=""`. Rev.3 keeps the block and the mechanism
+> unchanged and removes the carve-out. Rev.1 kept everything private and published only an opaque
+> `design_ref`.
+>
+> </details>
 
 Today every design input a user supplies is destroyed within the build that consumes it. The
 composed prompt is discarded at `webui/app.py:1342`, the axis picks are function locals in
@@ -61,9 +97,9 @@ them by an explicit documented rule.
 | # | Question | Decision |
 |---|---|---|
 | 0.1 | Where does the record live? | **Both:** a `design` block in `manifest.json` (travels with the pet) *and* a private append-only ledger in `datspet.db` (survives the pet, joins to outcomes). Never a column on `pets` (§3.2). |
-| 0.2 | What does the bundle publish? | **The composed prompt, the structured picks, the species/colour/accessories, the door, and a `design_ref`** — the `design` block of §3.5, written by the mechanism of §3.4. |
+| 0.2 | What does the bundle publish? | **The whole design:** the composed prompt exactly as rendered, the structured picks, species/colour/accessories/free text, the door, and a `design_ref` — the `design` block of §3.5, written by the mechanism of §3.4. |
 | 0.3 | What is recorded? | **Both** the structured inputs *and* the composed prompt string, plus a `compose_version`. Neither derives the other safely (§2.2). |
-| 0.4 | Free text the user typed? | **Held privately; excluded from the published prompt by default**, via a second `compose_design` call with `extra=""` (§5.2). A one-line change if the owner wants it in. |
+| 0.4 | Free text the user typed? | **Published, with everything else.** The design is part of the pet's identity (§5.1). No carve-out, no redaction seam, no opt-in. |
 | 0.5 | Does the packer participate? | **No.** `pack_datsme_bundle` is unchanged; SPEC_PET_OWNER_FIELD §2.4's boundary holds and §7 rules on why. |
 | 0.6 | Does the ledger die with the pet? | **No.** No foreign key, no cascade. A deleted pet is the corpus's negative class (§8.2). |
 | 0.7 | Back-fill existing pets? | **No, and it is not possible.** The epoch is marked instead (§13). |
@@ -181,8 +217,8 @@ A provenance row describes one build. It is assembled at `start_job` from two so
 This is not a new pattern. It is the pattern, applied to fields that were left out of it.
 
 **What `_save_reference` must start carrying** (Phase 1, §9.1): `parent_reference_id`,
-`axis_picks`, `color`, `accessories`, `extra_text`, `composed_prompt`, `prompt_public`,
-`effective_strength`, `compose_version`. `_reference_record` (`webui/app.py:711`) — the browser-facing projection — gains
+`axis_picks`, `color`, `accessories`, `extra_text`, `composed_prompt`, `effective_strength`,
+`compose_version`. `_reference_record` (`webui/app.py:711`) — the browser-facing projection — gains
 **none** of them: it is already documented as deliberately withholding fields (`owner` is excluded
 there as *"an access-control fact, not the caller's data"*), and the same reasoning covers the
 design fields. Note the asymmetry this creates and keep it: the *finished bundle* publishes the
@@ -386,15 +422,17 @@ one open/rewrite, making the mint cheaper than it is today rather than more expe
 "design": {
   "schema_version": "pet_design.v1",
   "design_ref": "9f2c40ab7e1d4c88",
-  "prompt": "chubby vivid purple corgi with a spotted coat wearing a top hat, recolored entirely purple",
+  "prompt": "chubby vivid purple corgi with a spotted coat wearing a top hat, with one ear folded over, recolored entirely purple",
   "compose_version": "compose.v1",
   "species": "corgi",
   "color": "purple",
   "accessories": ["top hat"],
+  "extra": "with one ear folded over",
   "picks": { "body": "fat", "pattern": "spotted", "coat": "spotted" },
   "door": "catalog",
   "catalog_animal": "dog",
   "catalog_breed": "corgi",
+  "surface": "fur",
   "strength": 0.85,
   "built_at": "2026-07-31T09:14:02Z"
 }
@@ -403,13 +441,18 @@ one open/rewrite, making the mint cheaper than it is today rather than more expe
 **One nested object, not flat top-level keys** — and this deliberately diverges from
 SPEC_PET_OWNER_FIELD §0.4, which chose flat. The reason that spec chose flat is that its fields are
 read *at a gate*, one at a time, and written by two different actors in two different repos. The
-design block is written once by one writer, read as a unit, and never partially updated. Nesting
-also makes "remove the design" one `del`, which §5.3 needs.
+design block is written once by one writer, read as a unit, and never partially updated. Nesting also
+keeps a colophon looking like a colophon to a human who opens the file.
 
 Field notes:
 
-- **`prompt`** — the composed design string, exactly as `compose_design` returned it, minus the free
-  text (§5.2). This is the field the owner asked for.
+- **`prompt`** — the composed design string **exactly as `compose_design` returned it and exactly as
+  the renderer received it**. Nothing removed, nothing recomposed. This is the field the owner asked
+  for, and the fidelity is the point: a prompt in a bundle that differs from the prompt that made the
+  pet is worse than no prompt, because a reader would have no way to know.
+- **`extra`** — the free-text clause, published alongside the prompt it appears in. Carried as its
+  own field as well as inside `prompt` so a reader can tell the user's own sentence apart from the
+  composed vocabulary — the part a person wrote versus the part the menu wrote.
 - **`picks`** — `{axis_key: option_key}`, the browser's own vocabulary. These are the keys the
   browser *sent*; publishing them back reveals nothing it did not already have.
 - **`design_ref`** — random, opaque, 16 hex chars. Never derived from the owner, the anon cookie, the
@@ -422,10 +465,10 @@ Field notes:
   existing bundle and inherits whatever block it carried. A CLI pet has no block. Absence reads as
   "unknown", never as "no design" — the `read_pet_ownership` posture (`webui/pet_ownership.py:194`).
 
-### 3.6 What publishing costs, on the record
+### 3.6 What publishing changes, on the record
 
-This is a deliberate reversal of a shipped posture, and it is written down so it is a decision
-rather than a drift.
+One shipped posture is deliberately reversed here, and it is written down so it is a decision rather
+than a drift.
 
 `design_axes` `prompt_fragment` values are withheld from the browser on purpose —
 `webui/app.py:1233`: *"`prompt_fragment` is calibrated server-side wording and never reaches the
@@ -433,19 +476,25 @@ browser, same posture as the tier table"*, pinned by SPEC_PET_DESIGN_AXES §4 an
 that spec's verification table (`docs/SPEC_PET_DESIGN_AXES.md:497`). The composed `prompt` **is**
 those fragments, concatenated. Publishing it publishes the vocabulary.
 
-Two things follow, and both are acceptable — the point is that they are chosen:
+Three things follow:
 
 - **The withholding rule narrows rather than disappears.** `/api/design-axes` keeps withholding
-  fragments, because the menu should not preview them and the browser has no use for them. What
-  changes is that a *built* pet discloses the wording that made it. Those are different claims and
-  the endpoint's docstring must be corrected to say so, or it becomes a lie that someone later
-  "restores" (§12 pins this).
-- **The tier-table analogy no longer holds and should stop being cited for fragments.** The tier
-  table is withheld because knowing other tiers' entitlements is an upsell surface. Fragment wording
-  was withheld by association, not by its own argument. SPEC_PET_DESIGN_AXES §4 should record that.
+  fragments, because the *menu* should not preview them and the browser has no use for them there.
+  What changes is that a **built pet** discloses the wording that made it. Those are different
+  claims, and the endpoint's docstring must be corrected to say so — otherwise it becomes a stale
+  comment that someone later "restores" by stripping the block (§12 pins this).
+- **The tier-table analogy should stop being cited for fragments.** The tier table is withheld
+  because knowing other tiers' entitlements is an upsell surface — a commercial reason. Fragment
+  wording was withheld by association with it, never on its own argument. SPEC_PET_DESIGN_AXES §4
+  should record that the association is broken and the two are now decided separately.
+- **The calibration record becomes readable from the outside.** Anyone with a few bundles can
+  reconstruct most of the fragment table. Under the book framing that is a colophon, not a leak —
+  but it should be a known consequence rather than a surprise, because it is irreversible for pets
+  already minted.
 
-**What is not on the table:** the free text (§5.2), and the ledger's build internals — seed, tier,
-reference chain, owner. Those are not "what this pet is"; they are how the factory ran.
+**What is still not in the block, and why it is not a privacy carve-out:** the seed, the build tier,
+the owner id and the reference-chain handles (§5.2). Those are not what the pet *is*; they are how
+the factory ran on one afternoon.
 
 ---
 
@@ -473,13 +522,12 @@ CREATE TABLE IF NOT EXISTS design_provenance (
     species             TEXT    NOT NULL,         -- the noun the design was composed against
     color               TEXT    NOT NULL DEFAULT '',
     accessories_json    TEXT    NOT NULL DEFAULT '[]',
-    extra_text          TEXT    NOT NULL DEFAULT '',   -- the free-text escape hatch; PRIVATE (§5.2)
+    extra_text          TEXT    NOT NULL DEFAULT '',   -- the free-text escape hatch
     picks_json          TEXT    NOT NULL DEFAULT '{}', -- {axis_key: option_key}
-    composed_prompt     TEXT    NOT NULL,         -- what the renderer actually saw; PRIVATE
-    prompt_public       TEXT    NOT NULL,         -- the same prompt with the free-text clause
-                                                  -- omitted (compose_design(..., extra="")).
-                                                  -- IDENTICAL to composed_prompt when the user
-                                                  -- typed no free text, which is the common case.
+    composed_prompt     TEXT    NOT NULL,         -- what the renderer actually saw. ONE column:
+                                                  -- Rev.2's public/private split is deleted, so
+                                                  -- the string in the bundle IS the string that
+                                                  -- was rendered, with nothing removed (§5.1).
     display_name        TEXT    NOT NULL,
 
     -- What the engine did with it
@@ -536,8 +584,11 @@ three call it; none should be it"*). It owns:
 - `set_design_block(manifest_json, block) -> manifest_json` and
   `stamp_design_block(zip_bytes, block) -> (bytes, manifest_json)` — the writers, idempotent with
   `pet_ownership`'s same-object no-op contract;
-- **`strip_design_block(manifest_json) -> manifest_json`** — the removal used at the one seam where a
-  pet stops being its designer's (§5.3).
+- `read_design_block(manifest_json) -> Optional[dict]` — the reader, non-raising on an unparseable
+  manifest, the `read_pet_ownership` posture (`webui/pet_ownership.py:194`).
+
+**There is no `strip_design_block`.** Rev.2 reserved one for the store's donate door; §5.1 deletes
+it. A removal function that exists with no caller is an invitation to find one.
 
 `db.py` owns `insert_design_provenance(**row)`, `design_block(pet_id)` (fetch + project), and the
 read-time join query (§8.3). Imports are stdlib only.
@@ -548,22 +599,39 @@ read-time join query (§8.3). Imports are stdlib only.
 blacklist:
 
 ```python
-PUBLIC_FIELDS = ("design_ref", "prompt_public", "compose_version", "species", "color",
-                 "accessories", "picks", "door", "catalog_animal", "catalog_breed",
-                 "strength", "built_at")
+PUBLIC_FIELDS  = ("design_ref", "composed_prompt", "compose_version", "species", "color",
+                  "accessories_json", "extra_text", "picks_json", "door",
+                  "catalog_animal", "catalog_breed", "surface", "effective_strength",
+                  "created_at")
+
+PRIVATE_FIELDS = ("id", "pet_id", "schema_version", "display_name", "reference_id",
+                  "parent_reference_id", "motion_profile", "poses_json", "pose_anchor",
+                  "still_seed", "tier", "external_user_id")
 ```
 
-Whitelist, because the failure modes are asymmetric. A field forgotten from a whitelist is a field
-missing from a bundle — annoying, fixable, and it fails toward silence. A field forgotten from a
-blacklist is `still_seed`, `tier`, `external_user_id`, `composed_prompt` or `extra_text` shipped to
-strangers permanently, and it fails toward disclosure. Every future column added to
-`design_provenance` is private until someone adds its name to this tuple, which is the direction the
-mistake should point.
+**Why keep a whitelist when almost everything is published?** Because the two tuples now encode
+§5.2's line — *what the pet is* versus *what the factory did* — and that line has to be re-drawn
+deliberately for every column anyone adds later. The guard test (§12) fails the build on a column in
+neither tuple, so the question gets asked once per field instead of never.
 
-The projection renames exactly two fields, and only to keep the block readable to a human holding
-the file: `prompt_public → prompt` and `accessories_json → accessories` (parsed). Note which side of
-that rename `composed_prompt` sits on — **it is not published at all**; `prompt_public` is
-(§5.2).
+The failure modes stay asymmetric, which is why the whitelist is the one that governs. A field
+missing from `PUBLIC_FIELDS` is a field missing from a bundle — fixable. A field wrongly published is
+in strangers' hands permanently.
+
+Notes on three entries:
+
+- **`display_name` is private here and that is not a contradiction** — it is already published, in
+  `package.json` (`pet_factory/factory.py:947`). Duplicating it into the design block would create
+  two copies that a rename could desynchronise.
+- **`motion_profile` / `poses_json` likewise** — the manifest already carries `movement_class` and
+  the `animations` map. The block adds facts, never restates them.
+- **`still_seed` becomes public when Phase 3 lands** (§9.3) and should move tuples in that same
+  change: a seed is part of an edition, like a print run. It is listed private now only because it is
+  always `NULL` until then.
+
+The projection renames for readability — `composed_prompt → prompt`, `effective_strength → strength`,
+`created_at → built_at` — and parses the two `_json` columns. Renames are declared in one mapping
+beside the tuples, never inline at a call site.
 
 A guard test pins the tuple against the table's columns and **fails on any new column that is
 neither listed nor explicitly named as private** — the half-formed-registry-entry rule this repo
@@ -571,104 +639,68 @@ applies to `motion_profiles` and `design_axes`, applied to a disclosure boundary
 
 ---
 
-## §5 Privacy — the rule for text a user typed
+## §5 The manifest as the pet's record of itself
 
-### 5.1 Three doors produce free text
+### 5.1 The principle
 
-1. **The typed-animal box** (`create_reference`, `webui/app.py:1034`) — `animal`, up to 60 chars,
-   unconstrained.
-2. **The `extra` escape hatch** (`preview_design`, `webui/app.py:1266`) — documented as *"the
-   unbounded escape hatch"* at `webui/app.py:419`.
-3. **An upload's subject noun** — and uploads are photographs, which
-   SPEC_UPLOAD_LIKENESS exists because they are sometimes photographs of **people**. `app.py:1131`
-   records an incident where the pipeline drew a dog from a photo of a person.
+> **A pet's design is part of what the pet is, and the manifest is where a pet says what it is.**
 
-None of these is a menu selection. All of them are a human writing a sentence.
+The owner's framing, and the one this section is built on: *it is like publishing a book — it is an
+honor to know who the author is, and have a biography.* A book's colophon is not a disclosure; it is
+part of the object, and a copy without one is a poorer copy. The composed prompt, the picks, and the
+words the designer typed are the pet's colophon.
 
-Two of the three are *names* — a species noun the user chose for their own pet. Publishing "corgi"
-or "my cat Biscuit" as the species of a pet named after it discloses nothing the pet's own
-`display_name` doesn't already say, and `display_name` has shipped in `package.json` since the
-beginning (`pet_factory/factory.py:947`). Those ship.
+Three consequences, all of them simplifications:
 
-**`extra` is different in kind.** It is documented in the composer itself as *"the unbounded escape
-hatch"* (`webui/app.py:419`) — the field with no menu, no vocabulary, and no length discipline
-beyond a character cap. It is where a user writes a sentence, and the only one of the three that is
-not answering the question "what animal is this".
+- **No carve-out.** Rev.2's `prompt_public` column, its second `compose_design` call, and the
+  golden test that pinned the two strings against each other are all deleted. `prompt` is the string
+  the renderer received. One column, one value, nothing to keep in sync.
+- **No redaction seam.** Rev.2 reserved `strip_design_block` for the store's donate door. That is
+  deleted too, and the reasoning inverts cleanly: a donated pet keeping its designer's prompt is a
+  sold book keeping its author's name. SPEC_PET_STORE §10 gains no requirement from this spec.
+- **No opt-in, no per-pet control.** There is nothing to opt into. This also keeps §0.9 intact —
+  a per-record flag is exactly the thing a runtime path eventually branches on.
 
-### 5.2 The rule — one carve-out, and it costs one line
+**What was already public, and this is worth knowing when weighing the change.** Two of the three
+free-text inputs already ship in every bundle and always have: the typed-animal door
+(`webui/app.py:1108`) and the upload door (`webui/app.py:1181`) both set the reference's
+`display_name` from the user's own words, `start_job` reads it (`webui/app.py:1553`), and the packer
+writes it into `package.json` (`pet_factory/factory.py:947`). The genuinely new text is the axis
+fragment wording and the `extra` clause (`webui/app.py:418-422`).
 
-> **The free-text field is held privately and omitted from the published prompt. Everything else
-> about the design ships.**
+### 5.2 The line that does exist: what the pet is vs. what the factory did
 
-The mechanism is almost free, and it exists because `compose_design` is a pure function of its
-arguments (`webui/app.py:348`):
+Four fields stay in the ledger, and none of it is a privacy carve-out — each fails the *identity*
+test rather than a disclosure test:
 
-```python
-prompt_full   = compose_design(species, color, accessories, picks, extra)[0]   # → ledger, private
-prompt_public = compose_design(species, color, accessories, picks, "")[0]     # → the bundle
-```
+| Field | Why it is not in the block |
+|---|---|
+| `still_seed` | Always `NULL` until Phase 3. **It joins the block when Phase 3 lands** (§9.3) — a seed is part of an edition, like a print run, and it is what makes the record reproducible. |
+| `tier` | An entitlement fact about the *buyer*, not the pet. The tier table is withheld from the browser for a commercial reason that is still live — *"the browser only ever learns its OWN resolved entitlement"* (`pet_factory/tiers/__init__.py:18-19`) — and a pet's build tier would leak the vocabulary. |
+| `external_user_id` | The author question, and it is genuinely open — §14.1. A DatsMe slug resolves to a real profile, so it is the one field here that identifies a person rather than describing a pet. |
+| `reference_id` / `parent_reference_id` | Owner-scoped handles with a 24 h TTL (`webui/app.py:1842`). Outside DatsPet they are dangling pointers, not facts. |
 
-Two calls to a pure string function, no GPU, no branch in any engine, no per-record flag. When the
-user typed no free text — the common case — the two strings are **identical** and the bundle carries
-the exact prompt that was rendered.
+The rule that generalises, and the one to apply to any field added later:
 
-`extra`'s position in the composed string is what makes this clean: it sits immediately before the
-recolor clause (`webui/app.py:418-422`, deliberately, so the calibrated tail still wins), so removing
-it leaves every other clause in its calibrated order. This is not a coincidence to rely on silently —
-a golden test pins that `prompt_public` equals `prompt_full` with exactly that clause removed, so a
-future reordering of the composer cannot quietly make the two diverge in some other way.
+> **The block carries what the pet is. The ledger keeps what the factory did.**
 
-**Why this carve-out and not the whole prompt.** The exposure that matters is narrow and nameable:
-a pet only reaches a stranger through a DatsMe **gift**, or through the store — either an admin
-publishing their *own* house pet (`webui/store_admin.py:194`, read through the admin's own owner
-scope) or, in the unbuilt Phase 2, a **user donation**, which SPEC_PET_STORE §0.5 makes irreversible
-at the click. Colour, body shape and accessories on a shelf pet are product information. A sentence
-someone wrote about their own pet, sitting in a stranger's file forever, is not.
+### 5.3 The ledger is now a corpus, not a vault
 
-**Not opt-in.** A per-pet "publish my prompt" checkbox was rejected: it makes the corpus non-uniform
-in exactly the way that biases learning, meaningful consent to permanent third-party publication is
-not obtainable from a design-page checkbox, and it introduces a per-record flag that some path will
-eventually branch on — which §0.9 forbids.
+With the block published whole, the ledger's remaining jobs are the two the bundle cannot do: it
+**survives a deleted pet** (§8.2), and it is **queryable in aggregate** (§8.3). It is no longer a
+privacy boundary, and the spec should not be read as if it were.
 
-**If the owner wants the free text published too**, it is one argument: pass `extra` to the second
-call and drop the column split. That decision is §14.2, and it is reversible only forward — bundles
-already minted keep whatever they were minted with.
+Two operational rules survive on their own merits:
 
-### 5.3 The removal seam — one place, for the one transfer that matters
+- **No browser surface reads `design_provenance` in Phase 1.** Not because the data is secret — a
+  reader can get most of it from the bundle — but because a corpus table is not a product surface,
+  and the first read path invents a scoping question nobody needs yet. **Tripwire:** the first
+  genuine display need.
+- **The store listing AI may read the block, not the table.** `_draft_listing`
+  (`webui/store_admin.py:114`) will want this, and once a store pet's manifest carries `design`, it
+  can read it from the bundle it already holds — no new access, no new scoping. §10 keeps the listing
+  work out of this spec, but this is why that stays easy.
 
-A `design` block is removable, and there is exactly one seam where removal is correct: **the point at
-which a pet stops being its designer's.** Today no such transfer exists in DatsPet — an admin
-publishes their own pet, and a store adopt copies inventory. Phase 2 of the store adds one:
-`donate`, which SPEC_PET_STORE §10 specifies and which is unbuilt.
-
-**Requirement on that unbuilt spec, recorded here so it is not a retrofit:** the donate handler calls
-`design_provenance.strip_design_block(...)` as part of the same transfer that moves the pet into
-inventory. The donor's ledger row is untouched — the corpus keeps it — and the shelf pet carries
-none of the donor's design text.
-
-This is a removal at a **transfer**, not a flag on a record: the same shape as the ownership stamp,
-which also fires at transfers and is also not a per-pet setting. Nothing branches on a stored value.
-
-### 5.4 The ledger's own boundary
-
-The ledger holds the free text and the full prompt. Same posture as the reference sidecar, which
-stores the typed description and the AI's caption on disk today (`webui/app.py:731`), and as
-`ai_usage`: internal, owner-scoped, never served.
-
-- **No browser surface reads `design_provenance` in Phase 1.** Not the house page, not the pet card,
-  not the store listing, not the admin. Corpus reads are direct DB / export only. (What the *bundle*
-  publishes is §4.4's projection, which is a different question and already answered.)
-- **Nothing private in the ledger is ever passed to an AI purpose.** A live risk, not a theoretical
-  one: `_draft_listing` (`webui/store_admin.py:114`) already sends a portrait to a model, and
-  provenance is the obvious thing to feed it next. `prompt_public` and `picks` are fair game there;
-  `composed_prompt` and `extra_text` are not, because that would send a user's sentence to a
-  third-party API and print derived text on a public shelf. §10 records the whole listing question
-  as deliberately not done.
-- **Tripwire:** the first time an admin surface needs to display a provenance row, that is the moment
-  to decide the redaction rule for *display* — an easier question than this one, because a page can
-  be changed and a bundle cannot.
-
----
 
 ## §6 Contract impact — who reads the manifest
 
@@ -840,8 +872,8 @@ Ordered by what each phase needs from anyone else. Phase 1 needs nothing.
 1. `_save_reference` / `_load_reference` (`webui/app.py:731`) carry the step-2 design fields
    (§2.1). `_reference_record` (`webui/app.py:711`) gains none of them.
 2. `preview_design` (`webui/app.py:1266`) writes them onto the new reference — the composed
-   `description` it currently discards at `:1342` is stored on the record instead of thrown away,
-   alongside the second `compose_design(..., extra="")` call that produces `prompt_public` (§5.2).
+   `description` it currently discards at `:1342` is stored on the record instead of thrown away —
+   one column, one string, exactly what the renderer received (§5.1).
    *The rendered still and the reference's short `description` are unchanged; this is additive.*
 3. `webui/design_provenance.py`: constants, `mint_design_ref`, `record_from_reference`,
    `public_block`.
@@ -869,8 +901,8 @@ is a code change rather than a lost cohort.
 3. `adopt_store_pet` (`webui/pet_store.py:70`) is **not** changed: a store adopt copies an existing
    bundle and inherits whatever block it carried. Two adopters of the same shelf pet share a
    `design_ref`, which is true — it is one design.
-4. `strip_design_block` exists and is tested, but has **no caller until the store's donate door is
-   built** (§5.3). It ships now so that spec has it to call.
+4. **No `strip_design_block`** — Rev.2 reserved one for the store's donate door and §5.1 deletes it.
+   A `grep` guard (§12) keeps it from being reintroduced.
 5. Re-vendor `owner_fields.json` with a `design` block case; update the pinned sha256 on both repos
    (§6).
 
@@ -895,17 +927,18 @@ Only after this phase may anything describe a build as reproducible (§2.3).
 
 ## §10 Deliberately not done
 
-- **Nothing in the bundle beyond §4.4's whitelist.** The seed, tier, owner, reference chain and the
-  free text stay in the ledger. Revisit per field, never as a batch, and never by switching the
-  projection to a blacklist.
+- **Nothing in the bundle beyond §4.4's whitelist.** The tier, the owner id and the reference-chain
+  handles stay in the ledger, on the §5.2 identity test rather than a privacy one. Revisit per field,
+  never as a batch, and never by switching the projection to a blacklist. (`still_seed` is already
+  scheduled to move, with Phase 3.)
+- **No author field — yet.** §14.1 is the open decision the book framing raises, and it is the one
+  field in this design that names a person rather than describing a pet.
 - **No store-listing AI change.** The listing drafter (`webui/store_admin.py:114`) sees one cropped
   frame and the animal word, and would obviously draft better text with the design record. That work
-  is not folded in here: provenance is worth building on its own terms, better listings are a
-  consequence, and bundling them would make the privacy boundary (§5.4) a subject of a text-quality
-  discussion. **Tripwire:** when it is specified, the question to answer first is which fields may
-  reach a third-party model, not which fields would help. (Note that a store pet's manifest will by
-  then carry `prompt` and `picks` — so the drafter can read them off the bundle it already holds,
-  with no new access to anything private.)
+  is not folded in here: provenance is worth building on its own terms, and better listings are a
+  consequence, not the justification. **It gets easier, not harder, once this ships**: a store pet's
+  manifest will carry `prompt`, `extra` and `picks`, so the drafter reads them off the bundle it
+  already holds — no new access, no new scoping question.
 - **No preview-abandonment ledger.** Recording designs that were previewed and never built is a real
   signal ("which prompts produce a still the user rejects"), but it is a different record with a
   different key, no pet, and roughly ten times the row count. **Tripwire:** the first corpus query
@@ -914,11 +947,14 @@ Only after this phase may anything describe a build as reproducible (§2.3).
   them, capturing them means a result-side channel from the pool, and §7 keeps the flow one-way.
   **Tripwire:** the first time a model upgrade makes old and new pets incomparable and someone
   cannot tell which cohort a pet is in.
-- **No admin surface for the corpus.** Reads are direct DB in Phase 1. **Tripwire:** §5.4 — the
-  first display need is the moment to decide the display-redaction rule.
-- **No editing or removing a `design` block through the product.** There is no "hide my prompt"
-  control, and `strip_design_block` has exactly one intended caller (§5.3). A user-facing control
-  would be a per-record flag by another name, and it could not reach copies already distributed.
+- **No admin surface for the corpus.** Reads are direct DB in Phase 1. **Tripwire:** §5.3 — the
+  first genuine display need.
+- **No editing, hiding or removing a `design` block through the product**, and no
+  `strip_design_block` function at all (§4.3). A pet's design is part of the pet (§5.1); a control to
+  suppress it would be a per-record flag by another name, and it could not reach copies already
+  distributed anyway.
+- **No redaction requirement on the store's donate door.** Rev.2 placed one there; §5.1 removes it.
+  SPEC_PET_STORE §10 is unaffected by this spec.
 - **No host-side outcome feedback.** Whether a pet survives on DatsMe is host state; building a
   channel for it is a DPP protocol change and its own spec.
 - **No back-fill.** §13, and it is not a choice — the inputs were never written down.
@@ -977,8 +1013,12 @@ test per rule that could rot.
 
 **`webui/tests/test_design_block.py`** — the bundle side
 
-- A designer build's `manifest.json` carries `design`, and its `prompt` is exactly the string the
-  renderer was given (no free text in play) — the round-trip that proves the mechanism.
+- **The fidelity test, and it is the headline one:** build with a colour, an accessory, two axis
+  picks and free text. Assert `manifest["design"]["prompt"]` is **character-for-character** the
+  string `_render_still` was handed — captured by spying on the renderer, not by recomposing. §5.1
+  makes the prompt a claim about how the pet was made; this is the test that keeps the claim true.
+  Rev.2's version of this file asserted the opposite (that free text was absent), which is a useful
+  marker of what changed.
 - **The reattach path produces the same block.** Simulate a restart: write the ledger row, drop
   `JOBS`, drive the pool-reattach entry (`webui/app.py:655`) with the same bundle, assert the block
   is present and identical. This is the test for the trap §3.4 Move 2 names — it would pass
@@ -990,26 +1030,24 @@ test per rule that could rot.
 - A store-adopted pet's block is inherited unchanged from the shelf bundle
   (`webui/pet_store.py:70` is not modified).
 
-**`webui/tests/test_provenance_privacy.py`** — the rule of §5, made mechanical
+**`webui/tests/test_design_projection.py`** — the §5.2 line, made mechanical
 
-- **The one that matters:** build with `extra = "my daughter Freya"`, `animal = "cat"`, a colour and
-  an accessory. Assert that **no member of the resulting zip** — manifest, package, sprite
-  filename — contains the substring `Freya`, while `design.prompt` *does* contain the colour and the
-  accessory. This is the §5.2 carve-out, verified end to end rather than at the function boundary.
-- `prompt_public == compose_design(..., extra="")[0]`, and equals `composed_prompt` exactly when
-  `extra` is empty — the golden pin that a composer reorder cannot silently break (§5.2).
-- **The whitelist enforcement test:** every column of `design_provenance` is either in
-  `PUBLIC_FIELDS` or in an explicit `PRIVATE_FIELDS` tuple, and the two are disjoint and exhaustive.
-  A new column fails the build until someone classifies it (§4.4).
-- `public_block` output contains no key whose value appears in the private columns —
-  a direct assertion that `still_seed`, `tier`, `external_user_id`, `extra_text` and
-  `composed_prompt` never reach a bundle.
-- `_reference_record` (`webui/app.py:711`) does not serialize `composed_prompt`, `extra_text`, or
-  `picks` — the browser projection stays a projection.
+- **The classification enforcement test:** every column of `design_provenance` appears in exactly one
+  of `PUBLIC_FIELDS` / `PRIVATE_FIELDS`; the two are disjoint and together exhaustive. A new column
+  fails the build until someone classifies it (§4.4). This is the `motion_profiles` /
+  `design_axes` half-formed-entry rule, pointed at a projection.
+- `public_block` output contains no value drawn from a private column — a direct assertion that
+  `tier`, `external_user_id`, `still_seed` and the reference handles never reach a bundle.
+- The rename map is total: every `PUBLIC_FIELDS` entry appears as a key in the emitted block under
+  either its own name or its declared rename. A rename with no source column, or a column with no
+  emitted key, fails.
 - `design_ref` is not derivable from the owner id, the anon cookie, or the `reference_id`: mint many
-  under a fixed owner and assert no shared prefix and no substring relationship.
-- `strip_design_block` removes `design` and leaves every other key untouched (§5.3), including the
-  owner fields.
+  under a fixed owner and assert no shared prefix and no substring relationship. This one is *not*
+  about secrecy — it is about the ref staying a stable join key rather than a re-derivable one.
+- `_reference_record` (`webui/app.py:711`) still does not serialize the design fields — the
+  step-2 API response is a working surface, not a record (§2.1).
+- **`grep` guard: no `strip_design_block`.** The symbol must not exist anywhere in the tree
+  (§4.3). Cheap, and it is the exact function a future reader would add back "just in case".
 
 **`webui/tests/test_design_axes.py`** (extend) — the corrected posture of §3.6
 
@@ -1068,22 +1106,50 @@ that is unfixable once someone has fitted anything to it.
 
 ## §14 Open questions for the owner
 
-**14.1 The fragment vocabulary becomes public — confirm.** (§3.6.) Shipping `prompt` means anyone
+**14.1 The author — the field the book analogy asks for, and the one this spec did not add.**
+
+*"It is an honor to know who the author is, and have a biography."* The biography is now in the
+block. **The author is not**, and that gap is deliberate rather than an oversight, because it is the
+one field here that names a person rather than describing a pet.
+
+What exists today: `owner_name` in the manifest carries the DatsMe slug and is written by the host at
+every transfer (SPEC_PET_OWNER_FIELD §2.5). But **who holds a copy and who made it are different
+facts**, and the book analogy is precisely about the difference — a sold book keeps its author and
+changes its owner. Under this design a designed pet is minted `factory`/`datspet` and the buyer's
+slug is stamped later, so nothing in a bundle ever says who designed it.
+
+Adding it is small — one more field in the block, taken from the owner scope already in `start_job` —
+and it has properties the rest of the block does not:
+
+- **A DatsMe slug resolves to a real profile** at `GET /api/profiles/{name_slug}`, by design
+  (`webui/pet_ownership.py:20-25`). It is a name, not a description.
+- **Anonymous designers have no name to publish.** Roughly half the design traffic is pre-sign-in
+  (the front door's headline flow is design first, sign in to adopt — `webui/owner_scope.py`), and the
+  anon cookie id must never be published. So the field is present for some pets and absent for
+  others, which is an honest record but an uneven one.
+- **It is the field a user would most plausibly want to control**, which is the one place a per-pet
+  setting might genuinely be warranted — and §0.9 says no flags, so it would have to be all or
+  nothing.
+
+Three options, and the recommendation is (b):
+
+| | | |
+|---|---|---|
+| (a) | no author field | ship as specified; a pet's biography is anonymous, its owner is not |
+| (b) | **`designed_by` = the DatsMe slug when known, field omitted when anonymous** | the honest colophon; matches `owner_name`'s vocabulary exactly, adds no new identity type |
+| (c) | `designed_by` always, with a stable pseudonym for anonymous designers | complete, but invents an identity vocabulary DatsPet does not have |
+
+**14.2 The fragment vocabulary becomes public — confirm.** (§3.6.) Shipping `prompt` means anyone
 holding a bundle can read the calibrated `prompt_fragment` wording for every axis the pet used, and
 `/api/design-axes`'s "never reaches the browser" comment stops being the whole truth. Nothing breaks;
-the wording simply stops being a secret. This is the one consequence of the owner's direction that is
-worth confirming explicitly rather than discovering later, and it is **irreversible for pets already
+the wording simply stops being a secret, and under the colophon framing that is the intent. Worth
+confirming explicitly rather than discovering later, because it is **irreversible for pets already
 minted** — a bundle in someone's house cannot be unshipped.
-
-**14.2 The free-text carve-out — keep it, or publish everything?** (§5.2.) Default in this spec:
-`extra` stays private, at a cost of one extra call to a pure function and a second column. Publishing
-it too is one argument change. The recommendation is to keep the carve-out, because `extra` is the
-only design input that is a *sentence* rather than a *choice*, and because Phase 2 of the store makes
-a user's pet reach strangers by donation. If the owner disagrees, this is a small, clean reversal —
-but again only forward.
 
 **14.3 Is Phase 3 wanted at all?** (§9.3.) The only phase that costs a fleet roll. Without it the
 corpus is comparative but not reproducible, and §2.3 says so plainly rather than implying otherwise.
+Under the colophon framing the seed has a stronger case than it had in Rev.1: it is the edition
+number.
 
 **14.4 One thing that is NOT a question.** The ledger is not optional, whatever is decided about the
 bundle. Everything in the `design` block dies with its pet, and the pets the corpus most needs to
