@@ -1,10 +1,13 @@
 # SPEC_PET_STORE — The Pet Store: a database-backed shop of ready-made pets
 
-**Status: Rev.5 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION.** Deployed host-first
-(§13) to staging and then production the same day, C1-verified 14/14 on both
-tiers, and the §12 store E2E passed on staging's real infrastructure (flat 50
-quoted + charged; the pose formula would have said 110). §14 is the as-built
-ledger and the only place to read for "what is done"; §14.4 records the deploys.
+**Status: Rev.6 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASE 2 SPECIFIED,
+NOT STARTED.** Phase 1 deployed host-first (§13) to staging and then production
+the same day, C1-verified 14/14 on both tiers, with the §12 store E2E passing on
+staging's real infrastructure (flat 50 quoted + charged; the pose formula would
+have said 110). §14 is the as-built ledger and the only place to read for "what
+is done"; §14.4 records the deploys. **§10 is now a build-ready specification
+rather than a sketch** — it needs owner sign-off before code, and §10.0 records
+the three constraints that moved the design.
 
 Supersedes the file-based samples surface of `SPEC_DATSPET_CATALOG_PURCHASE`
 (archived, executed 2026-07-30) — see §8 for exactly what it absorbs and retires.
@@ -32,6 +35,18 @@ nowhere and how that was fixed.
 
 **Rev.5 (2026-07-31)** — deployed. §14.4 records the staging and production
 deploys, the E2E results, and the completed §8 sample-file deletion.
+
+**Rev.6 (2026-07-31)** — Phase 2 specified for build. §10 goes from a
+decision-level sketch to a buildable section, and three of the sketch's
+assumptions did not survive contact with the code (§10.0): a host writeback is
+bound to a 60-minute launch token, so the mint **cannot** fire at the admin's
+approval click and instead rides the donor's next launch (§10.7); neither host
+pull channel delivers in the background, so an approved reward is *owed* until
+the donor appears; and DatsPet has no draft-purge clock, so a rejected pet comes
+back as a **kept** pet, not a draft that the donor's next Design click would
+destroy (§10.5). Also settled here: no claim handler for the donation ledger
+(the `ai_usage` rule), donations require a DatsMe identity, unstamped legacy
+pets are refused, and the reward knob ships at **0**.
 
 </details>
 
@@ -473,78 +488,457 @@ business lever is pulled.
 
 ---
 
-## §10 Phase 2 — donations (design sketch; detailed spec section before build)
+## §10 Phase 2 — donations (specified for build, Rev.6)
 
-Everything below is decision-level. Phase 2 gets its own revision of this spec
-before implementation, but these decisions are made now so Phase 1 doesn't
-paint over them.
+A user gives a pet she designed back to the store; an admin reviews it; on
+approval she earns credits. It is the supply side of the store: Phase 1 makes
+every listing cost the owner admin time and GPU minutes, and this makes the
+users the supply. It is also the pressure valve on the 50-pet house cap —
+donating frees a slot *and* pays, where deleting just frees a slot.
 
-### §10.1 The donate door
+The owner's four Phase 1 decisions (§0) carry over unchanged. Decision 0.4 —
+**credits, minted at admin approval, never at submission** — is the one that
+shapes everything below.
 
-- Trigger surfaces: a **Donate to store** action on house cards, and the
-  house-full message ("house full — remove one to make room, **or donate
-  one**").
-- Eligibility: **only your own designed pets** — the donate endpoint reads the
-  bundle's ownership category via the existing `read_pet_ownership` and
-  accepts `factory` only. This one check excludes store-adopted and
-  sample-adopted pets (`public` stamp), closing the laundering loop
-  (adopt cheap from the store → donate back → collect reward) with zero new
-  bookkeeping.
+### §10.0 Three constraints found in design, before any code
 
-### §10.2 The queue
+The Rev.2 sketch assumed three things the code does not do. Each was checked
+against the two repos and each moved the design; they are recorded here because
+a reader who skips them will re-propose the sketch.
 
-New table `store_donations`: bundle bytes + donor `external_user_id` +
-`submitted_at` + `status` (`pending` / `approved` / `rejected`) + admin note.
-Donating **moves** the pet: the house row is deleted at submission — freeing
-the slot immediately is the product point. Append-only status transitions;
-the row is the audit trail. (If the table is owner-stamped it registers a
-claim handler — one line, per the registry.)
+1. **A host writeback is bound to a launch, and the donor is not present at
+   approval.** `authenticate_writeback` (`datsme_me/api/apps/dpp/service.py:807`)
+   requires a `launch_token` in the body — a JWT whose `jti` names an unburned
+   `IntegrationNonce`, `LAUNCH_TOKEN_TTL` 60 minutes — and the burn is one-time
+   (`burn_launch_nonce`, `:893`). An admin clicking approve on Tuesday has no
+   launch token for a donor who left on Monday, and could not keep one alive if
+   she did. **The mint therefore cannot fire at the approval click.** §10.7
+   moves it to the donor's next launch, which is the moment a valid token
+   exists.
+2. **Neither host pull channel is a background delivery channel.**
+   `/sync-pending` (`routes.py:304`) carries *metadata* only — it turns partner
+   rows into launch URLs and has no scheduler job and no UI caller today. The
+   import pull *does* reach `apply_writeback`, but it is `PULLABLE_TARGETS`-gated
+   and checkout-shaped (`_IMPORT_ADAPTERS` requires a `quote`). Nothing in the
+   system delivers a partner-originated event to a user who is not clicking.
+   So a reward is *owed* until the donor appears; the owed state is the queue.
+3. **DatsPet drafts are volatile — there is no purge clock.** `purge_drafts`
+   (`webui/db.py:436`) is an unconditional `DELETE … WHERE draft=1`, fired at
+   startup and on *every* `/api/generate` by that caller. The sketch's "the
+   rejected pet returns as a draft with a fresh `created_at` so the purge clock
+   restarts" describes a clock that does not exist: the returned pet would die
+   at the donor's next Design click or the next backend restart. §10.5 returns
+   it as a **kept** pet instead.
 
-### §10.3 Review
+A fourth, smaller one: **DatsPet has no outbound HTTP stack at all.** The push
+path was deleted, not disabled (`webui/app.py:1876`, `datsme_integration.py:9`),
+and `httpx` there is a dead import. §10.7.3 is explicit that this is new code
+and why it is worth adding.
 
-`store_admin.py` grows `GET /api/admin/store/donations`,
-`POST .../donations/{id}/approve`, `POST .../donations/{id}/reject`.
-Approve = the sellability validator (§5.3, third caller) → insert an
-**unpublished** `store_pets` row (then the normal caption/edit/publish flow)
-→ trigger the reward (§10.5). Reject = the bundle returns to the donor's
-house **as a draft** (the existing unsaved-pets recovery lane; drafts don't
-count against the cap, and the donor can keep it if room exists). The
-re-inserted draft gets a fresh `created_at` so the draft-purge clock restarts
-at rejection, not submission — a slow review must not let the returned pet
-evaporate before the donor sees it.
+### §10.1 Vocabulary and the donate door
 
-### §10.4 Ownership at approval
+- **Donation** — one `store_donations` row: the bundle bytes, the donor, a
+  status, and the reward's delivery state. It is a **ledger row**, not a pet.
+- **Owed** — an approved donation whose reward has not yet reached the host.
+- **Delivered** — the host acknowledged the award; the credit exists.
 
-A donated bundle arrives `factory`/`datspet` (guaranteed by §10.1 — the
-donor's name was never in DatsPet's copy, per SPEC_PET_OWNER_FIELD). It is
-already in the store's unsold state; **no ownership write is needed**, and
-§2.4's "do not reintroduce an owner write" stays intact.
+**Who may donate.** Three gates, all server-side, in this order:
 
-### §10.5 The reward, and why it can't be farmed
+1. **A DatsMe identity.** `owner_scope.require_owner` plus a non-anonymous
+   `external_user_id`. A standalone/anonymous user has no account for credits to
+   land in, so the door 403s rather than accepting a donation it can never pay.
+   This is also why §10.2 registers no claim handler (see there).
+2. **The entitlement.** New tier field `can_donate` (`pet_factory/tiers/`),
+   resolved exactly like `can_adopt_samples` — `resolve_launch_capabilities` →
+   `resolve_entitlement` → 403. It ships `true` on both tiers, so nothing is
+   user-visible until the lever is pulled; it exists so that turning donations
+   off is a data edit, not a deploy.
+3. **Her own designed pet.** `read_pet_ownership(row["manifest_json"])[0]` must
+   equal `FACTORY_CATEGORY` (`webui/pet_ownership.py:194`). A store-adopted pet
+   carries `public` and is refused — that one check closes the laundering loop
+   (adopt cheap → donate back → collect) with no new bookkeeping.
+   **A pet with no owner fields at all is refused**, not assumed: legacy and
+   folder-migrated rows read `(None, None, None)`, and `pet_ownership`'s rule is
+   that absence is never coerced into a category. A donor with such a pet can
+   rebuild it; a wrong guess here mints credits for provenance nobody knows.
 
-The owner chose credits-on-approval. The abuse to design against: generating
-is free in credits (it costs DatsPet GPU time), so generate → donate → reward
-is a money printer unless gated.
+**Trigger surfaces** (§10.9): a **Donate** action on house cards, and the
+house-full line extended to "house full — remove one to make room, **or donate
+one**".
 
-- **The mint event is the admin's approval click, and only that.** No reward
-  at submission, none at publication. A human is the gate on every credit.
-- New host knob **`credit_pet_donation_reward`**, suggested launch value
-  small (e.g. 10 — a reward, not an income).
-- **Per-user pending cap** (e.g. 3): the donate door 409s while a user has 3
-  donations awaiting review, keeping queue spam bounded and reviewable.
-- Mechanics: a signed partner→host call on the **inbound writeback family**
-  (`/api/integrations/*`, `authenticate_writeback`) — not `/partner/*`, which
-  is the host→partner *outbound* family. Idempotent on donation id, minting a
-  ledger credit to the donor (nearest precedent:
-  `maybe_award_completion_credit` firing on an activity writeback). Specified
-  in detail in the Phase 2 revision.
-- **Host-side defense in depth.** Partner-initiated minting is a new trust
-  surface, and the host cannot verify that an admin actually clicked approve
-  — the mint request just arrives signed with the partner secret. So the
-  reward knob ships **defaulting to 0** (a kill switch until the owner arms
-  it), and the host enforces a per-partner daily mint cap
-  (`credit_pet_donation_daily_cap`). A compromised partner secret must be a
-  bounded nuisance, never a money printer.
+### §10.2 The `store_donations` table
+
+Append-only in spirit: `status` transitions forward and the row is the audit
+trail. It lives in `datspet.db` beside `store_pets`, and it holds the bytes,
+because a donation that has left the house must survive review even if the
+donor deletes everything else.
+
+```sql
+CREATE TABLE IF NOT EXISTS store_donations (
+    id                TEXT PRIMARY KEY,   -- minted once, the reward's idempotency key
+    external_user_id  TEXT NOT NULL,      -- the donor; NEVER NULL (§10.1 gate 1)
+    display_name      TEXT NOT NULL,
+    breed_id          TEXT NOT NULL,
+    pose_count        INTEGER NOT NULL,   -- derived at insert
+    bundle_sha256     TEXT NOT NULL,      -- derived at insert
+    size_bytes        INTEGER NOT NULL,   -- derived at insert
+    preview_png       BLOB NOT NULL,      -- extracted at insert (the review card)
+    sheet_png         BLOB NOT NULL,
+    manifest_json     TEXT NOT NULL,
+    package_json      TEXT,
+    bundle_zip        BLOB NOT NULL,
+    submitted_at      REAL NOT NULL,
+    status            TEXT NOT NULL,      -- pending | approved | rejected | returned
+    reviewed_at       REAL,
+    admin_note        TEXT NOT NULL DEFAULT '',
+    store_pet_id      TEXT,               -- set on approve: what it became
+    reward_state      TEXT NOT NULL DEFAULT 'none',  -- none|owed|delivered|declined
+    reward_delivered_at REAL
+);
+```
+
+Derived columns are computed inside `insert_donation` from the bytes it is
+handed — the by-construction rule `insert_pet` and `insert_store_pet` follow.
+
+**`status` and `reward_state` are two axes, deliberately.** Status is the
+admin's decision; reward state is a delivery fact that moves on its own clock
+(§10.7) and can retry without re-deciding anything. Collapsing them would make
+"approved but not yet paid" unrepresentable, which is the normal state for as
+long as the donor stays away.
+
+**No claim handler, and this is the rule not an omission.** `owner_scope.py:185`
+is explicit that `ai_usage` is deliberately unregistered because a claim handler
+rewrites an append-only ledger's history. `store_donations` is the same shape,
+and §10.1's first gate means a donation can never be created under an anonymous
+id in the first place — so there is nothing for a handler to move. **Do not
+"complete" the registry by adding it.**
+
+### §10.3 The donate endpoint
+
+`POST /api/pets/{pet_id}/donate` in a new `webui/donations.py` (`require_owner`,
+the store's module-per-concern pattern; stdlib + FastAPI + the webui PIL pin —
+the GPU-less posture).
+
+Order, and it is the adopt order read backwards:
+
+1. `require_owner` → non-anonymous check (§10.1 gate 1) → 403.
+2. `resolve_entitlement().can_donate` → 403.
+3. `db.get_pet_for_owner(pet_id, external_user_id=owner)` → 404 if absent **or
+   not hers** (scoped read, no TOCTOU — the store admin's publish door uses the
+   same one).
+4. `read_pet_ownership` category must be `factory` → 422 with the reason.
+5. **Pending cap**: a donor with `DONATION_PENDING_CAP` (3, a named constant)
+   rows in `pending` gets 409. Queue spam is bounded at the door, and the cap is
+   what makes "a human reviews every credit" survive contact with volume.
+6. `sellability_errors` (§5.3, its third caller) → 422 if the bundle could never
+   be sold. Refusing here is kinder than accepting a donation the admin must
+   reject, and it is the same function the publish gate and the build use.
+7. Insert the donation row (`pending`, `reward_state='none'`), extract the
+   portrait with the admin's own `_portrait_from_bundle`, then **delete the
+   house row** — insert first, delete second, so a crash between them leaves a
+   duplicate (recoverable) rather than a vaporised pet (not).
+8. Drop the in-memory `JOBS` entry for that pet id, as `delete_pet`'s route
+   wrapper does.
+
+**Donating moves the pet** (the slot frees immediately — that is the product
+point), and the move is *the donor's copy only*: nothing about a donation
+touches another user's house, and the bundle keeps its `factory`/`datspet`
+stamp all the way through (§10.6).
+
+### §10.4 Review — the admin door
+
+`store_admin.py` grows the donation routes under the same router (same
+`require_admin_launch` dependency, same `admin_common.audit` tag):
+
+| Route | Does |
+|---|---|
+| `GET /api/admin/store/donations` | the queue: pending first, then recently reviewed. Listing shape + donor id + `reward_state` |
+| `POST /api/admin/store/donations/{id}/approve` | body `{admin_note?}` |
+| `POST /api/admin/store/donations/{id}/reject` | body `{admin_note}` — a reason is required; the donor sees it (§10.8) |
+
+**Approve** = `sellability_errors` re-run (bytes can only have gone stale, never
+fresh) → `insert_store_pet` as an **unpublished** row, which then walks the
+normal §5 caption/edit/publish path → `status='approved'`, `store_pet_id` set →
+**`reward_state='owed'`**. The mint does not happen here (§10.0 constraint 1);
+approval only makes it owed. Publishing stays a separate, later click, so an
+approved-but-unpublished donation is a normal state.
+
+**Reject** = `status='rejected'` + the note, then the return in §10.5.
+
+Deleting a store pet that came from a donation leaves the donation row alone —
+it is audit, and the store row's later life is not the donor's business.
+
+### §10.5 Return on reject — as a kept pet, not a draft
+
+The sketch said "returns to the donor's house as a draft". §10.0 constraint 3
+kills that: drafts are destroyed by the donor's next Design click. So:
+
+- Reject re-inserts the bundle into the donor's house with `draft=0` — a kept
+  pet, the state it was in when she donated it — under a **fresh `pet_id`**
+  (the original id is gone and may have been reused in her local state), and
+  sets `status='returned'`.
+- **If her house is full at that moment**, the re-insert is skipped and the row
+  stays `rejected` with its bytes. The donor sees it in §10.8's list with a
+  **Restore** action that runs the same re-insert, cap-checked, when she has
+  made room. A rejected donation is never silently destroyed and never forces
+  her over the cap.
+- Rejection pays nothing: `reward_state` stays `'none'`. There is no path from
+  `rejected` to a credit.
+
+### §10.6 Ownership at approval — still nothing to write
+
+A donated bundle arrives `factory` / `datspet` (guaranteed by §10.1 gate 3), and
+that is already the store's unsold state. **No ownership write happens on the
+donation path at all** — not at donate, not at approve, not at publish. The
+buyer is stamped by the host at its checkout, exactly as for an admin-made
+listing. SPEC_PET_OWNER_FIELD §2.4's "DatsPet writes only unsold ownership
+states" stands untouched, and a store pet that arrived by donation remains
+indistinguishable at runtime from one an admin made (§1.2).
+
+### §10.7 The reward — how a credit actually reaches the donor
+
+#### §10.7.1 The shape the constraints force
+
+Approval makes a reward **owed**. Delivery happens the next time the donor
+launches DatsPet from DatsMe, because that is the only moment a valid launch
+token for *that donor* exists (§10.0.1). The donation row is the retry queue:
+`owed` survives restarts, deploys and failed attempts, and needs no separate
+retry store, no drain tick, and no scheduler.
+
+Consequence to state plainly: **the reward is not instant.** A donor who never
+returns is never paid. That is acceptable — DatsPet has no notification channel
+(§11), the credits are usable only on DatsMe anyway, and the alternative is a
+background push channel the host does not offer.
+
+#### §10.7.2 One writeback per launch, so awards batch
+
+`authenticate_writeback` burns the launch nonce, and the burn is one-time — so
+a launch carries **one** writeback. A donor with three owed rewards therefore
+gets **one** writeback carrying **three** award entries, not three writebacks.
+The payload is a list keyed by donation id; the host mints each idempotently
+(§10.7.4). At a few dozen bytes per entry this is nowhere near
+`MAX_WRITEBACK_BODY_BYTES` (64 KB).
+
+#### §10.7.3 DatsPet side — the first outbound call
+
+New module `webui/reward_delivery.py`. One concern: turn `owed` rows into a
+signed POST and record the outcome.
+
+- **Trigger**: the donor's launch. `datsme_integration.launch` already verifies
+  the token and stores the **raw JWT in the launch cookie** (re-verified per
+  request at `:349`), so the raw token needed for the writeback body is in hand
+  for the whole session — this is the fact that makes the design work, and it
+  is worth pinning with a test.
+- **Delivery is best-effort and off the critical path.** The launch redirect
+  must never wait on the host: a failed or slow mint may not break a donor's
+  visit. Fire it after the response is on its way (the existing
+  `run_in_threadpool`/background pattern), and on any failure leave
+  `reward_state='owed'` — the next launch retries. **No new retry queue.**
+- **Signing**: the SDK's `sign_writeback` + `post_writeback`
+  (`datsme_me/api/sdk/datsme_partner_sdk/writeback.py`) — already installed,
+  never yet imported here. `WritebackBuilder` is *not* used: it defaults the
+  idempotency key to the launch `jti`, which is wrong for us (a retry on a later
+  launch must reuse the same key). **The idempotency key is derived from the
+  donation ids in the batch**, so a retry is byte-identical and the host's
+  replay cache and business key both recognise it.
+- **On HTTP 200**: mark every id in the batch `delivered` with a timestamp. On
+  anything else: leave them `owed`, log, and let the next launch try. On a
+  host-side refusal that is permanent (`capability_not_granted`), mark them
+  `declined` so a revoked capability does not retry forever — `declined` is
+  visible in the admin queue and re-armable.
+
+**This reverses "DatsPet never pushes" and the reversal is deliberate.** The
+push path was retired because *pet delivery* is better as a pull: bundles are
+megabytes, need quotes, and the host's import checkout already owns idempotency.
+None of that applies to a 200-byte reward notice that mints nothing on DatsPet's
+side and carries no bytes. The rule that survives is the one that mattered:
+**DatsPet still never charges, never quotes, and never moves a pet by push.**
+`SPEC_DATSPET_FEDERATED_SESSION` §6.2a should record this narrowing when Phase 2
+lands.
+
+#### §10.7.4 Host side — four registry entries, one table, two knobs
+
+The host's writeback dispatch is a plugin registry, so this is content, not
+engine (`test_dpp_registry_consistency.py` is the guard that fails a half-formed
+entry — it defines the checklist):
+
+1. `_TARGET_HANDLERS["user.credit_award"]` (`service.py:1233`) → a thunk into a
+   new `apps/dpp/credit_award.py`, the way `user.pet` thunks into
+   `pet_writeback.py` rather than growing `service.py`.
+2. `REQUIRED_CAPABILITY_BY_TARGET["user.credit_award"] = "credits.award"`
+   (`service.py:1033`).
+3. `SUPPORTED_SCHEMA_VERSIONS` entry (`manifest.py:57`).
+4. A new `Capability("credits.award", "Award you credits", risk=…)`
+   (`capabilities.py:46`).
+   **Risk must be `medium`, not `low`** — not because the user is endangered
+   (they are not; this only ever adds), but because `should_auto_grant`
+   (`capabilities.py:222`) auto-grants *any* low-risk capability to an official
+   partner without a consent screen, and the platform's money supply is not
+   something to grant silently. Medium forces the screen where the user reads
+   "DatsPet can award you credits."
+   **Not** added to `PULLABLE_TARGETS` — this target is push-only.
+
+**Idempotency: a new social-DB table with a unique business key.**
+`partner_credit_awards(partner_slug, award_key)` unique — `award_key` is the
+donation id — plus `user_id`, `amount`, `created_at`. Modelled on
+`uq_partner_collection_external` (`models.py:242`) for the key shape and on the
+Stripe webhook's **claim-before-mint** ordering (`payment_service.py:396`): insert
+the claim row first, in the same transaction as the ledger row, so a duplicate
+delivery loses the race on the unique index instead of minting twice.
+Deliberately *not* the replay cache (24 h TTL, and a donor who returns on day 3
+would double-mint) and *not* the launch nonce (it bounds a launch, not a
+donation — the exact bug `pet_writeback.py:466` records for pets).
+
+**The mint itself** follows `award_activity_completion_credits`
+(`social_ledger_service.py:471`): a platform-style award from `datsme.1` with no
+debit, one `LedgerTransaction`, and the caller owning the commit.
+
+**Two knobs**, both in `SOCIAL_LEDGER_CONFIG_DEFAULTS` and both in
+`CREDIT_CONFIG_KEYS` — the Phase 1 lesson (a seeded knob missing from that list
+is invisible to the admin screen), now guarded by the subset test:
+
+- `credit_pet_donation_reward` — **default `"0"`**. The reward ships *off*.
+  Turning it on is a deliberate admin act after the owner has watched the queue.
+  A zero amount short-circuits the mint but still marks the donation delivered,
+  so donors are not paid retroactively when the knob later moves.
+- `credit_pet_donation_daily_cap` — the per-partner ceiling, enforced
+  lock-then-count-then-insert exactly like `award_generosity_reward`
+  (`social_ledger_service.py:739`), which is the house pattern for a daily cap.
+  A partner over its cap gets a refusal the partner records as `owed` and
+  retries tomorrow.
+
+**Partner-scoped bookkeeping**: `partner_credit_awards` is partner-scoped, so it
+must be added to the eviction/purge delete list (`admin_routes.py:713`), the
+divorce-preview counts (`:497`), and `write_partner_bundle` (`audit_bundle.py:177`)
+— protocol §22a requires every partner-scoped table be expressible as
+`DELETE … WHERE partner_slug = ?`.
+
+#### §10.7.5 Why it cannot be farmed
+
+Generating is free in credits (it costs the owner GPU), so generate → donate →
+reward is a money printer unless every step is gated. It is:
+
+- **A human mints every credit.** The only transition into `owed` is the admin's
+  approve click. No reward at submission, none at publication.
+- **Only your own designed pets** (§10.1 gate 3) — a store-adopted pet is
+  `public` and refused, so credits cannot be laundered through the shelf.
+- **Three pending per donor** (§10.3 step 5) — the queue stays reviewable, which
+  is what makes the human gate real rather than nominal.
+- **The knob ships at 0** and the daily cap bounds the blast radius of a stolen
+  partner secret to one day's worth of credits.
+- **The award is idempotent on donation id**, so replaying a captured writeback
+  mints nothing.
+
+The residual risk, stated rather than hidden: a compromised `DATSME_HMAC_SECRET`
+lets an attacker mint up to the daily cap per day until the partner is disabled.
+That is why the cap is not optional and why `credits.award` is a consented
+capability the user can revoke.
+
+### §10.8 What the donor sees
+
+§11's "the house's donation status is visible on next visit" cannot work as
+written — §10.3 deletes the house row, so there is no card left to carry a
+status. Instead: a **Donations** section on the house page, fed by
+`GET /api/donations` (own rows only, scoped like every other read).
+
+Per row: the portrait, the name, the status, the admin's note when rejected, and
+— for `rejected` rows whose pet has not been returned — the **Restore** action
+(§10.5). Credits are never named or counted here: DatsPet renders no balances
+(§0.5.1), so a delivered reward reads "accepted for the store", and the number
+lives on DatsMe where it always has.
+
+This is a section on a page the donor already visits, not a new route and not a
+nav entry. The house page already carries a capacity readout and a selection
+bar; a third block is the smallest surface that answers "what happened to my
+pet?".
+
+### §10.9 Frontend
+
+- **House card action** — the per-card row (`house/page.tsx`, currently the
+  DatsMe-zip anchor + Remove) gains **Donate**, behind the same confirm-modal
+  shape Remove uses, since donating also removes the card. It renders only when
+  the pet is donatable, which needs one new **projected field** on the pet list
+  (`donatable`), computed the way `in_datsme` / `claimable` already are —
+  a projection, never a visibility rule the client is trusted to enforce.
+- **House-full line** gains ", or donate one".
+- **Admin queue** is a **fourth `<section>` on the existing store admin page**,
+  not a new route: the admin nav is hand-rolled per page, so a new route means
+  editing five unrelated pages — precisely the "touching unrelated files" §2
+  forbids — and the reviewer wants the shelf editor adjacent anyway (approve →
+  unpublished row → the editor already on that page).
+- **`api.ts`** gains `donatePet`, `listMyDonations`, `restoreDonation`, and the
+  admin donation calls, in the one adapter.
+
+### §10.10 The four test questions, for Phase 2
+
+1. *New variant → engine change?* No. A new donation is a row; the reward
+   amount is a knob; a new writeback target is four registry entries a guard
+   test polices.
+2. *New feature → unrelated files?* The donate door is a new module; the queue
+   is a new table; the admin queue is a section on a page that already exists.
+   The named seams are one projected field on the pet list, one tier field, and
+   the launch hook that fires delivery.
+3. *Third-party integration → modifying owned paths?* The host side is four
+   registry entries, one handler module, one table, two knobs. `user.pet`,
+   `identity.activity` and `user.collection` are untouched.
+4. *Bug in one variant → debugging shared code?* Donation bugs live in
+   `donations.py` / `reward_delivery.py` / `credit_award.py`. The shared code
+   they touch is the sellability validator — one function, three callers, whose
+   whole point is that all three agree.
+
+### §10.11 Guard tests
+
+- `webui/tests/test_donations.py` — each gate refuses for its own reason
+  (anonymous 403, entitlement 403, not-yours 404, `public` pet 422, unstamped
+  legacy pet 422, unsellable 422, fourth pending 409); a successful donate
+  removes the house row and creates exactly one `pending` row; the donation is
+  invisible to another owner.
+- `webui/tests/test_donation_review.py` — the admin gate on every route;
+  approve creates an **unpublished** store row and sets `owed`; reject returns
+  the pet as a **kept** pet with a fresh id; reject into a full house leaves it
+  restorable and does not exceed the cap; no path from `rejected` to a reward.
+- `webui/tests/test_reward_delivery.py` — owed rows batch into ONE writeback per
+  launch; the body carries the raw launch token from the cookie; a non-200
+  leaves rows `owed` (retry on the next launch); a 200 marks them `delivered`
+  once and a second launch sends nothing; the idempotency key is derived from
+  the donation ids, so a retry is byte-identical.
+- Host `api/tests/test_credit_award.py` (in-process, registered in
+  `test_all.py` — the §14.2 rule): the four registry entries are consistent;
+  a missing `credits.award` grant 403s; the same donation id delivered twice
+  mints once (the unique key); the daily cap refuses beyond it; a reward of 0
+  is a no-op that still succeeds. Plus the existing
+  `test_dpp_registry_consistency.py`, which must stay green.
+- Frontend: `tsc --noEmit` + vitest; the Donate button renders only for
+  `donatable` rows.
+- E2E: extend `scripts/e2e_adopt_store_pet.sh`'s shape with a donation pass —
+  donate → approve → relaunch as the donor → verify the host ledger shows one
+  award and a second relaunch adds none.
+
+### §10.12 Rollout
+
+| Step | Ships | Why this order |
+|---|---|---|
+| 2a | Host: capability, target, handler, table, knobs (reward knob at **0**) | The partner cannot deliver to a host that has no target; deploying the host first is inert because nothing calls it yet |
+| 2b | DatsPet: donate door, queue, admin review, donor surface — **no reward delivery** | Donations can be collected and reviewed while the reward is still off; the queue fills with real content before any credit moves |
+| 2c | DatsPet: reward delivery on launch | The only step that can move money; ships once 2a is verified live |
+| 2d | The owner raises `credit_pet_donation_reward` off 0 | A deliberate act, after watching the queue |
+
+Staging before production at every step (Rule 0), and 2c's verification is the
+E2E above run against staging's real host, not a unit test.
+
+### §10.13 Deliberately not done in Phase 2
+
+- **No instant reward.** It lands on the donor's next launch (§10.7.1). Revisit
+  only if the host grows a real background delivery channel.
+- **No notifications.** DatsPet has no channel; §10.8's list is the surface.
+- **No donor-visible credit amounts** in DatsPet — the host renders numbers
+  (§0.5.1).
+- **No editing a donation after submission.** It is a ledger row; a donor who
+  wants a different pet donates a different pet.
+- **No partner-side reward for a rejected donation**, and no appeal flow. The
+  note is the answer.
+- **No auto-approval**, however good the bundle looks. The human gate is the
+  anti-farming design (§10.7.5), not a placeholder for a classifier.
 
 ---
 
@@ -562,9 +956,9 @@ is a money printer unless gated.
 - **No host-side store**: the DatsMe "platform catalog" (SystemConfig JSON +
   files) is untouched; the store lives on the partner side where quotes,
   idempotency, and checkout already exist.
-- **No notifications to donors** on approve/reject (DatsPet has no channel);
-  the house's donation status is visible on next visit. Revisit in Phase 2 if
-  it stings.
+- **No notifications to donors** on approve/reject (DatsPet has no channel).
+  Status lives in the Donations section of the house page (§10.8) — *not* on
+  the pet's own card, which the donation deleted. Revisit if it stings.
 
 ---
 
@@ -602,7 +996,7 @@ New tests, same culture (shared validators, floor tests, scoping):
 |---|---|---|
 | 0 | this spec, reviewed | owner sign-off on §1–§9; §10 acknowledged as sketch |
 | 1 | the store | `store_pets` + `pet_store.py` + `store_admin.py` + AI purpose + shop page + admin page + §7 host pricing + §8 sample retirement + §9 enforcement + §12 tests |
-| 2 | donations | its own spec revision first (§10 expanded), then queue + review + reward |
+| 2 | donations | **specified in §10 (Rev.6); awaiting owner sign-off.** Ships in four steps (§10.12): host registry+table+knobs → donate door + queue + review → reward delivery → the owner raises the reward knob off 0 |
 
 Phase 1 is one coherent release with a fixed internal order: **the host
 deploys §7.3 first.** A host that does not yet know `store_flat` would quote
@@ -633,12 +1027,12 @@ rather than the prose above when the question is "what is done".
 | Admin CRUD + `_seed_animal` | `webui/store_admin.py` | `test_store_admin.py` |
 | Sellability validator | `webui/store_validation.py` | shared by both callers |
 | AI listing purpose | `pet_factory/ai_purposes/store_listing.json` | registry guard |
-| Migration script | `scripts/migrate_samples_to_store.py` | reads the live sample files |
+| Migration script | `scripts/migrate_samples_to_store.py` | ran once per environment; its input files are now deleted (§14.4) |
 | `price_basis` on export items | `webui/datsme_integration.py` | — |
 | Shop page (`/catalog` evolved) + admin page + `api.ts` | `web/src/app/{catalog,admin/store}` | `tsc`, vitest, `storeFilter` test |
 | **Host** `credit_pet_store_cost` knob | `social_ledger_config.py:54` (default 50) | — |
 | **Host** basis at quote **and** charge | `pet_writeback.py:188`, `:404` | `test_pet_store_price_basis.py` |
-| §8 retirement | sample routes/helpers/scripts gone; live files retained per §8 | `tsc` clean |
+| §8 retirement | sample routes/helpers/scripts gone; content files deleted 2026-07-31 (§14.4) | `tsc` clean |
 
 **Gates:** DatsPet 593 pass (20 store) · `tsc` clean · vitest 36 · 0 lint errors.
 Host: owner-fields 70/70, price-basis 10/10, app imports clean.
@@ -668,7 +1062,9 @@ that called it. Fixed; the ordering rule is now written down.
    flow is live in both environments.
 3. ~~**Delete the sample content files.**~~ Done — §14.4 (rides the next deploy).
 4. ~~**The §12 E2E store pass.**~~ Done — dev stack and staging, §14.4.
-5. **§10 donations** — unstarted by design, needs its own revision first.
+5. **§10 donations** — unstarted by design. The revision it was waiting on is
+   written (Rev.6): §10 is now build-ready and needs the owner's sign-off, not
+   more design. Nothing about it is coded in either repo.
 
 ### §14.4 Deployed (Rev.5, 2026-07-31)
 

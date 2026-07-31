@@ -16,6 +16,7 @@ import {
 import PetStage from "@/components/PetStage";
 import PetThumbnail from "@/components/PetThumbnail";
 import ConfirmModal from "@/components/ConfirmModal";
+import { HOUSE_NAME } from "@/lib/houseCopy";
 
 // On a phone, showing fewer pets per page is the memory fix that matters: each
 // mounted card decodes a sprite sheet and each PetStage actor RETAINS one
@@ -40,7 +41,9 @@ const HOUSE_TABS: { key: HouseTab; label: string }[] = [
 ];
 
 /**
- * The Pet House — the pets you've made, wandering the page.
+ * My Pet House — the pets you've made, wandering the page. The name is a
+ * constant (lib/houseCopy) because it is said on five surfaces and drifted the
+ * first time it changed.
  *
  * Paged, and the paging is a MEMORY bound, not a nicety (SPEC house-scaling).
  * The house grows without limit, and every rendered card + PetStage actor holds
@@ -192,7 +195,7 @@ export default function HousePage() {
   return (
     <main>
       <h1 className="mb-1 text-3xl" style={{ color: "var(--heading)" }}>
-        The pet house
+        {HOUSE_NAME}
       </h1>
       <p className="mb-4 max-w-2xl text-sm leading-relaxed" style={{ color: "var(--muted)" }}>
         Every pet made here lives on this page. They wander on their own —

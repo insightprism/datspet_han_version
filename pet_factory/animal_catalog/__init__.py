@@ -153,6 +153,6 @@ def base_image_path(animal_key: str, breed_key: str) -> Optional[Path]:
 # The samples/adopt-a-premade surface that stood here (list_samples,
 # sample_bundle_path, sample_preview_path) was retired by SPEC_PET_STORE §8:
 # premade pets are DB-backed store inventory now (webui/pet_store.py), stocked
-# at runtime through the store admin. Any `<animal>/samples/` files still on
-# disk are migration input for scripts/migrate_samples_to_store.py and are
-# deleted once every environment has migrated (Rev.3 note in §8).
+# at runtime through the store admin. The `<animal>/samples/` content files
+# that outlived the code by one deploy cycle are gone too (every environment
+# migrated 2026-07-31, §14.4) — nothing under this package reads samples.

@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getDatsmeSession, datsmeSignOut, type DatsmeSession } from "@/lib/api";
+import { HOUSE_NAME } from "@/lib/houseCopy";
 
 // A non-blocking one-line notice (the shared-toast role for this page).
 function Notice({ text, tone }: { text: string; tone: "warn" | "info" }) {
@@ -193,7 +194,7 @@ export default function PublicLanding() {
       {/* Footer nav — always-available entry points */}
       <div className="flex flex-wrap gap-3">
         <Link href="/house" className={SECONDARY_BTN} style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}>
-          🏠 Visit the pet house →
+          🏠 Visit {HOUSE_NAME} →
         </Link>
       </div>
     </main>

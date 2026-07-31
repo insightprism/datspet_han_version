@@ -19,6 +19,7 @@ import {
 } from "@/lib/api";
 import PetStage from "@/components/PetStage";
 import PetThumbnail from "@/components/PetThumbnail";
+import { HOUSE_NAME, HOUSE_NAME_OBJ } from "@/lib/houseCopy";
 import PoseGallery from "@/components/PoseGallery";
 import ConfirmModal from "@/components/ConfirmModal";
 
@@ -237,7 +238,7 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
                     : { background: "linear-gradient(135deg, #10b981, #059669)", color: "var(--heading)", borderColor: "transparent" }
               }
             >
-              {saved ? "✓ Saved to the pet house" : "💾 Save to the pet house"}
+              {saved ? `✓ Saved to ${HOUSE_NAME_OBJ}` : `💾 Save to ${HOUSE_NAME_OBJ}`}
             </button>
             <a
               href={petZipUrl(job.id)}
@@ -253,7 +254,7 @@ export default function PetJobResult({ job, onReset, resetLabel = "Make another"
                 className="mono flex-1 rounded-lg border px-4 py-3 text-center text-sm font-semibold"
                 style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}
               >
-                Visit the pet house
+                Visit {HOUSE_NAME}
               </Link>
             )}
             <button

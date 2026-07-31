@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import FloatingEmojis from "@/components/FloatingEmojis";
 import NavAuth from "@/components/NavAuth";
+import { HOUSE_NAME } from "@/lib/houseCopy";
 import "./globals.css";
 
 // DatsMe pages scatter faint interest glyphs in the background
@@ -45,7 +46,7 @@ export default function RootLayout({
                 Pet Store
               </Link>
               <Link href="/house" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
-                My Pet House
+                {HOUSE_NAME}
               </Link>
             </nav>
             <NavAuth />

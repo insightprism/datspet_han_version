@@ -57,7 +57,7 @@ STORE_ID=$(curl -s -m 10 "$DATSPET_BACKEND/api/store" 2>/dev/null | python3 -c '
 import sys, json
 pets = json.load(sys.stdin).get("pets", [])
 print(pets[0]["id"] if pets else "")')
-[ -n "$STORE_ID" ] || die "the store is EMPTY — run scripts/migrate_samples_to_store.py or stock via /admin/store"
+[ -n "$STORE_ID" ] || die "the store is EMPTY — stock it via /admin/store (design a pet, then Publish to store). The §8 sample migration no longer stocks anything: its input files were deleted once every environment migrated."
 ok "will adopt store pet $STORE_ID"
 
 # The host's flat store price — what the quote MUST equal (§7).

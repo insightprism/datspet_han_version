@@ -95,4 +95,4 @@ Task handlers *installed onto* shared_gpu_cpu worker nodes (`pool-install-handle
 
 - `examples/` — CLI plus the queue-server + worker pattern for GPU-less backends.
 - `created_pets/` — scratch pets generated through the live pool (`python3 make_pet.py "penguin"` from that dir); contents gitignored.
-- `pet_factory/animal_catalog/**/*.zip` is deliberately un-gitignored. The remaining `<animal>/samples/` files are **migration input only** (`scripts/migrate_samples_to_store.py`, SPEC_PET_STORE §8) — they are deleted once every environment has migrated into the DB-backed store.
+- `pet_factory/animal_catalog/**/*.zip` is deliberately un-gitignored, but **no sample bundles ship any more**: the file-samples surface became the DB-backed Pet Store (SPEC_PET_STORE §8), every environment migrated 2026-07-31, and the `<animal>/samples/` content was deleted the cycle after. Store inventory is per-environment DB rows — it does **not** travel with a deploy, so a brand-new environment starts with an empty shelf (deploy/CHECKLIST C5 blocks on that).
