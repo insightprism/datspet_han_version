@@ -224,11 +224,23 @@ old numbers is actively dangerous**, which is the whole reason for the change.
         nginx:alpine nginx -t
       ```
 
-- [ ] **B8. Restart.** Backend + vhost. A conf-only change needs **only** the vhost.
+- [ ] **B8. Restart.** Backend + vhost. A conf-only change needs **only** the vhost —
+      but **a rebuild ALWAYS needs the vhost too.** `next build` deletes and recreates
+      `web/out`, so the container's bind mount is left pointing at the *old, deleted*
+      directory: the host `ls` shows every file present while the container sees an
+      empty root, `try_files` falls through to a `/index.html` it cannot find, and
+      nginx answers **500** with `rewrite or internal redirection cycle`. It is the
+      same inode trap as A5's conf warning, one directory up.
       ```bash
       systemctl restart datspet-backend && systemctl is-active datspet-backend
       docker restart datspet-nginx
+      # prove the container can SEE the new build, not just that the host can:
+      docker exec datspet-nginx ls /usr/share/nginx/html/index.html
       ```
+      *(2026-07-31: staging served a blank 500 on every route after a good build. The
+      backend was `active`, the export was on disk with a fresh timestamp, and the
+      commit was right — the only broken thing was which directory the container had
+      open. `docker restart` fixed it in three seconds.)*
 
 - [ ] **B8b. BACK UP `datspet.db` — required before the Phase 1b status migration.**
       SPEC_PET_STORE §1.4 drops `store_pets.published`, which makes the PREVIOUS

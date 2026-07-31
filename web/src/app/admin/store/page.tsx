@@ -45,6 +45,9 @@ const AI_SPARKLE_BG = "#7c3aed";
 const AI_TAG_LABEL = "Write the description and tags with AI";
 const DESCRIPTION_EMPTY_HINT =
   "No description yet — write one, or tap ✨ to generate.";
+/** Same field, shelved row: the ✨ is correctly absent there (§3.2), so the
+ *  hint must not point at a button that is not on screen. */
+const DESCRIPTION_EMPTY_HINT_SHELVED = "No description yet — write one.";
 const TAGS_EMPTY_HINT = "#add #tags";
 const DETAILS_LABEL = "Listing details — name, description, tags";
 
@@ -448,13 +451,8 @@ export default function StoreAdminPage() {
                 style={{ color: "var(--heading)" }}>
               Listing details
             </h2>
-            <p className="mono mb-3 text-[11px]" style={{ color: "var(--faint)" }}>
+            <p className="mono mb-1 text-[11px]" style={{ color: "var(--faint)" }}>
               {editor.id}
-              {editorListing?.donated_by && (
-                <span style={{ color: "var(--gold)" }}>
-                  {" · "}donated by {editorListing.donated_by}
-                </span>
-              )}
               {/* The full sentence, which the row's one-word select cannot
                   carry — this is where there is room to say what a state
                   MEANS, and the only place it is spelled out. */}
@@ -464,6 +462,14 @@ export default function StoreAdminPage() {
                 </span>
               )}
             </p>
+            {/* §10.4, on its own line: the donor is an opaque DatsMe user id,
+                and 36 characters of UUID inline would crowd out the state,
+                which is the fact an admin actually reads first. */}
+            {editorListing?.donated_by && (
+              <p className="mono mb-3 break-all text-[11px]" style={{ color: "var(--gold)" }}>
+                🎁 donated by {editorListing.donated_by}
+              </p>
+            )}
             <div className="flex flex-col gap-3">
               <label className="text-xs" style={labelStyle}>
                 Name
@@ -499,7 +505,9 @@ export default function StoreAdminPage() {
                   )}
                 </div>
                 <textarea className={inputClass} rows={3} value={editor.description}
-                          placeholder={DESCRIPTION_EMPTY_HINT}
+                          placeholder={editorListing?.status === "shelf"
+                            ? DESCRIPTION_EMPTY_HINT_SHELVED
+                            : DESCRIPTION_EMPTY_HINT}
                           onChange={(e) => setEditor({ ...editor, description: e.target.value })} />
               </div>
               <label className="text-xs" style={labelStyle}>
