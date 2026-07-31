@@ -107,10 +107,18 @@ def test_the_listing_never_leaks_admin_state(store_client, dpp_env):
 
 # --- the admin's transitions -----------------------------------------------
 def _put(client, store_id, **over):
+    """The CONTENT door — authored fields only. Carries no status by design."""
     body = {"display_name": "Shelf Cat", "description": "", "tags": [],
-            "animal": "cat", "status": "intake", "admin_note": ""}
+            "animal": "cat", "admin_note": ""}
     body.update(over)
     return client.put(f"/api/admin/store/{store_id}", json=body)
+
+
+def _state(client, store_id, status, **over):
+    """The LIFECYCLE door — one shelf move, no prior read (§3.2)."""
+    body = {"status": status}
+    body.update(over)
+    return client.post(f"/api/admin/store/{store_id}/status", json=body)
 
 
 @pytest.mark.parametrize("status", OFF_SHELF)
@@ -121,7 +129,7 @@ def test_every_transition_is_free_except_the_way_onto_the_shelf(
     state is what makes people reach for delete instead."""
     db = dpp_env["db"]
     _row(db, "storerow0001", status="archived")
-    r = _put(admin_client, "storerow0001", status=status)
+    r = _state(admin_client, "storerow0001", status)
     assert r.status_code == 200, r.text
     assert db.get_store_pet("storerow0001")["status"] == status
 
@@ -132,17 +140,17 @@ def test_an_unsellable_bundle_may_be_KEPT_but_not_shelved(admin_client, dpp_env)
     db = dpp_env["db"]
     _row(db, "storerow0001", status="intake", animations={})   # no poses
 
-    r = _put(admin_client, "storerow0001", status="shelf")
+    r = _state(admin_client, "storerow0001", "shelf")
     assert r.status_code == 422
     assert db.get_store_pet("storerow0001")["status"] == "intake"
 
     for keep in ("backroom", "archived"):
-        assert _put(admin_client, "storerow0001", status=keep).status_code == 200
+        assert _state(admin_client, "storerow0001", keep).status_code == 200
 
 
 def test_an_unknown_status_is_refused_with_the_allowed_set(admin_client, dpp_env):
     _row(dpp_env["db"], "storerow0001")
-    r = _put(admin_client, "storerow0001", status="banana")
+    r = _state(admin_client, "storerow0001", "banana")
     assert r.status_code == 422
     assert "intake" in json.dumps(r.json())
 
@@ -158,29 +166,26 @@ def test_animal_freezes_on_the_FIRST_shelving_and_stays_frozen(
 
     # Free before it has ever been shelved.
     assert _put(admin_client, "storerow0001", animal="dog").status_code == 200
-    assert _put(admin_client, "storerow0001", animal="dog",
-                status="shelf").status_code == 200
+    assert _state(admin_client, "storerow0001", "shelf").status_code == 200
     stamped = db.get_store_pet("storerow0001")["first_shelved_at"]
     assert stamped is not None
 
     # Frozen on the shelf...
-    assert _put(admin_client, "storerow0001", animal="cat",
-                status="shelf").status_code == 409
+    assert _put(admin_client, "storerow0001", animal="cat").status_code == 409
     # ...and STILL frozen after moving off it — the whole point.
-    assert _put(admin_client, "storerow0001", animal="dog",
-                status="backroom").status_code == 200
-    assert _put(admin_client, "storerow0001", animal="cat",
-                status="backroom").status_code == 409
+    assert _state(admin_client, "storerow0001", "backroom").status_code == 200
+    assert _put(admin_client, "storerow0001", animal="dog").status_code == 200
+    assert _put(admin_client, "storerow0001", animal="cat").status_code == 409
     # Re-shelving never re-stamps the timestamp.
-    _put(admin_client, "storerow0001", animal="dog", status="shelf")
+    _state(admin_client, "storerow0001", "shelf")
     assert db.get_store_pet("storerow0001")["first_shelved_at"] == stamped
 
 
 def test_the_admin_note_is_stored_for_whoever_reads_it_later(admin_client, dpp_env):
     db = dpp_env["db"]
     _row(db, "storerow0001")
-    _put(admin_client, "storerow0001", status="archived",
-         admin_note="muddy colours, never sold")
+    _state(admin_client, "storerow0001", "archived",
+           admin_note="muddy colours, never sold")
     assert db.get_store_pet("storerow0001")["admin_note"] == \
         "muddy colours, never sold"
 
@@ -280,11 +285,11 @@ def test_a_PUT_without_admin_note_preserves_the_stored_one(admin_client, dpp_env
     does not send the field must not erase it."""
     db = dpp_env["db"]
     _row(db, "storerow0001")
-    _put(admin_client, "storerow0001", status="archived",
-         admin_note="muddy colours, never sold")
+    _state(admin_client, "storerow0001", "archived",
+           admin_note="muddy colours, never sold")
 
     body = {"display_name": "Shelf Cat", "description": "", "tags": [],
-            "animal": "cat", "status": "archived"}          # no admin_note
+            "animal": "cat"}                                # no admin_note
     assert admin_client.put("/api/admin/store/storerow0001",
                             json=body).status_code == 200
     assert db.get_store_pet("storerow0001")["admin_note"] == \

@@ -830,6 +830,16 @@ export const STORE_STATUS_LABEL: Record<StoreStatus, string> = {
   archived: "Archived — not for sale, kept as a record",
 };
 
+/** The same four states as one word each, for the per-row triage select where
+ *  the full sentence would not fit and is not needed — the row itself is the
+ *  context the sentence was supplying. */
+export const STORE_STATUS_SHORT: Record<StoreStatus, string> = {
+  intake: "Intake",
+  shelf: "Shelf",
+  backroom: "Backroom",
+  archived: "Archived",
+};
+
 /** The admin's slice of a store pet: the listing plus shelf state and the
  *  live sellability verdict (§5.3). */
 export interface StoreAdminListing extends StoreListing {
@@ -868,12 +878,22 @@ export const storeAdmin = {
     storeFetch("/publish-from-pet", {
       method: "POST", body: JSON.stringify({ pet_id: petId }),
     }),
+  /** The AUTHORED fields only. Shelf state moves through `setStatus`. */
   update: (id: string, body: {
     display_name: string; description: string; tags: string[];
-    animal: string; status: StoreStatus; admin_note: string;
+    animal: string; admin_note: string;
   }): Promise<{ listing: StoreAdminListing }> =>
     storeFetch(`/${encodeURIComponent(id)}`, {
       method: "PUT", body: JSON.stringify(body),
+    }),
+  /** One shelf move (§1.4). The payload is the destination and nothing else,
+   *  so it needs no prior read and cannot clobber text someone is editing. */
+  setStatus: (id: string, status: StoreStatus, adminNote?: string):
+    Promise<{ listing: StoreAdminListing }> =>
+    storeFetch(`/${encodeURIComponent(id)}/status`, {
+      method: "POST",
+      body: JSON.stringify(adminNote === undefined
+        ? { status } : { status, admin_note: adminNote }),
     }),
   /** Write description + tags with AI (SPEC_PET_STORE §4). Overwrites both,
    *  so the caller confirms first — the host's AI-tag door works the same way. */

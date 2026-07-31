@@ -111,8 +111,10 @@ def test_every_route_requires_the_admin_gate(dpp_env):
     assert client.post("/api/admin/store/publish-from-pet",
                        json={"pet_id": "x"}).status_code == 401
     assert client.put("/api/admin/store/x", json={
-        "display_name": "X", "animal": "cat", "status": "intake",
+        "display_name": "X", "animal": "cat",
     }).status_code == 401
+    assert client.post("/api/admin/store/x/status",
+                       json={"status": "intake"}).status_code == 401
     assert client.post("/api/admin/store/x/ai-tag").status_code == 401
     assert client.delete("/api/admin/store/x").status_code == 401
 
@@ -185,18 +187,25 @@ def test_publish_from_pet_NEVER_calls_the_ai(admin_client, dpp_env, monkeypatch)
 
 
 # --- the listing editor ----------------------------------------------------
-def test_put_normalizes_tags_and_publishes(admin_client, dpp_env):
+def test_put_normalizes_tags_and_animal(admin_client, dpp_env):
+    """Content only. Shelving is the status door's job (§3.2), so this asserts
+    normalization and nothing about where the pet ends up."""
     make_store_row(dpp_env["db"])
     r = admin_client.put("/api/admin/store/storerow0001", json={
         "display_name": "Shelf Cat", "description": "A good cat.",
         "tags": [" Fluffy ", "fluffy", "", "x" * 40, "Orange Tabby"],
-        "animal": "Cat", "status": "shelf",
+        "animal": "Cat",
     })
     assert r.status_code == 200, r.text
     listing = r.json()["listing"]
     assert listing["tags"] == ["fluffy", "orange tabby"]
     assert listing["animal"] == "cat"
-    assert listing["status"] == "shelf"
+    # Untouched by a content edit.
+    assert listing["status"] == "intake"
+
+    # And the pet reaches shoppers through the other door.
+    assert admin_client.post("/api/admin/store/storerow0001/status",
+                             json={"status": "shelf"}).status_code == 200
     assert dpp_env["db"].list_store_pets(shelf_only=True)[0]["id"] == \
         "storerow0001"
 
@@ -205,9 +214,8 @@ def test_publishing_an_unsellable_bundle_is_refused(admin_client, dpp_env):
     """§5.3 — the shared validator gates the move to `shelf`; the row stays
     where it was."""
     make_store_row(dpp_env["db"], store_id="brokenrow001", animations={})
-    r = admin_client.put("/api/admin/store/brokenrow001", json={
-        "display_name": "Broken", "animal": "cat", "status": "shelf",
-    })
+    r = admin_client.post("/api/admin/store/brokenrow001/status",
+                          json={"status": "shelf"})
     assert r.status_code == 422, r.text
     assert "animations" in json.dumps(r.json())
     row = dpp_env["db"].get_store_pet("brokenrow001")
@@ -217,7 +225,7 @@ def test_publishing_an_unsellable_bundle_is_refused(admin_client, dpp_env):
 def test_animal_is_fixed_once_shelved(admin_client, dpp_env):
     make_store_row(dpp_env["db"], shelved=True)
     r = admin_client.put("/api/admin/store/storerow0001", json={
-        "display_name": "Shelf Cat", "animal": "dog", "status": "shelf",
+        "display_name": "Shelf Cat", "animal": "dog",
     })
     assert r.status_code == 409
 
@@ -375,3 +383,50 @@ def test_admin_preview_serves_every_shelf_state(admin_client, dpp_env):
     # And the listing points at THAT route, not the shopper's.
     listing = admin_client.get("/api/admin/store/offshelf0001").json()
     assert listing["preview_url"] == "/api/admin/store/offshelf0001/preview.png"
+
+
+# --- the triage door (§3.2) ------------------------------------------------
+def test_status_door_takes_only_a_destination(admin_client, dpp_env):
+    """The whole payload is where the pet is going. No prior read, and nothing
+    in the body that could clobber text somebody wrote in another tab — which
+    is what makes it safe to drive from a script and fast to drive by hand."""
+    db = dpp_env["db"]
+    make_store_row(db, store_id="storerow0001")
+    admin_client.put("/api/admin/store/storerow0001", json={
+        "display_name": "Shelf Cat", "description": "hand-written prose",
+        "tags": ["fluffy"], "animal": "cat"})
+
+    r = admin_client.post("/api/admin/store/storerow0001/status",
+                          json={"status": "shelf"})
+    assert r.status_code == 200, r.text
+    assert r.json()["listing"]["status"] == "shelf"
+
+    # The text is untouched — the status door writes status, and nothing else.
+    row = db.get_store_pet("storerow0001")
+    assert row["description"] == "hand-written prose"
+    assert db.store_listing_view(row)["tags"] == ["fluffy"]
+
+
+def test_the_content_door_can_no_longer_move_a_listing(admin_client, dpp_env):
+    """The split is the point: a PUT carrying a status must not silently shelve
+    anything. Lifecycle has exactly one door (§1.4)."""
+    db = dpp_env["db"]
+    make_store_row(db, store_id="storerow0001")
+    r = admin_client.put("/api/admin/store/storerow0001", json={
+        "display_name": "Shelf Cat", "animal": "cat", "status": "shelf"})
+    assert r.status_code == 200, r.text
+    assert db.get_store_pet("storerow0001")["status"] == "intake"
+
+
+def test_editing_a_SHELVED_listing_re_runs_the_sellability_gate(admin_client,
+                                                                dpp_env):
+    """The gate guards any write that LEAVES a row shelved, not only the move
+    onto it — clearing the name of a live listing must not be allowed to make
+    it unsellable in place."""
+    db = dpp_env["db"]
+    make_store_row(db, store_id="storerow0001", shelved=True)
+    r = admin_client.put("/api/admin/store/storerow0001", json={
+        "display_name": "   ", "animal": "cat"})
+    assert r.status_code == 422, r.text
+    assert "display_name" in json.dumps(r.json())
+    assert db.get_store_pet("storerow0001")["display_name"] == "Shelf Cat"

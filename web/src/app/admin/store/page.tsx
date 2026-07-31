@@ -4,12 +4,16 @@
  * Store admin (SPEC_PET_STORE §6.2) — the sixth admin surface: the shelf.
  *
  * Same gate posture as the other five (mount-time check; a 401 bounces through
- * the host admin-launch). Three panels in one page: the admin's own house
- * (the publish-from-pet picker — the designer is the authoring tool, §5.1),
- * the inventory table (every shelf state, newest first, with the live
- * sellability verdict),
- * and the listing editor. The AI's name idea is shown as a SUGGESTION next to
- * the name field, never auto-applied (§5.1).
+ * the host admin-launch). Three panels: the admin's own house (the
+ * publish-from-pet picker — the designer is the authoring tool, §5.1), the
+ * inventory, and a listing dialog.
+ *
+ * THE SPLIT THIS PAGE IS BUILT ON (§6.2c): a row owns the LIFECYCLE, the
+ * dialog owns the TEXT. Shelf state moves on every triage pass and must cost
+ * two clicks in the row itself; name/description/tags are written once and
+ * rarely revisited, so they live behind an ⓘ. They changed together until
+ * 2026-07-31, which meant moving one pet one state opened a full editor below
+ * the fold — unusable at ten listings and impossible at a hundred a day.
  *
  * Listing text is never written by AI as a side effect of anything (§4). A new
  * row arrives with an empty description and no tags; the ✨ next to the
@@ -18,12 +22,13 @@
  * merge, and therefore a confirm in front of it.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   AdminApiError,
   STORE_STATUSES,
   STORE_STATUS_LABEL,
+  STORE_STATUS_SHORT,
   getDatsmeSession,
   listPets,
   storeAdmin,
@@ -32,6 +37,7 @@ import {
   type StoreStatus,
 } from "@/lib/api";
 import ConfirmModal from "@/components/ConfirmModal";
+import ModalOverlay from "@/components/ModalOverlay";
 
 /** The host's sparkle purple, so the affordance reads as the same feature
  *  across the two apps rather than as a DatsPet invention. */
@@ -40,6 +46,16 @@ const AI_TAG_LABEL = "Write the description and tags with AI";
 const DESCRIPTION_EMPTY_HINT =
   "No description yet — write one, or tap ✨ to generate.";
 const TAGS_EMPTY_HINT = "#add #tags";
+const DETAILS_LABEL = "Listing details — name, description, tags";
+
+/** Per-state colour for the row's state control. `shelf` is the only one that
+ *  means "shoppers can see this", so it is the only green. */
+const STATUS_COLOR: Record<StoreStatus, string> = {
+  intake: "var(--gold)",
+  shelf: "var(--green)",
+  backroom: "var(--muted)",
+  archived: "var(--faint)",
+};
 
 interface EditorState {
   id: string;
@@ -47,7 +63,6 @@ interface EditorState {
   description: string;
   tagsText: string;      // comma-separated in the field; normalized server-side
   animal: string;
-  status: StoreStatus;
   admin_note: string;
   /** Read-only. Once set, `animal` is frozen for good (§1.3) — moving the row
    *  back off the shelf does NOT re-open it. */
@@ -61,7 +76,6 @@ function editorFromListing(listing: StoreAdminListing): EditorState {
     description: listing.description,
     tagsText: listing.tags.join(", "),
     animal: listing.animal,
-    status: listing.status,
     admin_note: listing.admin_note ?? "",
     first_shelved_at: listing.first_shelved_at ?? null,
   };
@@ -76,25 +90,18 @@ export default function StoreAdminPage() {
   const [gateState, setGateState] = useState<"checking" | "ok" | "denied">("checking");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  // What each row's state control is SET to, when that differs from what is
+  // stored. Keyed by id rather than held per row so the whole page has one
+  // answer to "what is unsaved", which is what lets Save appear only where
+  // there is something to save.
+  const [pendingStatus, setPendingStatus] = useState<Record<string, StoreStatus>>({});
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   // The AI-tag flow owns its own three-state slice rather than riding `busy`:
   // the dialog has to stay open on failure to show the error, which a shared
   // page-wide flag cannot express.
   const [aiTagOpen, setAiTagOpen] = useState(false);
   const [aiTagPending, setAiTagPending] = useState(false);
   const [aiTagError, setAiTagError] = useState("");
-  const editorRef = useRef<HTMLElement | null>(null);
-
-  // The editor renders BELOW the inventory, so on any list longer than a
-  // screen "Edit" opened a panel nobody could see and read as a dead button —
-  // the shelf state lives in that panel, so it read as "I cannot promote this
-  // pet". Keyed on the id, so re-opening a DIFFERENT row scrolls again while
-  // typing in the one that is open does not.
-  const openEditorId = editor?.id ?? null;
-  useEffect(() => {
-    if (openEditorId) {
-      editorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-  }, [openEditorId]);
 
   const refresh = useCallback(async () => {
     const r = await storeAdmin.list();
@@ -122,13 +129,55 @@ export default function StoreAdminPage() {
     });
   }, [refresh]);
 
-  function applyResult(listing: StoreAdminListing, nameSuggestion?: string | null) {
-    setInventory((prev) => {
-      const rest = (prev ?? []).filter((p) => p.id !== listing.id);
-      return [listing, ...rest];
-    });
+  /** Replace a row IN PLACE. Never reorders: a listing that jumps to the top
+   *  the moment you change its state moves the next row under your cursor,
+   *  which is how a triage pass mis-files a pet. */
+  function mergeListing(listing: StoreAdminListing) {
+    setInventory((prev) =>
+      (prev ?? []).map((p) => (p.id === listing.id ? listing : p)));
+  }
+
+  function applyToEditor(listing: StoreAdminListing, nameSuggestion?: string | null) {
+    mergeListing(listing);
     setEditor(editorFromListing(listing));
     if (nameSuggestion !== undefined) setSuggestion(nameSuggestion);
+  }
+
+  const statusOf = (l: StoreAdminListing): StoreStatus => pendingStatus[l.id] ?? l.status;
+
+  function chooseStatus(listing: StoreAdminListing, next: StoreStatus) {
+    setPendingStatus((prev) => {
+      const rest = { ...prev };
+      // Choosing the stored value back is not a change — drop the entry so the
+      // Save button disappears rather than saving a no-op.
+      if (next === listing.status) delete rest[listing.id];
+      else rest[listing.id] = next;
+      return rest;
+    });
+  }
+
+  /** The triage action: one call, one field, no read-modify-write (§3.2). */
+  async function saveStatus(listing: StoreAdminListing) {
+    const next = statusOf(listing);
+    if (next === listing.status) return;
+    setStatusBusyId(listing.id);
+    setNotice("");
+    try {
+      const r = await storeAdmin.setStatus(listing.id, next);
+      mergeListing(r.listing);
+      chooseStatus(r.listing, r.listing.status);
+      setNotice(next === "shelf"
+        ? `"${r.listing.display_name}" is on the shelf — shoppers can see it now.`
+        : `"${r.listing.display_name}" moved to ${STORE_STATUS_SHORT[next].toLowerCase()}.`);
+    } catch (e) {
+      if (e instanceof AdminApiError && e.errors.length > 0) {
+        setNotice(`Not sellable yet: ${e.errors.join("; ")}`);
+      } else {
+        setNotice(e instanceof Error ? e.message : "Could not change the state.");
+      }
+    } finally {
+      setStatusBusyId(null);
+    }
   }
 
   async function publishFromPet(pet: PetSummary) {
@@ -136,8 +185,12 @@ export default function StoreAdminPage() {
     setNotice("");
     try {
       const r = await storeAdmin.publishFromPet(pet.id);
-      applyResult(r.listing, r.display_name_suggestion);
-      setNotice(`"${pet.display_name}" is in intake — caption it, then choose a shelf state.`);
+      // Genuinely new, so it DOES go to the front — the one case where the
+      // list reorders, and the row the admin is about to caption.
+      setInventory((prev) => [r.listing, ...(prev ?? [])]);
+      setEditor(editorFromListing(r.listing));
+      setSuggestion(r.display_name_suggestion);
+      setNotice(`"${pet.display_name}" is in intake — caption it, then set its state.`);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Could not copy that pet.");
     } finally {
@@ -145,10 +198,8 @@ export default function StoreAdminPage() {
     }
   }
 
-  /** One save. The chosen status is applied with the edits, in that order, so
-   *  a call that fixes `animal` AND shelves the row behaves like the two calls
-   *  an admin would have made (§1.4). */
-  async function saveEditor(status: StoreStatus) {
+  /** Save the AUTHORED fields. Shelf state is the row's job, not this dialog's. */
+  async function saveEditor() {
     if (!editor) return;
     setBusy(true);
     setNotice("");
@@ -158,13 +209,11 @@ export default function StoreAdminPage() {
         description: editor.description,
         tags: editor.tagsText.split(",").map((t) => t.trim()).filter(Boolean),
         animal: editor.animal,
-        status,
         admin_note: editor.admin_note,
       });
-      applyResult(r.listing);
-      setNotice(status === "shelf"
-        ? "On the shelf — shoppers can see it now."
-        : `Saved as ${STORE_STATUS_LABEL[status].split(" — ")[0]}.`);
+      mergeListing(r.listing);
+      setEditor(null);
+      setNotice(`Saved "${r.listing.display_name}".`);
     } catch (e) {
       if (e instanceof AdminApiError && e.errors.length > 0) {
         setNotice(`Not sellable yet: ${e.errors.join("; ")}`);
@@ -186,7 +235,7 @@ export default function StoreAdminPage() {
     setAiTagError("");
     try {
       const r = await storeAdmin.aiTag(editor.id);
-      applyResult(r.listing, r.display_name_suggestion);
+      applyToEditor(r.listing, r.display_name_suggestion);
       setAiTagOpen(false);
       setNotice("The AI wrote the description and tags — edit them freely.");
     } catch (e) {
@@ -206,7 +255,7 @@ export default function StoreAdminPage() {
       await storeAdmin.remove(listing.id);
       setInventory((prev) => (prev ?? []).filter((p) => p.id !== listing.id));
       if (editor?.id === listing.id) setEditor(null);
-      setNotice(`"${listing.display_name}" removed from the shelf.`);
+      setNotice(`"${listing.display_name}" removed from the store.`);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Delete failed.");
     }
@@ -227,6 +276,11 @@ export default function StoreAdminPage() {
 
   const labelStyle = { color: "var(--muted)" } as const;
   const inputClass = "input w-full";
+  const iconButtonClass =
+    "mono flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border text-xs transition hover:opacity-85";
+  const editorListing = editor
+    ? (inventory ?? []).find((l) => l.id === editor.id) ?? null
+    : null;
 
   return (
     <main className="mx-auto max-w-5xl px-6 py-10">
@@ -290,19 +344,23 @@ export default function StoreAdminPage() {
         </h2>
         <p className="mono mb-3 text-xs" style={labelStyle}>
           Every state, newest first — donations land at the top in{" "}
-          <span style={{ color: "var(--gold)" }}>intake</span>. Edit a listing to
-          put it on the shelf.
+          <span style={{ color: "var(--gold)" }}>intake</span>. Change a state
+          right here; ⓘ opens the listing text.
         </p>
         {(inventory ?? []).length === 0 && (
           <p className="mono text-xs" style={{ color: "var(--faint)" }}>Nothing in the store yet.</p>
         )}
         <div className="flex flex-col gap-2">
-          {(inventory ?? []).map((listing) => (
+          {(inventory ?? []).map((listing) => {
+            const chosen = statusOf(listing);
+            const dirty = chosen !== listing.status;
+            const rowBusy = statusBusyId === listing.id;
+            return (
             <div key={listing.id}
                  className="flex items-center gap-3 rounded-xl border px-4 py-2"
                  style={{
                    background: "#151515",
-                   borderColor: editor?.id === listing.id ? "var(--accent)" : "var(--line)",
+                   borderColor: dirty ? "var(--gold)" : "var(--line)",
                  }}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={storeAdmin.previewUrl(listing.id)} alt="" width={40} height={40}
@@ -318,150 +376,177 @@ export default function StoreAdminPage() {
                   </span>
                 )}
               </div>
-              {/* §10.4 — the ONE new thing donations add to the admin surface:
-                  a read-time badge saying this arrived as a gift. With the
-                  newest-first sort, that is the whole triage story; there is no
-                  review queue and deliberately no workflow. */}
-              {listing.donated_by && (
-                <span className="mono text-[11px]" title={`Donated by ${listing.donated_by}`}
-                      style={{ color: "var(--gold)" }}>
-                  🎁 donated
-                </span>
+              {/* The lifecycle control, in the row. Picking a state does not
+                  commit it — a select that saves on change fires on a stray
+                  scroll wheel, and this list is the one place a mis-set state
+                  puts a pet in front of shoppers. */}
+              <select
+                value={chosen}
+                disabled={rowBusy}
+                aria-label={`Shelf state for ${listing.display_name}`}
+                onChange={(e) => chooseStatus(listing, e.target.value as StoreStatus)}
+                className="mono shrink-0 rounded-lg border px-2 py-1.5 text-xs disabled:opacity-40"
+                style={{
+                  background: "#101010",
+                  color: STATUS_COLOR[chosen],
+                  borderColor: dirty ? "var(--gold)" : "var(--line)",
+                }}
+              >
+                {STORE_STATUSES.map((s) => (
+                  <option key={s} value={s} style={{ color: "var(--heading)" }}>
+                    {STORE_STATUS_SHORT[s]}
+                  </option>
+                ))}
+              </select>
+              {/* Only where there is something to save. A permanent Save on
+                  every row is a hundred buttons that do nothing. */}
+              {dirty && (
+                <button
+                  type="button"
+                  disabled={rowBusy}
+                  onClick={() => saveStatus(listing)}
+                  className="mono shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition hover:opacity-85 disabled:opacity-40"
+                  style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}
+                >
+                  {rowBusy ? "Saving…" : "Save"}
+                </button>
               )}
-              <span className="mono text-[11px]"
-                    style={{ color: listing.status === "shelf" ? "var(--green)"
-                      : listing.status === "intake" ? "var(--gold)" : "var(--faint)" }}>
-                {listing.status}
-              </span>
               <button
                 type="button"
+                title={DETAILS_LABEL}
+                aria-label={`${DETAILS_LABEL} for ${listing.display_name}`}
                 onClick={() => { setEditor(editorFromListing(listing)); setSuggestion(null); }}
-                className="mono rounded-lg border px-3 py-1.5 text-xs transition hover:opacity-85"
+                className={iconButtonClass}
                 style={{ color: "var(--gold)", borderColor: "var(--line)" }}
               >
-                Edit
+                ⓘ
               </button>
               <button
                 type="button"
+                title={`Remove ${listing.display_name} from the store`}
+                aria-label={`Remove ${listing.display_name} from the store`}
                 onClick={() => setToDelete(listing)}
-                className="mono rounded-lg border px-3 py-1.5 text-xs transition hover:opacity-85"
+                className={iconButtonClass}
                 style={{ color: "#f87171", borderColor: "rgba(239,68,68,0.35)" }}
               >
-                Remove
+                ✕
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
-      {/* The editor. */}
-      {editor && (
-        <section ref={editorRef} className="scroll-mt-4 rounded-xl border p-4"
-                 style={{ background: "#151515", borderColor: "var(--line)" }}>
-          <h2 className="mb-3 text-sm font-semibold" style={{ color: "var(--heading)" }}>
-            Listing: {editor.id}
-          </h2>
-          <div className="flex flex-col gap-3">
-            <label className="text-xs" style={labelStyle}>
-              Name
-              <input className={inputClass} value={editor.display_name}
-                     onChange={(e) => setEditor({ ...editor, display_name: e.target.value })} />
-              {suggestion && suggestion !== editor.display_name && (
-                <button
-                  type="button"
-                  onClick={() => setEditor({ ...editor, display_name: suggestion })}
-                  className="mono mt-1 text-[11px] hover:opacity-80"
-                  style={{ color: "var(--gold)" }}
-                >
-                  AI suggests: “{suggestion}” — use it
-                </button>
-              )}
-            </label>
-            <div className="text-xs" style={labelStyle}>
-              <div className="flex items-center gap-2">
-                <span>Description</span>
-                {/* Keyed on the PERSISTED row, not the editor's unsaved
-                    dropdown: the server refuses ai-tag on a shelved listing, so
-                    a button that appears the moment you pick "backroom" — before
-                    saving — just 409s on click. */}
-                {inventory?.find((l) => l.id === editor.id)?.status !== "shelf" && (
-                  <button
-                    type="button"
-                    onClick={() => { setAiTagError(""); setAiTagOpen(true); }}
-                    title={AI_TAG_LABEL}
-                    aria-label={AI_TAG_LABEL}
-                    className="flex h-6 w-6 items-center justify-center rounded-full text-xs transition hover:opacity-85"
-                    style={{ backgroundColor: AI_SPARKLE_BG, color: "#fff" }}
-                  >
-                    ✨
-                  </button>
-                )}
-              </div>
-              <textarea className={inputClass} rows={3} value={editor.description}
-                        placeholder={editor.status === "shelf" ? "" : DESCRIPTION_EMPTY_HINT}
-                        onChange={(e) => setEditor({ ...editor, description: e.target.value })} />
-            </div>
-            <label className="text-xs" style={labelStyle}>
-              Tags (comma-separated; lowercased and deduped on save)
-              <input className={inputClass} value={editor.tagsText}
-                     placeholder={TAGS_EMPTY_HINT}
-                     onChange={(e) => setEditor({ ...editor, tagsText: e.target.value })} />
-            </label>
-            <label className="text-xs" style={labelStyle}>
-              Animal {editor.first_shelved_at !== null && (
-                <span className="mono" style={{ color: "var(--faint)" }}>
-                  (fixed — this listing has been on the shelf; §1.3)
+      {/* The listing text, in a dialog. It carries NO shelf-state control: the
+          row owns that, and two places to change one thing is how they
+          disagree. */}
+      <ModalOverlay open={editor !== null} onClose={() => setEditor(null)}
+                    labelledBy="listing-title" maxWidth="max-w-lg">
+        {editor && (
+          <>
+            <h2 id="listing-title" className="mb-1 text-sm font-semibold"
+                style={{ color: "var(--heading)" }}>
+              Listing details
+            </h2>
+            <p className="mono mb-3 text-[11px]" style={{ color: "var(--faint)" }}>
+              {editor.id}
+              {editorListing?.donated_by && (
+                <span style={{ color: "var(--gold)" }}>
+                  {" · "}donated by {editorListing.donated_by}
                 </span>
               )}
-              <input className={inputClass} value={editor.animal}
-                     disabled={editor.first_shelved_at !== null}
-                     onChange={(e) => setEditor({ ...editor, animal: e.target.value })} />
-            </label>
-            <label className="text-xs" style={labelStyle}>
-              Shelf state
-              <select
-                className={inputClass}
-                value={editor.status}
-                onChange={(e) => setEditor({ ...editor, status: e.target.value as StoreStatus })}
-              >
-                {STORE_STATUSES.map((s) => (
-                  <option key={s} value={s}>{STORE_STATUS_LABEL[s]}</option>
-                ))}
-              </select>
-            </label>
-            {/* Asked for on the way to `archived` — the one transition whose
-                reason nobody remembers in three months. Optional server-side;
-                a required field would only ever collect the word "no". */}
-            {editor.status === "archived" && (
+              {/* The full sentence, which the row's one-word select cannot
+                  carry — this is where there is room to say what a state
+                  MEANS, and the only place it is spelled out. */}
+              {editorListing && (
+                <span style={{ color: STATUS_COLOR[editorListing.status] }}>
+                  {" · "}{STORE_STATUS_LABEL[editorListing.status]}
+                </span>
+              )}
+            </p>
+            <div className="flex flex-col gap-3">
               <label className="text-xs" style={labelStyle}>
-                Why archived? (optional, for whoever reads this later)
+                Name
+                <input className={inputClass} value={editor.display_name}
+                       onChange={(e) => setEditor({ ...editor, display_name: e.target.value })} />
+                {suggestion && suggestion !== editor.display_name && (
+                  <button
+                    type="button"
+                    onClick={() => setEditor({ ...editor, display_name: suggestion })}
+                    className="mono mt-1 text-[11px] hover:opacity-80"
+                    style={{ color: "var(--gold)" }}
+                  >
+                    AI suggests: “{suggestion}” — use it
+                  </button>
+                )}
+              </label>
+              <div className="text-xs" style={labelStyle}>
+                <div className="flex items-center gap-2">
+                  <span>Description</span>
+                  {/* Keyed on the PERSISTED row: the server refuses ai-tag on a
+                      shelved listing, so offering it there would just 409. */}
+                  {editorListing?.status !== "shelf" && (
+                    <button
+                      type="button"
+                      onClick={() => { setAiTagError(""); setAiTagOpen(true); }}
+                      title={AI_TAG_LABEL}
+                      aria-label={AI_TAG_LABEL}
+                      className="flex h-6 w-6 items-center justify-center rounded-full text-xs transition hover:opacity-85"
+                      style={{ backgroundColor: AI_SPARKLE_BG, color: "#fff" }}
+                    >
+                      ✨
+                    </button>
+                  )}
+                </div>
+                <textarea className={inputClass} rows={3} value={editor.description}
+                          placeholder={DESCRIPTION_EMPTY_HINT}
+                          onChange={(e) => setEditor({ ...editor, description: e.target.value })} />
+              </div>
+              <label className="text-xs" style={labelStyle}>
+                Tags (comma-separated; lowercased and deduped on save)
+                <input className={inputClass} value={editor.tagsText}
+                       placeholder={TAGS_EMPTY_HINT}
+                       onChange={(e) => setEditor({ ...editor, tagsText: e.target.value })} />
+              </label>
+              <label className="text-xs" style={labelStyle}>
+                Animal {editor.first_shelved_at !== null && (
+                  <span className="mono" style={{ color: "var(--faint)" }}>
+                    (fixed — this listing has been on the shelf; §1.3)
+                  </span>
+                )}
+                <input className={inputClass} value={editor.animal}
+                       disabled={editor.first_shelved_at !== null}
+                       onChange={(e) => setEditor({ ...editor, animal: e.target.value })} />
+              </label>
+              {/* Always present rather than appearing on the way to `archived`:
+                  the state control moved to the row, so there is no longer a
+                  moment in this dialog to ask. Optional, as it always was — a
+                  required field would only ever collect the word "no". */}
+              <label className="text-xs" style={labelStyle}>
+                Note (why it was archived, or anything worth remembering)
                 <input className={inputClass} value={editor.admin_note}
                        onChange={(e) => setEditor({ ...editor, admin_note: e.target.value })} />
               </label>
-            )}
-            <div className="mt-1 flex flex-wrap gap-2">
-              {/* ONE save. The status selector above is what it applies —
-                  two buttons could only ever express two of the four states. */}
-              <button
-                type="button" disabled={busy} onClick={() => saveEditor(editor.status)}
-                className="mono rounded-lg border px-4 py-2 text-xs font-semibold transition hover:opacity-85 disabled:opacity-40"
-                style={editor.status === "shelf"
-                  ? { background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }
-                  : { color: "var(--heading)", borderColor: "var(--line)" }}
-              >
-                {editor.status === "shelf" ? "Save — on the shelf" : "Save"}
-              </button>
-              <button
-                type="button" onClick={() => { setEditor(null); setSuggestion(null); }}
-                className="mono rounded-lg border px-4 py-2 text-xs transition hover:opacity-85"
-                style={{ color: "var(--muted)", borderColor: "var(--line)" }}
-              >
-                Close
-              </button>
+              <div className="mt-1 flex flex-wrap gap-3">
+                <button
+                  type="button" disabled={busy} onClick={saveEditor}
+                  className="mono flex-1 rounded-lg border px-4 py-2.5 text-sm font-semibold transition hover:opacity-85 disabled:opacity-40"
+                  style={{ background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "var(--heading)", borderColor: "rgba(99,102,241,0.5)" }}
+                >
+                  {busy ? "Saving…" : "Save"}
+                </button>
+                <button
+                  type="button" onClick={() => { setEditor(null); setSuggestion(null); }}
+                  className="mono flex-1 rounded-lg border px-4 py-2.5 text-sm transition hover:opacity-85"
+                  style={{ background: "#151515", color: "var(--muted)", borderColor: "var(--line)" }}
+                >
+                  Close
+                </button>
+              </div>
             </div>
-          </div>
-        </section>
-      )}
+          </>
+        )}
+      </ModalOverlay>
 
       <ConfirmModal
         open={aiTagOpen}
@@ -478,7 +563,7 @@ export default function StoreAdminPage() {
 
       <ConfirmModal
         open={toDelete !== null}
-        title={`Remove ${toDelete?.display_name ?? "this listing"} from the shelf?`}
+        title={`Remove ${toDelete?.display_name ?? "this listing"} from the store?`}
         body="It disappears from the shop. Pets people already adopted are copies and are not affected."
         confirmLabel="Remove listing"
         onConfirm={confirmDelete}

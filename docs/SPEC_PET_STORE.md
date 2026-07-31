@@ -755,7 +755,8 @@ a deploy.
 | `GET /api/admin/store/{id}` | one row, full metadata: the listing shape + `status` + `admin_note` + `first_shelved_at` (the editor gates the animal field on it) + `donated_by` (§10.4) + `sellability_errors` (§5.3) |
 | `GET /api/admin/store/{id}/preview.png` | the portrait **in every shelf state**. The shopper's preview route (§3.1) resolves through the shelf gate and 404s anything off it — correct there and exactly wrong here, since most of this surface is `intake`. Same bytes, same 24 h immutability, but `Cache-Control: private` (`ADMIN_PREVIEW_CACHE_CONTROL`) because it is served from behind the admin gate. Pointing the admin at the shopper's route made every donation a broken image. |
 | `POST /api/admin/store/publish-from-pet` | body `{pet_id}` — **the stocking door**, §5. The source pet is read through the caller's OWN owner scope (the same scoped access keep/delete use): an admin publishes only a pet she can see in her house, never an arbitrary row by id. |
-| `PUT /api/admin/store/{id}` | edit `display_name`, `description`, `tags`, `animal` (only while `first_shelved_at` is NULL — §1.3), `status`, `admin_note`. Tags are normalized on write — lowercased, trimmed, deduplicated, capped by named constants (`STORE_MAX_TAGS = 16`, `STORE_MAX_TAG_LEN = 32`). **Moving to `status: 'shelf'` re-runs the sellability validator** (§5.3) and refuses on failure — the admin cannot shelve a listing the build would reject. Every other transition is free (§1.4). |
+| `PUT /api/admin/store/{id}` | edit the AUTHORED fields: `display_name`, `description`, `tags`, `animal` (only while `first_shelved_at` is NULL — §1.3), `admin_note`. **Carries no `status`.** Tags are normalized on write — lowercased, trimmed, deduplicated, capped by named constants (`STORE_MAX_TAGS = 16`, `STORE_MAX_TAG_LEN = 32`). If the row is *currently* shelved the sellability gate re-runs (§5.3), so an edit can never make a live listing unsellable in place. |
+| `POST /api/admin/store/{id}/status` | **the triage door** — body `{status, admin_note?}` and nothing else. One shelf move, no prior read, so it cannot clobber text someone is editing in another tab. Moving to `shelf` runs the sellability validator (§5.3) and refuses on failure; every other transition is free (§1.4). This is the route a script or an agent drives, and the one behind the per-row control in §6.2c. |
 | `POST /api/admin/store/{id}/ai-tag` | write description + tags with AI (§4) — the ONE generator of listing text, overwriting both, **only if the row is off the shelf** (a live listing is the admin's text, and regenerating it would change what shoppers are reading) |
 | `DELETE /api/admin/store/{id}` | remove from inventory. Copies already adopted into houses are unaffected (they are copies). |
 
@@ -948,9 +949,48 @@ donation on 2026-07-31 and both fixed the same day:
   copies to `intake` (§5.1), not onto the shelf.
 - **Opening the editor scrolls it into view.** It renders *below* the inventory,
   so on any list longer than a screen "Edit" appeared to do nothing — and since
-  the shelf state lives in that panel, the surface read as "I cannot promote
-  this pet". The effect keys on the listing id, so re-opening a different row
-  scrolls again while typing in the open one does not.
+  the shelf state lived in that panel, the surface read as "I cannot promote
+  this pet". Superseded the same day by §6.2c, which removes the reason to
+  leave the row at all.
+
+### §6.2c The row owns the lifecycle; the dialog owns the text
+
+The fix above made the editor reachable. It did not make it *right*: moving one
+pet one state still meant opening a whole form. The two things change for
+different reasons and on different clocks —
+
+| | changes | lives in |
+|---|---|---|
+| **Shelf state** | every triage pass, potentially hundreds a day | the **row**, inline |
+| **Name, description, tags, animal, note** | written once, rarely revisited | a **dialog** behind ⓘ |
+
+so they are two controls and, behind them, two routes (§3.2).
+
+**The row** is one line: portrait, name, `animal · N poses`, the sellability
+warning when there is one, a four-state `<select>`, a **Save that appears only
+when the selection differs from what is stored**, ⓘ, and ✕. Picking a state
+does not commit it — a select that saves on `change` fires on a stray scroll
+wheel, and this is the one list where a mis-set state puts a pet in front of
+shoppers. The dirty row is outlined in gold, so a triage pass shows at a glance
+what is unsaved. Rows **never reorder on save**: a listing that jumps to the top
+when its state changes moves the next row under the cursor, which is how a pass
+mis-files a pet. Only publish-from-pet prepends, because that row is genuinely
+new.
+
+**Removed from the row:** the 🎁 donated badge. It cost a permanent column of
+width on every line to say something about a minority of rows that changes no
+decision — donor identity is provenance, not triage. It moves into the ⓘ dialog
+next to the id, which is where the rest of the provenance already is. §10.4's
+requirement is that the donor be *visible to the admin*, not that it occupy the
+list.
+
+**Removed from the dialog:** the shelf-state selector. Two places to change one
+thing is how they come to disagree.
+
+`admin_note` stops being conditional on `archived` — the state control is no
+longer in the dialog, so there is no moment there to ask. It is a plain optional
+field; nothing enforces it, because a required one would only ever collect the
+word "no".
 
 ### §6.2b The admin editor after Phase 1b
 

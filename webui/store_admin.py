@@ -177,14 +177,34 @@ class PublishFromPetBody(BaseModel):
 
 
 class ListingBody(BaseModel):
+    """The AUTHORED fields — what a human wrote about a listing.
+
+    Deliberately carries no `status`: moving a listing between shelf states is
+    a different job on a different clock (see StatusBody). Folding them into
+    one call meant every status change was a read-modify-write of the whole
+    listing, which is both a clobber risk and hostile to a script.
+    """
     display_name: str
     description: str = ""
     tags: list[str] = []
     animal: str
-    status: str
     # None = KEEP what is stored. A client that omits the field must not erase
     # the reason someone wrote for archiving a listing months ago; only an
     # explicit value overwrites it.
+    admin_note: Optional[str] = None
+
+
+class StatusBody(BaseModel):
+    """One shelf move. The whole payload is the destination.
+
+    This is the surface an admin triaging a hundred donations uses, and the one
+    an agent scripts, so it takes the smallest input that can express the job
+    and needs no prior read of the row.
+    """
+    status: str
+    #: Optional, and only meaningful on the way to `archived` — the transition
+    #: whose reason nobody remembers in three months (§1.4). None keeps what is
+    #: stored, exactly as it does on ListingBody.
     admin_note: Optional[str] = None
 
 
@@ -273,20 +293,29 @@ def publish_from_pet(body: PublishFromPetBody, request: Request):
     }
 
 
+def _refuse_if_not_sellable(row, *, display_name: str, animal: str) -> None:
+    """The §5.3 gate, shared by both write doors so there is one definition of
+    what may sit on a shelf — the admin can never reach a state the build
+    would reject, whichever door she came through."""
+    errors = store_validation.sellability_errors(
+        bundle_zip=row["bundle_zip"], preview_png=row["preview_png"],
+        display_name=display_name, animal=animal)
+    if errors:
+        raise HTTPException(422, {"error": "not_sellable", "errors": errors})
+
+
 @router.put("/{store_id}")
 def update_listing(store_id: str, body: ListingBody, request: Request):
-    """Edit the authored fields (§1.3) and the shelf state (§1.4).
+    """Edit the AUTHORED fields (§1.3). Shelf state moves through its own door.
 
-    Field edits apply FIRST, then the status — so one call that fixes `animal`
-    and shelves the row behaves like the two calls in the order an admin would
-    have made them.
+    The two were one call until 2026-07-31, which made every status change a
+    read-modify-write of the whole listing: the browser had to hold a full
+    editor open to move a pet one state, and a script had to fetch a row before
+    it could touch it. They change for different reasons — text is written
+    once and rarely revisited, state moves on every triage pass — so they are
+    two routes (§3.2).
     """
     row = _store_row_or_404(store_id)
-
-    if body.status not in db.STORE_STATUSES:
-        raise HTTPException(422, {
-            "error": "unknown_status",
-            "errors": [f"status must be one of {', '.join(db.STORE_STATUSES)}"]})
 
     display_name = body.display_name.strip()
     animal = body.animal.strip().lower()
@@ -304,21 +333,49 @@ def update_listing(store_id: str, body: ListingBody, request: Request):
     # transition into it: a re-save of a live listing is the moment to catch a
     # row whose bytes went bad after shelving. Every other state accepts a
     # broken bundle — you may keep something you cannot sell.
-    if body.status == db.STORE_STATUS_SHELF:
-        errors = store_validation.sellability_errors(
-            bundle_zip=row["bundle_zip"], preview_png=row["preview_png"],
-            display_name=display_name, animal=animal)
-        if errors:
-            raise HTTPException(422, {"error": "not_sellable", "errors": errors})
+    if row["status"] == db.STORE_STATUS_SHELF:
+        _refuse_if_not_sellable(row, display_name=display_name, animal=animal)
 
     db.update_store_listing(store_id, display_name=display_name,
                             description=body.description.strip(), tags=tags,
                             animal=animal,
                             admin_note=(body.admin_note.strip()
                                         if body.admin_note is not None else None))
+    admin_common.audit(AUDIT_TAG, request, "update", store_id)
+    return {"listing": _admin_view(db.get_store_pet(store_id))}
+
+
+@router.post("/{store_id}/status")
+def set_listing_status(store_id: str, body: StatusBody, request: Request):
+    """Move ONE listing between shelf states (§1.4) — the triage door.
+
+    Two clicks in the browser (pick a state, save) and one call for a script,
+    with no prior read: the payload is the destination and nothing else, so it
+    can never clobber text somebody wrote while the row sat open in another
+    tab. Sized for the day donations arrive by the hundred.
+
+    Moving TO `shelf` runs the shared sellability gate (§5.3); every other
+    transition is free — you may keep something you cannot sell.
+    """
+    row = _store_row_or_404(store_id)
+
+    if body.status not in db.STORE_STATUSES:
+        raise HTTPException(422, {
+            "error": "unknown_status",
+            "errors": [f"status must be one of {', '.join(db.STORE_STATUSES)}"]})
+
+    if body.status == db.STORE_STATUS_SHELF:
+        _refuse_if_not_sellable(row, display_name=row["display_name"],
+                                animal=row["animal"])
+
+    if body.admin_note is not None:
+        db.update_store_listing(
+            store_id, display_name=row["display_name"],
+            description=row["description"], tags=db.store_listing_view(row)["tags"],
+            animal=row["animal"], admin_note=body.admin_note.strip())
     db.set_store_status(store_id, body.status)
-    admin_common.audit(AUDIT_TAG, request, "update",
-                       f"{store_id} status={body.status}")
+    admin_common.audit(AUDIT_TAG, request, "status",
+                       f"{store_id} {row['status']} -> {body.status}")
     return {"listing": _admin_view(db.get_store_pet(store_id))}
 
 

@@ -458,7 +458,10 @@ def test_a_donated_row_is_handled_by_the_ORDINARY_phase_1_admin_routes(
     # Editable and shelvable through the ordinary PUT.
     r = client.put(f"/api/admin/store/{store_pet_id}", json={
         "display_name": "Rescued Panda", "description": "A gift.",
-        "tags": ["red panda"], "animal": "panda", "status": "shelf"})
+        "tags": ["red panda"], "animal": "panda"})
+    assert r.status_code == 200, r.text
+    r = client.post(f"/api/admin/store/{store_pet_id}/status",
+                    json={"status": "shelf"})
     assert r.status_code == 200, r.text
     assert db.get_store_pet(store_pet_id)["status"] == "shelf"
 
