@@ -84,6 +84,33 @@ CREATE TABLE IF NOT EXISTS jobs (
     external_user_id    TEXT
 );
 
+-- The Pet Store inventory (SPEC_PET_STORE §1.2). A SEPARATE table from pets, on
+-- purpose: store pets are visible to everyone, and no owner value in the scoped
+-- pets table can express that — widening _scope_clause is exactly the bug the
+-- exact-match fix removed. No owner column (nobody owns inventory), no draft
+-- column (`published` is the store's own word; the draft purge sweeps never
+-- touch it). Derived columns (pose_count, bundle_sha256, size_bytes) are
+-- computed in insert_store_pet from the bytes it is handed, so a row can never
+-- disagree with its own bundle.
+CREATE TABLE IF NOT EXISTS store_pets (
+    id              TEXT PRIMARY KEY,
+    display_name    TEXT NOT NULL,
+    breed_id        TEXT NOT NULL,
+    animal          TEXT NOT NULL,
+    description     TEXT NOT NULL DEFAULT '',
+    tags_json       TEXT NOT NULL DEFAULT '[]',
+    pose_count      INTEGER NOT NULL,
+    published       INTEGER NOT NULL DEFAULT 0,
+    created_at      REAL NOT NULL,
+    bundle_sha256   TEXT NOT NULL,
+    size_bytes      INTEGER NOT NULL,
+    preview_png     BLOB NOT NULL,
+    sheet_png       BLOB NOT NULL,
+    manifest_json   TEXT NOT NULL,
+    package_json    TEXT,
+    bundle_zip      BLOB NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS bundle_tokens (
     token               TEXT PRIMARY KEY,
     pet_id              TEXT NOT NULL,
@@ -136,6 +163,11 @@ def init_db() -> None:
         for col in ("pool_job_id", "description", "display_name"):
             if col not in cols:
                 conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
+        # SPEC_PET_STORE §7.2: how the pet came to be. Set by store adopt, NULL
+        # for designed pets — the declared price basis the DPP export reads.
+        pet_cols = {r["name"] for r in conn.execute("PRAGMA table_info(pets)")}
+        if "source_store_pet_id" not in pet_cols:
+            conn.execute("ALTER TABLE pets ADD COLUMN source_store_pet_id TEXT")
         conn.commit()
     _migrate_legacy_folders()
     _backfill_bundle_digests()
@@ -216,7 +248,8 @@ def _migrate_legacy_folders() -> None:
 def insert_pet(*, pet_id: str, breed_id: str, display_name: str,
                created_at: float, draft: bool, sheet_png: bytes,
                manifest_json: str, package_json: Optional[str],
-               bundle_zip: bytes, external_user_id: Optional[str] = None) -> None:
+               bundle_zip: bytes, external_user_id: Optional[str] = None,
+               source_store_pet_id: Optional[str] = None) -> None:
     """Persist a pet. `bundle_sha256`/`size_bytes` are DERIVED here, never passed.
 
     They are a pure function of `bundle_zip`, so letting a caller supply them is
@@ -231,11 +264,12 @@ def insert_pet(*, pet_id: str, breed_id: str, display_name: str,
         conn.execute(
             """INSERT OR REPLACE INTO pets
                (id, breed_id, display_name, created_at, draft, external_user_id,
-                bundle_sha256, size_bytes, sheet_png, manifest_json,
-                package_json, bundle_zip)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                source_store_pet_id, bundle_sha256, size_bytes, sheet_png,
+                manifest_json, package_json, bundle_zip)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (pet_id, breed_id, display_name, created_at, 1 if draft else 0,
-             external_user_id, hashlib.sha256(bundle_zip).hexdigest(),
+             external_user_id, source_store_pet_id,
+             hashlib.sha256(bundle_zip).hexdigest(),
              len(bundle_zip), sheet_png,
              manifest_json, package_json, bundle_zip),
         )
@@ -270,6 +304,20 @@ def get_pet(pet_id: str) -> Optional[sqlite3.Row]:
     with _lock:
         return _connect().execute(
             "SELECT * FROM pets WHERE id=?", (pet_id,)).fetchone()
+
+
+def get_pet_for_owner(pet_id: str,
+                      external_user_id: Optional[str] = None) -> Optional[sqlite3.Row]:
+    """One pet row the caller may access — None when absent OR not theirs. The
+    read-side companion of the scoped mutations (same _scope_clause), for
+    callers that need the bytes: the store's publish-from-pet reads its source
+    pet through this so an admin can publish only a pet she can see in her own
+    house (SPEC_PET_STORE §3.2), never an arbitrary row by id."""
+    clause, params = _scope_clause(external_user_id)
+    with _lock:
+        return _connect().execute(
+            f"SELECT * FROM pets WHERE id=? AND {clause}",
+            (pet_id, *params)).fetchone()
 
 
 def list_unsaved_pets(external_user_id: Optional[str] = None) -> list[dict]:
@@ -446,7 +494,8 @@ def export_pets(external_user_id: str) -> list[dict]:
         rows = _connect().execute(
             """SELECT id, breed_id, display_name, created_at, draft,
                       datsme_activity_id, writeback_acked_at,
-                      bundle_sha256, size_bytes, manifest_json
+                      bundle_sha256, size_bytes, manifest_json,
+                      source_store_pet_id
                FROM pets WHERE external_user_id=?
                ORDER BY created_at DESC""", (external_user_id,)).fetchall()
     out = []
@@ -703,3 +752,129 @@ def purge_expired_bundle_tokens(grace_s: float = 3600) -> int:
             (time.time() - grace_s,))
         conn.commit()
         return cur.rowcount
+
+
+# ---------------------------------------------------------------------------
+# The Pet Store inventory (SPEC_PET_STORE §1.2, §3.3). Unscoped on purpose —
+# store pets belong to nobody and are visible to everyone; the routers decide
+# what each caller may see (published_only for shoppers, everything for the
+# admin). Blobs stay in-row like pets. insert_store_pet is the ONLY writer of
+# the derived columns.
+# ---------------------------------------------------------------------------
+def _pose_names(manifest_json: str) -> list[str]:
+    """The animation names in manifest order — the listing's `poses` field.
+    Empty on an unparseable manifest; sellability (store_validation) is the
+    gate that refuses to publish such a bundle, not this read."""
+    try:
+        animations = json.loads(manifest_json).get("animations", {})
+    except (json.JSONDecodeError, TypeError, AttributeError):
+        return []
+    return list(animations.keys()) if isinstance(animations, dict) else []
+
+
+def insert_store_pet(*, store_id: str, display_name: str, breed_id: str,
+                     animal: str, description: str, tags: list[str],
+                     created_at: float, preview_png: bytes, sheet_png: bytes,
+                     manifest_json: str, package_json: Optional[str],
+                     bundle_zip: bytes, published: bool = False) -> None:
+    """Persist one store pet. pose_count / bundle_sha256 / size_bytes are
+    DERIVED here (the insert_pet rule): a caller supplying them is only a
+    chance to be wrong. Raises ValueError on a manifest whose poses cannot be
+    counted — a store row with no countable poses could never be priced or
+    sold, so it fails loudly at the stocking door, not silently at checkout."""
+    count = pose_count(manifest_json)
+    if count is None:
+        raise ValueError(
+            "store pet manifest has no countable animations — refusing to stock "
+            "a bundle that could never be priced (SPEC_PET_STORE §5.3)")
+    with _lock:
+        conn = _connect()
+        conn.execute(
+            """INSERT OR REPLACE INTO store_pets
+               (id, display_name, breed_id, animal, description, tags_json,
+                pose_count, published, created_at, bundle_sha256, size_bytes,
+                preview_png, sheet_png, manifest_json, package_json, bundle_zip)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (store_id, display_name, breed_id, animal, description,
+             json.dumps(tags), count, 1 if published else 0, created_at,
+             hashlib.sha256(bundle_zip).hexdigest(), len(bundle_zip),
+             preview_png, sheet_png, manifest_json, package_json, bundle_zip),
+        )
+        conn.commit()
+
+
+def store_listing_view(row: sqlite3.Row) -> dict:
+    """The byteless listing shape both routers serve (SPEC_PET_STORE §3.1)."""
+    try:
+        tags = json.loads(row["tags_json"])
+    except (json.JSONDecodeError, TypeError):
+        tags = []
+    return {
+        "id": row["id"],
+        "display_name": row["display_name"],
+        "breed_id": row["breed_id"],
+        "animal": row["animal"],
+        "description": row["description"],
+        "tags": tags if isinstance(tags, list) else [],
+        "pose_count": row["pose_count"],
+        "poses": _pose_names(row["manifest_json"]),
+        "published": bool(row["published"]),
+        "created_at": row["created_at"],
+    }
+
+
+def list_store_pets(published_only: bool = True) -> list[dict]:
+    """Listings, newest first. Shoppers get published rows only; the admin
+    list passes published_only=False and sees the staging shelf too."""
+    where = "WHERE published=1" if published_only else ""
+    with _lock:
+        rows = _connect().execute(
+            f"""SELECT id, display_name, breed_id, animal, description,
+                       tags_json, pose_count, published, created_at,
+                       manifest_json
+                FROM store_pets {where}
+                ORDER BY created_at DESC""").fetchall()
+    return [store_listing_view(r) for r in rows]
+
+
+def get_store_pet(store_id: str) -> Optional[sqlite3.Row]:
+    """One full store row (blobs included), or None. Callers pick their slice —
+    the preview route reads preview_png, adopt reads the bundle members."""
+    with _lock:
+        return _connect().execute(
+            "SELECT * FROM store_pets WHERE id=?", (store_id,)).fetchone()
+
+
+def update_store_listing(store_id: str, *, display_name: str, description: str,
+                         tags: list[str], animal: str) -> bool:
+    """Rewrite the authored listing fields (SPEC_PET_STORE §1.3). The mechanical
+    facts (pose_count, breed_id, the digests) are deliberately not updatable —
+    editing them would let a listing lie about its artifact. False if absent."""
+    with _lock:
+        conn = _connect()
+        cur = conn.execute(
+            """UPDATE store_pets SET display_name=?, description=?, tags_json=?,
+                                     animal=? WHERE id=?""",
+            (display_name, description, json.dumps(tags), animal, store_id))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def set_store_published(store_id: str, published: bool) -> bool:
+    with _lock:
+        conn = _connect()
+        cur = conn.execute(
+            "UPDATE store_pets SET published=? WHERE id=?",
+            (1 if published else 0, store_id))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def delete_store_pet(store_id: str) -> bool:
+    """Remove a store pet from inventory. Copies already adopted into houses
+    are pets rows and are deliberately unaffected — they are copies."""
+    with _lock:
+        conn = _connect()
+        cur = conn.execute("DELETE FROM store_pets WHERE id=?", (store_id,))
+        conn.commit()
+        return cur.rowcount > 0

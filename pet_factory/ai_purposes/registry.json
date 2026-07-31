@@ -5,6 +5,7 @@
     { "key": "image_triage" },
     { "key": "pet_likeness" },
     { "key": "motion_classify" },
-    { "key": "pose_clause" }
+    { "key": "pose_clause" },
+    { "key": "store_listing" }
   ]
 }

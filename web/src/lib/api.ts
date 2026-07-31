@@ -194,18 +194,12 @@ export interface CatalogBreed {
   motion_profile: string | null;  // the breed's pinned profile key (§4.2)
   base_image_url: string;         // path under API_URL; use catalogBaseImageUrl()
 }
-// An adoptable pre-made pet (§4.4). Adopting one skips generation (zero GPU).
-export interface CatalogSample {
-  key: string;
-  preview_url: string | null;     // path under API_URL; null = no portrait
-}
 export interface CatalogAnimal {
   key: string;
   label: string;
   tagline: string;
   motion_profile: string | null;
   breeds: CatalogBreed[];
-  samples: CatalogSample[];
 }
 
 export async function fetchCatalog(): Promise<CatalogAnimal[]> {
@@ -242,52 +236,59 @@ export function catalogBaseOptions(animals: CatalogAnimal[]): CatalogBaseOption[
   return out;
 }
 
-// adopt-a-sample — the zero-GPU path (SPEC_DATSPET_CATALOG_PURCHASE).
-//
-// These two helpers were <SampleGallery>'s and went with the themed pages
-// (SPEC_PET_DESIGNER_FLOW §11), leaving `POST /api/catalog/{animal}/samples/
-// {sample}/adopt` alive with no caller. The note that stood here recorded that
-// state and is now spent — the catalog page is the new caller, and the six lines
-// did indeed cost nothing to write again.
-//
-// Correcting what that note got wrong, because it will be read in `git log`:
-// it said "catalog.json defines no `samples` at all, so `_samples_dir()` returns
-// None for every animal". Samples are never DECLARED in catalog.json — they are
-// discovered on disk — and `_samples_dir` returns None when the animal is not in
-// the catalog OR when `<animal>/samples/` does not exist
-// (`animal_catalog/__init__.py:160-164`). The directory was the missing half, and
-// `promote_sample.py cat snowleopard` supplied it.
-//
-// Adopting is a COPY, not a purchase: it puts a draft in the caller's house, and
-// the money happens later, on the host, through the same checkout a designed pet
-// uses (handOffToDatsme). Nothing here prices anything.
+// The Pet Store (SPEC_PET_STORE §3.1, §6) — the DB-backed shelf of ready-made
+// pets that replaced the file-sample surface (§8; the old adopt-a-sample
+// helpers stood here). Browsing is anonymous; adopting is a COPY, not a
+// purchase: it puts a draft in the caller's house, and the money happens
+// later, on the host, through the same checkout a designed pet uses
+// (handOffToDatsme). Nothing here prices anything (§0.5.1).
 
-/** The gallery portrait for a sample. `preview_url` is a path under API_URL, so
- *  it needs the same prefixing every other asset does. */
-export function catalogSamplePreviewUrl(animal: string, sample: string): string {
-  return `${API_URL}/api/catalog/${encodeURIComponent(animal)}/samples/${encodeURIComponent(sample)}/preview.png`;
+export interface StoreListing {
+  id: string;
+  display_name: string;
+  breed_id: string;
+  animal: string;                 // the filter-chip key ("cat")
+  description: string;
+  tags: string[];
+  pose_count: number;
+  poses: string[];
+  created_at: number;
+  preview_url: string;            // path under API_URL; use storePreviewUrl()
 }
 
-export interface AdoptedSample {
+export async function fetchStoreListings(): Promise<StoreListing[]> {
+  const r = await apiFetch(`${API_URL}/api/store`, { cache: "no-store" });
+  if (!r.ok) throw new Error("Could not load the pet store");
+  const data = await r.json();
+  return data.pets ?? [];
+}
+
+/** The card portrait. `preview_url` is a path under API_URL, so it needs the
+ *  same prefixing every other asset does. */
+export function storePreviewUrl(storeId: string): string {
+  return `${API_URL}/api/store/${encodeURIComponent(storeId)}/preview.png`;
+}
+
+export interface AdoptedStorePet {
   pet_id: string;
   display_name: string;
   breed_id: string;
 }
 
-/** Copy a curated sample into the caller's house as a draft. Zero GPU, instant.
+/** Copy a store pet into the caller's house as a draft. Zero GPU, instant.
  *
  * Scoped like every other write: the pet lands under the caller's owner id,
  * anonymous or DatsMe (SPEC_DATSPET_FEDERATED_SESSION §4.5), which is what lets a
  * signed-out visitor adopt first and sign in after.
  */
-export async function adoptSample(animal: string, sample: string): Promise<AdoptedSample> {
+export async function adoptStorePet(storeId: string): Promise<AdoptedStorePet> {
   const r = await apiFetch(
-    `${API_URL}/api/catalog/${encodeURIComponent(animal)}/samples/${encodeURIComponent(sample)}/adopt`,
+    `${API_URL}/api/store/${encodeURIComponent(storeId)}/adopt`,
     { method: "POST", credentials: "include" },
   );
   if (!r.ok) {
     const data = await r.json().catch(() => ({}));
-    // 409 = house full, and its detail is the message the user needs to see.
+    // 409 = house full / 403 = plan — the detail is the message to show.
     throw new Error(typeof data.detail === "string" ? data.detail : "Could not adopt this pet");
   }
   return r.json();
@@ -796,6 +797,49 @@ export const settingsAdmin = {
   list: (): Promise<{ settings: AppSetting[] }> => settingsFetch(""),
   set: (key: string, value: boolean): Promise<{ updated: AppSetting }> =>
     settingsFetch(`/${encodeURIComponent(key)}`, { method: "PUT", body: JSON.stringify({ value }) }),
+};
+
+// ── Store admin (SPEC_PET_STORE §3.2) — the sixth admin surface ──────────────
+//
+// DB-backed and runtime-writable everywhere (no writability gate): stocking
+// prod must not require a deploy. The stocking door is publishFromPet — the
+// admin designs a pet in the NORMAL designer, then copies it onto the shelf.
+
+/** The admin's slice of a store pet: the listing plus staging state and the
+ *  live sellability verdict (§5.3). */
+export interface StoreAdminListing extends StoreListing {
+  published: boolean;
+  sellability_errors?: string[];
+}
+
+export interface StoreDraftResult {
+  listing: StoreAdminListing;
+  // The AI's name idea — a SUGGESTION the editor shows, never auto-applied (§5.1).
+  display_name_suggestion: string | null;
+}
+
+const storeFetch = (path: string, init?: RequestInit) =>
+  adminApiFetch("/api/admin/store", path, init);
+
+export const storeAdmin = {
+  list: (): Promise<{ pets: StoreAdminListing[] }> => storeFetch(""),
+  get: (id: string): Promise<StoreAdminListing> =>
+    storeFetch(`/${encodeURIComponent(id)}`),
+  publishFromPet: (petId: string): Promise<StoreDraftResult> =>
+    storeFetch("/publish-from-pet", {
+      method: "POST", body: JSON.stringify({ pet_id: petId }),
+    }),
+  update: (id: string, body: {
+    display_name: string; description: string; tags: string[];
+    animal: string; published: boolean;
+  }): Promise<{ listing: StoreAdminListing }> =>
+    storeFetch(`/${encodeURIComponent(id)}`, {
+      method: "PUT", body: JSON.stringify(body),
+    }),
+  redraft: (id: string): Promise<StoreDraftResult> =>
+    storeFetch(`/${encodeURIComponent(id)}/redraft`, { method: "POST" }),
+  remove: (id: string): Promise<{ deleted: string }> =>
+    storeFetch(`/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };
 
 // ── The reference layer (SPEC_PET_DESIGNER_FLOW §7.4) ────────────────────────

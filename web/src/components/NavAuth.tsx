@@ -66,6 +66,9 @@ export default function NavAuth() {
             <Link href="/admin/ai" className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
               AI
             </Link>
+            <Link href="/admin/store" className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
+              Store
+            </Link>
             <Link href="/admin/settings" className="font-medium hover:opacity-80" style={{ color: "var(--gold)" }}>
               Settings
             </Link>

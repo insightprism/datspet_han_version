@@ -1833,6 +1833,12 @@ and needs its own revision — recorded here rather than quietly diverged from (
 
 ### 11.2 Adopt-a-sample has no UI — the capability is still there
 
+> **SUPERSEDED (2026-07-31).** The lever was revived — and then replaced — by
+> `SPEC_PET_STORE`: `/catalog` is now the Pet Store page, the premade inventory
+> is DB-backed (`store_pets`), and the file-sample endpoints this section
+> discusses were retired by that spec's §8. The section below stands as the
+> historical record of the gap it describes.
+
 `SampleGallery` was adopt's only surface, so adopt is now unreachable from the browser.
 
 **`POST /api/catalog/{animal}/samples/{sample}/adopt` is still live and still tested.**

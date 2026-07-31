@@ -119,6 +119,13 @@ BUNDLE_TOKEN_TTL_SEC = 24 * 60 * 60
 
 PARTNER_SLUG = os.environ.get("DATSME_PARTNER_SLUG", "datspet")
 
+# The declared price bases an export item may carry (SPEC_PET_STORE §7).
+# `per_pose` is the existing designed-pet formula; `store_flat` maps to the
+# host's flat `credit_pet_store_cost` knob. The wire strings are a host
+# contract — change them only with the host's pet_writeback in the same breath.
+PRICE_BASIS_PER_POSE = "per_pose"
+PRICE_BASIS_STORE_FLAT = "store_flat"
+
 
 # ---------------------------------------------------------------------------
 # Env helpers (mirror the reference partner's naming)
@@ -786,6 +793,12 @@ def _export_item(row: dict) -> dict:
     item = {k: row[k] for k in
             ("id", "breed_id", "display_name", "created_at", "draft",
              "datsme_activity_id", "writeback_acked_at", "pose_count")}
+    # SPEC_PET_STORE §7.2 — the declared price basis. A store-adopted pet is
+    # priced by the host's flat store knob; everything else keeps the per-pose
+    # formula. Declared on the item (like pose_count), so pricing stays content
+    # the host maps — never a source branch in the host's engine.
+    item["price_basis"] = (PRICE_BASIS_STORE_FLAT if row.get("source_store_pet_id")
+                           else PRICE_BASIS_PER_POSE)
     if row["bundle_sha256"] and row["pose_count"] is not None:
         # Fresh single-use token per call: serve_bundle burns it only after a
         # SUCCESSFUL send, and the host fetches at checkout, so a re-listed page

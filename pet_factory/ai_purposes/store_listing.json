@@ -1,0 +1,23 @@
+{
+  "_doc": "SPEC_PET_STORE §4 — the store listing draft. Reads a store pet's portrait and drafts the shopper-facing text: a warm 2–3 sentence description (concrete: colors, markings, mood), 4–8 lowercase search tags, and a short name suggestion. Admin-triggered ONLY (publish-from-pet and redraft in webui/store_admin.py) — it never runs on a shopper request, and it never publishes anything by itself: the admin edit-then-publish step is the quality gate for prose exactly as the sellability validator is for bytes. Best-effort at the stocking door (a failure degrades to empty text the admin writes by hand). {animal_clause} folds in the seeded species the same way pet_likeness folds in {hint_clause} — the engine never knows what a store is. A CONSUMER contribution: the engine owns none of it.",
+  "purpose_key": "store_listing",
+  "display_name": "Store listing draft from a portrait",
+  "description": "Drafts a shop description, search tags, and a name suggestion from a store pet's portrait. Admin-triggered at publish-from-pet and redraft; the admin edits before anything goes live.",
+  "tier": "fast",
+  "max_tokens": 512,
+  "input": "image",
+  "template_vars": ["animal_clause"],
+  "system_prompt": "You write shop listings for a cartoon pet store. You are shown one pet's portrait. Return three things. `description`: two or three warm, concrete sentences a shopper would enjoy — name the colors, markings, and the mood the pet seems to have; never mention images, sprites, files, or that this is generated. `tags`: 4 to 8 lowercase search tags, each one or two words, covering the species, main colors, standout features, and mood (e.g. 'cat', 'snow white', 'fluffy', 'sleepy'). `display_name_suggestion`: a short, charming shop name of at most four words (e.g. 'Snowy the Leopard'). Answer only in the required JSON shape.",
+  "user_prompt_template": "Draft the store listing for this pet portrait.{animal_clause}",
+  "output_schema": {
+    "type": "object",
+    "properties": {
+      "display_name_suggestion": { "type": ["string", "null"] },
+      "description": { "type": "string" },
+      "tags": { "type": "array", "items": { "type": "string" } }
+    },
+    "required": ["description", "tags"],
+    "additionalProperties": false
+  },
+  "is_active": true
+}

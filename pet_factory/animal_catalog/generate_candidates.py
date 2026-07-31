@@ -49,10 +49,10 @@ _CANDIDATES_ROOT = _DIR / "_candidates"
 
 
 def _base_prompt(animal: str) -> str:
-    """The from-scratch base-still prompt — ONE definition, in prompt_templates, shared with
-    generate_sample.py. Both scripts used to carry their own copy ending in "plain white
-    background"; after SPEC_MATTE_BACKDROP that would have put two different backdrops in
-    one sentence, since this string is wrapped by a real build's template."""
+    """The from-scratch base-still prompt — ONE definition, in prompt_templates. This
+    script used to carry its own copy ending in a hardcoded backdrop clause; after
+    SPEC_MATTE_BACKDROP that would have put two different backdrops in one sentence,
+    since this string is wrapped by a real build's template."""
     return prompt_templates.curation_still_prompt(animal)
 
 

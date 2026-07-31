@@ -243,26 +243,24 @@ def test_a_freshly_built_pet_is_factory_owned_and_fingerprinted(app_client, dpp_
     assert row["size_bytes"] == len(row["bundle_zip"])
 
 
-def test_adopting_a_curated_sample_stamps_it_public(app_client, dpp_env):
-    """§6 t6 — a store sample belongs to nobody in particular, and `public` is
-    the category that says so. Matters for a RE-UPLOAD of a store bundle."""
+def test_adopting_a_store_pet_stamps_it_public(app_client, dpp_env):
+    """§6 t6 — a store pet belongs to nobody in particular, and `public` is
+    the category that says so. Matters for a RE-UPLOAD of a store bundle.
+    (Formerly exercised the file-sample endpoint; SPEC_PET_STORE §8 replaced
+    that with the DB-backed store adopt.)"""
     db = dpp_env["db"]
-    from pet_factory import animal_catalog as catalog
 
-    sample = None
-    for animal in catalog.list_animals():
-        animal_key = animal.get("key", "")
-        for candidate in catalog.list_samples(animal_key):
-            if catalog.sample_bundle_path(animal_key, candidate["key"]):
-                sample = (animal_key, candidate["key"])
-                break
-        if sample:
-            break
-    if sample is None:
-        pytest.skip("no curated sample bundle ships in the catalog")
+    zip_bytes, manifest_json = make_bundle_zip(
+        breed_id="storeleopard",
+        animations={"walk": {"frames": [0]}, "idle": {"frames": [1]}})
+    db.insert_store_pet(
+        store_id="storepet0001", display_name="Store Leopard",
+        breed_id="storeleopard", animal="cat", description="", tags=[],
+        created_at=1783800000.0, preview_png=b"\x89PNG\r\n\x1a\nDATA",
+        sheet_png=b"\x89PNG\r\n\x1a\nDATA", manifest_json=manifest_json,
+        package_json=None, bundle_zip=zip_bytes, published=True)
 
-    r = app_client.post(f"/api/catalog/{sample[0]}/samples/{sample[1]}/adopt",
-                        cookies=anon_cookies())
+    r = app_client.post("/api/store/storepet0001/adopt", cookies=anon_cookies())
     assert r.status_code == 200, r.text
 
     row = db.get_pet(r.json()["pet_id"])

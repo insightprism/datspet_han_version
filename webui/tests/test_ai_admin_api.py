@@ -53,8 +53,8 @@ def test_status_reports_configured_and_counts(ai_client):
     body = ai_client.get("/api/admin/ai/status").json()
     assert body["available"] is True and body["writable"] is True
     # connectivity_check (engine) + image_triage + pet_likeness (§2.5) + motion_classify (§3.5)
-    # + pose_clause (SPEC_MOTION_LAB §2).
-    assert body["purpose_count"] == 5 and body["model_count"] == 3
+    # + pose_clause (SPEC_MOTION_LAB §2) + store_listing (SPEC_PET_STORE §4).
+    assert body["purpose_count"] == 6 and body["model_count"] == 3
 
 
 # ── purposes: read ───────────────────────────────────────────────────────────
@@ -63,12 +63,15 @@ def test_list_purposes_and_tiers(ai_client):
     body = ai_client.get("/api/admin/ai/purposes").json()
     assert set(body["tiers"]) == {"fast", "balanced", "capable"}
     keys = [p["purpose_key"] for p in body["purposes"]]
-    assert keys == ["connectivity_check", "image_triage", "pet_likeness", "motion_classify", "pose_clause"]
+    assert keys == ["connectivity_check", "image_triage", "pet_likeness",
+                    "motion_classify", "pose_clause", "store_listing"]
     by_key = {p["purpose_key"]: p for p in body["purposes"]}
     assert by_key["connectivity_check"]["tier"] == "fast"
     # the consumer captioner purposes are image-input (SPEC_UPLOAD_LIKENESS §2.5)
     assert by_key["pet_likeness"]["input"] == "image"
     assert by_key["image_triage"]["input"] == "image"
+    # the store listing draft reads a portrait (SPEC_PET_STORE §4)
+    assert by_key["store_listing"]["input"] == "image"
 
 
 def test_get_one_purpose_full_json(ai_client):

@@ -230,6 +230,19 @@ old numbers is actively dangerous**, which is the whole reason for the change.
       docker restart datspet-nginx
       ```
 
+- [ ] **B9. Pet Store migration — one-time per environment (SPEC_PET_STORE §8, §13).**
+      **Ordering first:** the HOST deploys its store-pricing change *before* this web
+      tier (§13) — a host that does not yet know `store_flat` quotes store pets by the
+      pose formula (the quote still binds, so no overcharge — but the wrong number).
+      The reverse is safe. Then, once on this box:
+      ```bash
+      source pet_env.sh && webui/venv/bin/python scripts/migrate_samples_to_store.py
+      ```
+      Idempotent (keyed on bundle sha), so a re-run is a no-op. **After the LAST
+      environment has migrated**, delete `pet_factory/animal_catalog/*/samples/` from
+      the repo — the files are migration input only (§8 Rev.3), and this line is where
+      that deletion was promised.
+
 ---
 
 ## Phase C — Verify. This phase is not optional.
@@ -262,6 +275,13 @@ old numbers is actively dangerous**, which is the whole reason for the change.
 
 - [ ] **C4. Confirm the box HEAD equals the commit you intended.** Not the output of a
       later step — the HEAD itself.
+
+- [ ] **C5. The store shelf is stocked.** The launch rule (SPEC_PET_STORE §13): the
+      store must not be visibly emptier than the sample grid it replaced.
+      ```bash
+      curl -s https://pet.datsme.me/api/store | python3 -c \
+        'import sys,json; n=len(json.load(sys.stdin)["pets"]); print(n); exit(0 if n>=1 else 1)'
+      ```
 
 ---
 

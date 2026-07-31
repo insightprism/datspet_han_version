@@ -93,7 +93,7 @@ def remix_still_prompt(animal: str, pose: str = DEFAULT_POSE) -> str:
     return REMIX_STILL_TEMPLATE.format(animal=animal, pose=pose)
 
 
-# The CURATION still (animal_catalog/generate_candidates.py, generate_sample.py). It is
+# The CURATION still (animal_catalog/generate_candidates.py). It is
 # deliberately different from the two above — "full body, centered", because a curated
 # base.png wants the whole animal in frame — and it is used differently: the rendered
 # string is passed as the `animal` of a real build, so one of the templates above wraps it

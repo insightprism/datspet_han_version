@@ -150,53 +150,9 @@ def base_image_path(animal_key: str, breed_key: str) -> Optional[Path]:
     return path if path.is_file() else None
 
 
-# ---------------------------------------------------------------------------
-# Samples / adopt-a-premade (§4.4). Finished sample pets are stored per animal
-# as full bundles in `<animal>/samples/<sample_key>.zip` plus a `preview.png`
-# (a portrait for the gallery). A user adopts one directly — the API copies the
-# stored bundle into their house, skipping generation (zero GPU). Samples are
-# curated content like bases; an animal with no samples/ dir simply has none.
-# ---------------------------------------------------------------------------
-def _samples_dir(animal_key: str) -> Optional[Path]:
-    if _animal(animal_key) is None:
-        return None
-    d = _DIR / animal_key / "samples"
-    return d if d.is_dir() else None
-
-
-def list_samples(animal_key: str) -> list[dict]:
-    """Sample pets available to adopt for an animal (§4.4). Each is a bundle
-    `.zip` with a matching `preview.png` for the gallery portrait. Returns
-    [{key, has_preview}]; an animal with no samples returns []. The API shapes
-    the browser response (preview URL etc.); this only enumerates content."""
-    d = _samples_dir(animal_key)
-    if d is None:
-        return []
-    samples = []
-    for zip_path in sorted(d.glob("*.zip")):
-        key = zip_path.stem
-        if not key.isalnum():
-            continue  # keys become URL/path segments — keep them safe
-        samples.append({
-            "key": key,
-            "has_preview": (d / f"{key}.png").is_file(),
-        })
-    return samples
-
-
-def sample_bundle_path(animal_key: str, sample_key: str) -> Optional[Path]:
-    """The stored bundle .zip for a sample, or None if absent."""
-    d = _samples_dir(animal_key)
-    if d is None or not sample_key.isalnum():
-        return None
-    path = d / f"{sample_key}.zip"
-    return path if path.is_file() else None
-
-
-def sample_preview_path(animal_key: str, sample_key: str) -> Optional[Path]:
-    """The gallery portrait for a sample, or None if absent."""
-    d = _samples_dir(animal_key)
-    if d is None or not sample_key.isalnum():
-        return None
-    path = d / f"{sample_key}.png"
-    return path if path.is_file() else None
+# The samples/adopt-a-premade surface that stood here (list_samples,
+# sample_bundle_path, sample_preview_path) was retired by SPEC_PET_STORE §8:
+# premade pets are DB-backed store inventory now (webui/pet_store.py), stocked
+# at runtime through the store admin. Any `<animal>/samples/` files still on
+# disk are migration input for scripts/migrate_samples_to_store.py and are
+# deleted once every environment has migrated (Rev.3 note in §8).

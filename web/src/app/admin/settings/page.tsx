@@ -81,6 +81,7 @@ export default function SettingsAdminPage() {
           <Link href="/admin/motions" className="hover:opacity-80" style={{ color: "var(--gold)" }}>motions</Link>
           <Link href="/admin/design" className="hover:opacity-80" style={{ color: "var(--gold)" }}>design</Link>
           <Link href="/admin/ai" className="hover:opacity-80" style={{ color: "var(--gold)" }}>ai</Link>
+          <Link href="/admin/store" className="hover:opacity-80" style={{ color: "var(--gold)" }}>store</Link>
         </nav>
       </div>
 

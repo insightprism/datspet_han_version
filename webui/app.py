@@ -46,6 +46,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
 import db
+import house_capacity
 import pet_ownership
 import pool_client
 # design_calibration owns the design redraw's denoise band (effective_strength) and the
@@ -198,6 +199,15 @@ app.include_router(ai_admin.router)
 # subject isolation, default OFF). DB-backed and runtime-writable, unlike the content admins.
 import settings_admin
 app.include_router(settings_admin.router)
+
+# The Pet Store (SPEC_PET_STORE §3): the public shop router + the sixth admin
+# surface. DB-backed inventory, so prod is stockable at runtime — which the
+# file-based samples it replaced could never be (§8; prod content dirs are a
+# read-only install).
+import pet_store
+app.include_router(pet_store.router)
+import store_admin
+app.include_router(store_admin.router)
 
 # The Motion Lab (SPEC_MOTION_LAB): the fifth admin surface — a visual workbench for
 # authoring pose_prompt clauses (§3.9.1) by running the generation STEPS. LOCAL backend
@@ -1425,21 +1435,12 @@ def catalog():
                 "motion_profile": animal_catalog_mod.resolved_motion_profile(a["key"], b["key"]),
                 "base_image_url": f"/api/catalog/{a['key']}/{b['key']}/base.png",
             })
-        samples = [
-            {
-                "key": s["key"],
-                "preview_url": (f"/api/catalog/{a['key']}/samples/{s['key']}/preview.png"
-                                if s["has_preview"] else None),
-            }
-            for s in animal_catalog_mod.list_samples(a["key"])
-        ]
         animals.append({
             "key": a["key"],
             "label": a.get("label", a["key"]),
             "tagline": a.get("tagline", ""),
             "motion_profile": a.get("motion_profile"),
             "breeds": breeds,
-            "samples": samples,
         })
     return {"animals": animals}
 
@@ -1476,63 +1477,9 @@ def entitlement(request: Request):
     return ent
 
 
-@app.get("/api/catalog/{animal}/samples/{sample}/preview.png")
-def catalog_sample_preview(animal: str, sample: str):
-    """The gallery portrait for an adoptable sample (§4.4). 404 if absent."""
-    if not (animal.isalnum() and sample.isalnum()):
-        raise HTTPException(404, "sample preview not found")
-    path = animal_catalog_mod.sample_preview_path(animal, sample)
-    if path is None:
-        raise HTTPException(404, "sample preview not found")
-    return FileResponse(path, media_type="image/png",
-                        headers={"Cache-Control": "public, max-age=86400"})
-
-
-@app.post("/api/catalog/{animal}/samples/{sample}/adopt")
-def adopt_sample(animal: str, sample: str, request: Request):
-    """Adopt a pre-made sample pet directly (§4.4) — generation-free (zero GPU).
-    Copies the stored sample bundle into the caller's house as a DRAFT via the
-    SAME insert path a generated pet takes (minus the build), then returns the
-    new pet id so the frontend runs its normal Save/Accept flow. Scoped to the
-    caller's identity exactly like a generated pet."""
-    if not (animal.isalnum() and sample.isalnum()):
-        raise HTTPException(404, "sample not found")
-    bundle_path = animal_catalog_mod.sample_bundle_path(animal, sample)
-    if bundle_path is None:
-        raise HTTPException(404, "sample not found")
-    owner = owner_scope.require_owner(request)
-    # Adopt is instant, but it still adds a pet — block at the cap so the user
-    # isn't handed a draft they can't keep (SPEC house-scaling).
-    _enforce_house_not_full(owner)
-
-    zip_bytes = bundle_path.read_bytes()
-    sheet_png, manifest_json, package_json, display_name, breed_id = _unpack_bundle(
-        zip_bytes, default_display_name=sample.title())
-    if sheet_png is None or manifest_json is None:
-        raise HTTPException(500, "sample bundle is malformed")
-
-    # SPEC_PET_OWNER_FIELD §2.4 — same position and same reason as the mint
-    # stamp: upstream of insert_pet, so the derived digest covers stamped bytes.
-    # A curated sample is `public` — the one category with no subject, so its
-    # name is empty and anyone may bring it to life. This matters only for a
-    # RE-UPLOAD of a store bundle; storefront adoption on the host goes through
-    # create_my_pet from the platform catalog, not the upload door.
-    created_at = time.time()
-    zip_bytes, _ = pet_ownership.stamp_bundle_fingerprint(zip_bytes)
-    zip_bytes, manifest_json = pet_ownership.transfer_pet_ownership(
-        zip_bytes,
-        category=pet_ownership.PUBLIC_CATEGORY, name="",
-        at=pet_ownership.epoch_to_utc_iso(created_at))
-
-    pet_id = uuid.uuid4().hex[:12]
-    db.insert_pet(
-        pet_id=pet_id, breed_id=breed_id or sample, display_name=display_name,
-        created_at=created_at, draft=True,
-        sheet_png=sheet_png, manifest_json=manifest_json,
-        package_json=package_json, bundle_zip=zip_bytes,
-        external_user_id=owner,
-    )
-    return {"pet_id": pet_id, "display_name": display_name, "breed_id": breed_id or sample}
+# The file-sample surface (/api/catalog/.../samples/...) that stood here was
+# retired by SPEC_PET_STORE §8 — the DB-backed store (webui/pet_store.py) is
+# the one premade-pet system.
 
 
 @app.get("/api/workshop-status")
@@ -1580,7 +1527,7 @@ async def start_job(
     owner = owner_scope.require_owner(request)
     # Fail fast, before ~3 min of GPU: a full house can't accept the pet this
     # build would produce, so don't build it (SPEC house-scaling).
-    _enforce_house_not_full(owner)
+    house_capacity.enforce_house_not_full(owner)
     name = name.strip()[:60]
     if not reference_id.strip():
         # No base at all — a bad request, not a missing reference. This is also what a
@@ -1722,36 +1669,6 @@ _purge_drafts()        # startup cleanup — "__all__" scope
 _reattach_pool_jobs()  # Opt-1: resume pool jobs orphaned by a restart
 
 
-# House-scaling config (SPEC house-scaling). Env-var knobs, read at call time so
-# they are tunable without a restart — same posture as DATSPET_DESIGN_COST. The
-# house grows forever, and the cost is on the CLIENT (a phone decodes a full
-# sprite sheet per card + PetStage actor), so these bound what a mobile tab must
-# hold: the cap bounds total pets (and disk), the page size bounds what is mounted
-# at once. Neither is a client constant — the browser reads both from /api/house.
-def _house_max_pets() -> int:
-    try:
-        return max(1, int(os.environ.get("PETMAKER_HOUSE_MAX_PETS", "50")))
-    except ValueError:
-        return 50
-
-
-def _house_page_size() -> int:
-    try:
-        return max(1, int(os.environ.get("PETMAKER_HOUSE_PAGE_SIZE", "10")))
-    except ValueError:
-        return 10
-
-
-def _enforce_house_not_full(owner: Optional[str]) -> None:
-    """Block a new pet from joining a full house (SPEC house-scaling). We BLOCK,
-    never evict — a pet's bundle is irreplaceable, so the user removes one by
-    hand. Counted against the caller's own visible house."""
-    cap = _house_max_pets()
-    if db.count_saved_pets(owner) >= cap:
-        raise HTTPException(
-            409, f"Your pet house is full ({cap} pets). Remove one to make room.")
-
-
 @app.get("/api/house")
 def house_config(request: Request):
     """The caller's house shape: the cap, the display page size, and how many
@@ -1761,8 +1678,8 @@ def house_config(request: Request):
     different reason (a new pet) than these knobs (an ops tuning)."""
     owner = owner_scope.require_owner(request)
     return {
-        "max_pets": _house_max_pets(),
-        "page_size": _house_page_size(),
+        "max_pets": house_capacity.house_max_pets(),
+        "page_size": house_capacity.house_page_size(),
         "count": db.count_saved_pets(external_user_id=owner),
     }
 
@@ -1839,7 +1756,7 @@ def keep_pet(pet_id: str, request: Request):
     # never reveal another user's pet (SPEC house-scaling).
     row = _require_pet(pet_id, owner)
     if row["draft"]:
-        _enforce_house_not_full(owner)
+        house_capacity.enforce_house_not_full(owner)
     record = db.keep_pet(pet_id, external_user_id=owner)
     if record is None:
         raise HTTPException(404, "pet not found")
