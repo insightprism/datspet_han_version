@@ -1,13 +1,14 @@
 # SPEC_PET_STORE — The Pet Store: a database-backed shop of ready-made pets
 
-**Status: Rev.8 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASE 2 SPECIFIED,
+**Status: Rev.9 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASE 2 SPECIFIED,
 NOT STARTED.** Phase 1 deployed host-first (§13) to staging and then production
 the same day, C1-verified 14/14 on both tiers, with the §12 store E2E passing on
 staging's real infrastructure (flat 50 quoted + charged; the pose formula would
 have said 110). §14 is the as-built ledger and the only place to read for "what
 is done"; §14.4 records the deploys. **§10 is now a build-ready specification
 rather than a sketch** — it needs owner sign-off before code, and §10.0 records
-the three constraints that moved the design.
+the three constraints that moved the design. **Rev.9's shelf lifecycle (§1.4)
+changes a LIVE Phase 1 table** and is specified but not built.
 
 Supersedes the file-based samples surface of `SPEC_DATSPET_CATALOG_PURCHASE`
 (archived, executed 2026-07-30) — see §8 for exactly what it absorbs and retires.
@@ -64,7 +65,7 @@ that the social→credit conversion endpoint has no frontend caller yet.
 **Rev.8 (2026-07-31)** — **a donation is a gift, and it is final** (owner
 decision, §0.5), and the social point is awarded **at the donate click** rather
 than at an admin's approval. The pet transfers straight into store inventory as
-an unpublished row; the admin decides only what reaches the shelf. The analogy
+an `intake` row; the admin decides only what reaches the shelf. The analogy
 the owner gave is the right one: you do not get your sofa back from the charity
 shop because they chose not to display it.
 
@@ -83,6 +84,36 @@ buried. The award loses its human gate, so the daily cap becomes the
 load-bearing anti-farming defence and must never be disabled (§10.7.5). And a
 mistaken donation is unrecoverable through the product, so the confirm dialog
 has to say "permanent" in those words (§10.5, §10.9).
+
+**Rev.9 (2026-07-31)** — the `published` boolean becomes a four-state
+**`status`** (§1.4): `intake` → `shelf` → `backroom` → `archived`. A boolean
+could not tell apart the three different reasons a pet is not for sale, and
+those three are exactly what an admin acts on — the inbox, the thing held back
+deliberately, and the thing decided against. Names follow §0.5's charity-shop
+model and say what is true of the row rather than what someone is doing to it
+(`intake`, not "under review" — nothing is under review until someone opens it;
+`backroom`, not "back shelf", because it pairs with `shelf` the way a shop
+does). `archived` absorbs "rejected", because rejected-on-arrival and
+pulled-from-sale are one fact with one behaviour, and the reason belongs in
+`admin_note` rather than in a second state.
+
+Every transition is free except the one gate that already existed: moving TO
+`shelf` runs the sellability validator. Unsellable stays *derived*, never a
+status. The status lives on `store_pets` for all inventory rather than on
+donations, so the engine still never asks where a row came from — an admin's
+unfinished draft and an untriaged donation are both `intake`, and the read-time
+"donated by" badge is what distinguishes them.
+
+Migration is one step with no dual-write: add `status`, backfill from
+`published`, drop `published` (SQLite 3.37 on these boxes supports
+`DROP COLUMN`). It touches a live table in three environments, so §13 gives it
+its own small deploy between Phase 1 and Phase 2.
+
+New §1.5 answers a question this raised: there is **no adoption or view
+counter**, adoptions are already derivable from `pets.source_store_pet_id` but
+would count surviving copies rather than sales, and views are not cheaply
+countable at all given the single cached listing payload. Both are recorded as
+deliberate gaps with a named tripwire rather than built on speculation.
 
 </details>
 
@@ -113,7 +144,7 @@ inputs to this design:
 | # | Decision | Choice |
 |---|---|---|
 | 0.1 | Scope of v1 | **Admin-curated only.** Donations are Phase 2, shipped separately. |
-| 0.5 | What donating means | **A donation is a gift, and it is final** (Rev.8). The pet transfers to store inventory at the click — unpublished — and the donor cannot get it back. The admin decides only what reaches the shelf, never whether to accept. The model is a charity shop: once it is donated, it is gone. |
+| 0.5 | What donating means | **A donation is a gift, and it is final** (Rev.8). The pet transfers to store inventory at the click — into `intake` (§1.4) — and the donor cannot get it back. The admin decides only what reaches the shelf, never whether to accept. The model is a charity shop: once it is donated, it is gone. |
 | 0.2 | Pricing | **A flat host-side credit knob** (`credit_pet_store_cost`), set at the host admin credits screen like every other knob. One price for any store pet, regardless of poses. Expected at or below the design formula (a store adopt burns no GPU; designing does) and possibly equal to it — the value is the owner's dial, never this spec's concern. DatsMe remains the only charger. |
 | 0.3 | Descriptions | **AI-drafted from the pet's portrait, admin-edited before publishing.** |
 | 0.4 | Donor reward | **One social point, awarded at the donate click.** Revised twice on 2026-07-31: from credits to social points (Rev.7 — gifting and donating pay *social* points on DatsMe, `award_generosity_reward`, and reputation is the right currency for a prosocial act), then from award-at-approval to award-at-donation (Rev.8, with §0.5 below). |
@@ -144,11 +175,11 @@ because the store touches all of them:
   Content, not a user's pet. Nobody owns it; adopting it *copies* it.
 - **Listing** — the browser-facing slice of a store pet: name, description,
   tags, animal, pose count, preview. Never the bundle bytes.
-- **Published** — a store pet visible to shoppers. Unpublished rows exist so
-  an admin can stage, caption, and edit before going live.
+- **On the shelf** — a store pet visible to shoppers (`status = 'shelf'`,
+  §1.4). Every other state is invisible to them, for three different reasons.
 - **Donation** (Phase 2) — a user's own designed pet given to the store. It
-  becomes an unpublished store pet at the moment of the gift; the admin decides
-  only whether to publish it. There is no queue and no way back (§0.5).
+  becomes an `intake` store pet at the moment of the gift; the admin decides
+  only whether it reaches the shelf. There is no queue and no way back (§0.5).
 
 ### §1.2 The `store_pets` table (new, in `datspet.db`)
 
@@ -160,7 +191,7 @@ value can express that, and widening the clause is exactly the bug the
 exact-match fix removed. Separate table, separate read path, zero contact with
 the scoping rule. It also passes the change-cadence test: a house pet changes
 for user-lifecycle reasons (draft, keep, delete, writeback); a store pet
-changes for merchandising reasons (description, tags, published). Different
+changes for merchandising reasons (description, tags, shelf status). Different
 reasons, different places.
 
 ```sql
@@ -172,7 +203,8 @@ CREATE TABLE IF NOT EXISTS store_pets (
     description     TEXT NOT NULL DEFAULT '',
     tags_json       TEXT NOT NULL DEFAULT '[]',  -- JSON array of lowercase strings
     pose_count      INTEGER NOT NULL,   -- derived from manifest at insert (like bundle_sha256)
-    published       INTEGER NOT NULL DEFAULT 0,
+    status          TEXT NOT NULL DEFAULT 'intake',  -- §1.4; replaced `published` in Rev.9
+    admin_note      TEXT NOT NULL DEFAULT '',        -- why it was archived / held back
     created_at      REAL NOT NULL,      -- unix epoch float, matching pets
     bundle_sha256   TEXT NOT NULL,      -- derived at insert
     size_bytes      INTEGER NOT NULL,   -- derived at insert
@@ -191,11 +223,103 @@ can never disagree with its own bundle — the same by-construction rule
 `insert_pet` already follows.
 
 Deliberately **absent**: any owner column (nobody owns inventory), any
-`draft` column (`published` is the store's own word and does not interact with
-the draft purge sweeps), any source/provenance column (§2 — a store pet that
+`draft` column (`status` is the store's own word and does not interact with the
+draft purge sweeps), any source/provenance column (§2 — a store pet that
 arrived by donation is indistinguishable at runtime from one an admin made;
 donor facts live on the Phase 2 donation row, which is audit, not engine
-input).
+input), and **any adoption or view counter** (§1.5).
+
+### §1.4 `status` — the shelf lifecycle (Rev.9)
+
+A store pet is in exactly one of four states. Rev.1–Rev.8 had a `published`
+boolean, which could not tell apart the three different reasons a pet might not
+be for sale — and those three are precisely what an admin needs to act on.
+
+| `status` | Visible to shoppers | Means |
+|---|---|---|
+| `intake` | no | Arrived; nobody has decided about it yet. The inbox. |
+| `shelf` | **yes** | For sale. The only state a shopper can ever see. |
+| `backroom` | no | Kept and sellable, deliberately not out front. |
+| `archived` | no | Not for sale; kept only as a record. |
+
+The vocabulary is the charity-shop model the owner chose in §0.5, and each
+name says what is *true of the row* rather than what someone is doing to it:
+
+- **`intake`, not "under review".** Nothing is under review until an admin opens
+  it; the row is simply in the intake area. It also reads correctly for an
+  admin-stocked pet whose caption is unfinished — she is not reviewing her own
+  work either.
+- **`shelf`, not "published" or "store".** The spec and the code already say
+  "the shelf" everywhere; `status == 'shelf'` reads as the thing it means, and
+  "store" is ambiguous with the store as a whole.
+- **`backroom`, not "back shelf".** It pairs with `shelf` the way the shop
+  actually works — front of shop, back of shop — and promoting is literally
+  moving something forward. "Back shelf" and "shelf" are one word apart, which
+  is the kind of pair that gets misread in review.
+- **`archived` absorbs "rejected".** Rejected-on-arrival and pulled-from-sale
+  are the same fact — not for sale, keep the record — and no code would ever
+  treat them differently. Two states with one behaviour is a split that only
+  creates bugs; the *reason* goes in `admin_note`, which is free text because
+  reasons are.
+
+**Transitions are free.** Any state may move to any other; there is no state
+machine to encode because there is no ordering an admin could violate.
+`archived` is deliberately **reversible** — a terminal state is what pushes
+people toward hard deletes when they change their mind. The one rule that is
+not free is the gate: **moving *to* `shelf` runs the sellability validator**
+(§5.3) and refuses on failure, exactly as the old publish flip did.
+
+**One status for all inventory, not a donation field.** A donated pet and an
+admin-stocked pet have the same four states, so the status lives on the
+inventory row and the engine never asks which one it is looking at (§1.2). A
+useful consequence: an admin's unfinished draft and an untriaged donation are
+both `intake`, and it is the *badge* — a read-time join to the donation ledger
+— that tells them apart. The difference lives where §2's rules say it should.
+
+**Unsellable is NOT a status.** A row whose bundle fails the validator is
+broken because its *bytes* are, and `_admin_view` recomputes that on every
+read. Storing it would let the row disagree with its own bundle, which is the
+one thing §1.2 exists to prevent.
+
+**Migration (Rev.9), one step, no dual-write.** `published` is live in three
+environments. Add `status`, backfill `shelf` where `published=1` and `intake`
+where `0`, then `DROP COLUMN published` — SQLite on these boxes is 3.37, so
+`ALTER TABLE … DROP COLUMN` is available. The old column does not linger behind
+a compatibility shim: a transition layer here would mean two sources of truth
+for "is this for sale", which is the failure this revision exists to remove.
+
+### §1.5 What the store does NOT count, and what it could
+
+There is **no adoption counter and no view counter**, and neither is an
+oversight — but only one of them is cheap to add later.
+
+**Adoptions are already recorded, just not counted.** Every store adopt writes
+`pets.source_store_pet_id` (§7.2), so "how many copies of this listing exist"
+is a `COUNT(*)`, and "how many reached DatsMe" is that plus
+`datsme_activity_id IS NOT NULL`. Nothing needs to be added to learn either.
+
+The catch, and the reason this spec does not simply expose that count: it
+counts **surviving copies, not sales**. A user who deletes an adopted pet
+decrements it, so the number answers "how many exist" when merchandising wants
+"how many times was this ever taken". Those diverge permanently and silently.
+If adoption counts are ever surfaced, the right shape is an **append-only
+adoption ledger** written at adopt time (the `ai_usage` pattern — a re-run is a
+new row, never an update), *not* a counter column on `store_pets` and not a
+live count of `pets`. A counter column would also have to be incremented by the
+adopt path, giving the row a fact its own bundle cannot verify — the
+by-construction rule §1.2 follows everywhere else.
+
+**Views are not recorded and would not be cheap.** The shop paints from ONE
+cacheable listing response (§6.1), so there is no per-pet request to count, and
+`preview.png` ships a 24-hour cache header (§3.1) precisely so it is *not*
+re-fetched. Counting image loads would undercount by design and miss every
+repeat viewer. A view metric means a deliberate client-side beacon, which is a
+new surface with its own privacy question — out of scope here, and it should be
+argued on its own rather than smuggled in beside a status column.
+
+*Tripwire:* the first time an admin has to guess whether a `backroom` pet is
+worth promoting, adoption counts have become load-bearing — build the ledger
+then, and read view counts as a separate decision.
 
 ### §1.3 Listing metadata: two kinds of facts, two sources
 
@@ -207,11 +331,11 @@ input).
   canonical species key — a typed-animal pet's `breed_id`
   (`white_snow_leopard`) appears in no `catalog.json`. Publish-from-pet seeds
   it by catalog breed lookup, falling back to the last word of `breed_id`,
-  and the admin may correct it **while the row is unpublished**; the
-  sellability validator refuses to publish an empty one. Once published it is
-  fixed — the shop's filter chips depend on it.
+  and the admin may correct it **while the row is off the shelf**; the
+  sellability validator refuses to shelve an empty one. Once it is on the shelf
+  the value is fixed — the shop's filter chips depend on it.
 - **Merchandising facts** are authored: `display_name`, `description`,
-  `tags_json`, `published`. The AI drafts the first two-and-a-half (§4); the
+  `tags_json`, `status`. The AI drafts the first two-and-a-half (§4); the
   admin owns the final text.
 
 Tags are plain lowercase strings, not an enum. The design-axes vocabulary
@@ -253,13 +377,13 @@ pattern (`webui/app.py:170-208`):
 
 | Route | Auth | Returns |
 |---|---|---|
-| `GET /api/store` | none (anonymous browsing, §0.4 of the catalog spec) | `{pets: [Listing]}` — **published rows only**, newest first. `Listing = {id, display_name, animal, breed_id, description, tags, pose_count, poses, preview_url}`. Never bytes, never unpublished rows. |
-| `GET /api/store/{id}/preview.png` | none (an `<img>` has no 401 handler — `owner_scope.py:120-122` precedent) | the `preview_png` blob, long cache headers — safe because a preview is immutable per id (derived once at insert; ai-tag touches only text). 404 for unknown *or unpublished* ids — unpublished must be invisible, not just unlisted. |
+| `GET /api/store` | none (anonymous browsing, §0.4 of the catalog spec) | `{pets: [Listing]}` — **`status = 'shelf'` only**, newest first. `Listing = {id, display_name, animal, breed_id, description, tags, pose_count, poses, preview_url}`. Never bytes, never an off-shelf row. |
+| `GET /api/store/{id}/preview.png` | none (an `<img>` has no 401 handler — `owner_scope.py:120-122` precedent) | the `preview_png` blob, long cache headers — safe because a preview is immutable per id (derived once at insert; ai-tag touches only text). 404 for unknown *or off-shelf* ids — intake, backroom and archived must be invisible, not merely unlisted. |
 | `POST /api/store/{id}/adopt` | `require_owner` | `{pet_id, display_name, breed_id}` |
 
 **Adopt** is the existing adopt-a-sample primitive re-pointed at the DB, and
 keeps its exact order (`app.py:1491-1535`): resolve store row (404 if missing
-or unpublished) → `require_owner` → **entitlement check, now enforced
+or off-shelf) → `require_owner` → **entitlement check, now enforced
 server-side** (§9) → `_enforce_house_not_full` 409 → stamp
 `public` ownership + fingerprint on a copy of the bundle → `insert_pet` as a
 draft owned by the caller, with `source_store_pet_id` set (§7.2). Fresh
@@ -278,19 +402,19 @@ a deploy.
 
 | Route | Does |
 |---|---|
-| `GET /api/admin/store` | all rows (published and not), listing shape + `published` |
+| `GET /api/admin/store` | all rows in every state, listing shape + `status` + `admin_note`. Default sort newest-first, so `intake` surfaces without a queue |
 | `GET /api/admin/store/{id}` | one row, full metadata |
 | `POST /api/admin/store/publish-from-pet` | body `{pet_id}` — **the stocking door**, §5. The source pet is read through the caller's OWN owner scope (the same scoped access keep/delete use): an admin publishes only a pet she can see in her house, never an arbitrary row by id. |
-| `PUT /api/admin/store/{id}` | edit `display_name`, `description`, `tags`, `animal` (unpublished rows only, §1.3), `published`. Tags are normalized on write — lowercased, trimmed, deduplicated, capped by named constants (`STORE_MAX_TAGS = 16`, `STORE_MAX_TAG_LEN = 32`). Flipping `published: true` re-runs the sellability validator (§5.3) and refuses on failure — the admin cannot ship a listing the build would reject. |
-| `POST /api/admin/store/{id}/ai-tag` | write description + tags with AI (§4) — the ONE generator of listing text, overwriting both, **only if the row is unpublished** (a live listing is the admin's text, and regenerating it would change what shoppers are reading) |
+| `PUT /api/admin/store/{id}` | edit `display_name`, `description`, `tags`, `animal` (off-shelf rows only, §1.3), `status`, `admin_note`. Tags are normalized on write — lowercased, trimmed, deduplicated, capped by named constants (`STORE_MAX_TAGS = 16`, `STORE_MAX_TAG_LEN = 32`). **Moving to `status: 'shelf'` re-runs the sellability validator** (§5.3) and refuses on failure — the admin cannot shelve a listing the build would reject. Every other transition is free (§1.4). |
+| `POST /api/admin/store/{id}/ai-tag` | write description + tags with AI (§4) — the ONE generator of listing text, overwriting both, **only if the row is off the shelf** (a live listing is the admin's text, and regenerating it would change what shoppers are reading) |
 | `DELETE /api/admin/store/{id}` | remove from inventory. Copies already adopted into houses are unaffected (they are copies). |
 
 ### §3.3 `webui/db.py` additions
 
 `db.py` stays the one store module. Additive functions only:
 `insert_store_pet` (derives the four derived columns; the only writer),
-`list_store_pets(published_only)`, `get_store_pet`, `update_store_listing`,
-`set_store_published`, `delete_store_pet`. The existing `pets` functions are
+`list_store_pets(shelf_only)`, `get_store_pet`, `update_store_listing`,
+`set_store_status`, `delete_store_pet`. The existing `pets` functions are
 untouched except `insert_pet` learning the nullable `source_store_pet_id`
 passthrough (§7.2).
 
@@ -369,13 +493,14 @@ auto-draft had shipped in Phase 1 and was removed in the same change.)*
    authoring surface, no CLI, no GPU box required.
 2. From the admin store page, she picks that pet from her house and hits
    **Publish to store** (`POST /api/admin/store/publish-from-pet`). This
-   **copies** the pet's bundle into a new *unpublished* `store_pets` row
+   **copies** the pet's bundle into a new `intake` `store_pets` row
    (her house copy remains hers), extracts the portrait, derives the
    mechanical facts, seeds `display_name` from the house pet's name, and runs
    the AI draft (§4) — whose `display_name_suggestion` is shown in the editor
    as a suggestion, never auto-applied.
 3. She edits the name, description, and tags in the admin editor, then flips
-   **published**. The row appears in the shop on the next listing fetch.
+   the status to **`shelf`**. The row appears in the shop on the next listing
+   fetch.
 
 Copy, not move, at step 2 — the same semantics adoption already has, and it
 keeps the admin's house pet and the store row on their separate lifecycles.
@@ -438,7 +563,7 @@ listing payload itself gets heavy (~200+ rows), filtering moves server-side
 ### §6.2 Admin page
 
 `web/src/app/admin/store/page.tsx`, following the existing admin surfaces:
-inventory table (published state visible at a glance), the publish-from-pet
+inventory table (status visible at a glance, newest first), the publish-from-pet
 picker (reads the admin's own house via the existing `listPets()`), and the
 listing editor (name, description, tags, publish toggle, and the ✨ that writes
 description + tags — §4, behind its confirm).
@@ -501,8 +626,8 @@ Two premade-pet systems may not coexist. In the same phase the store ships:
 
 - **Migrate**: a one-shot `scripts/migrate_samples_to_store.py` reads each
   `pet_factory/animal_catalog/<animal>/samples/<key>.{zip,png}` and inserts a
-  **published** `store_pets` row — a shipped sample is already-live,
-  guard-tested public content, and migrating it unpublished would open a
+  **`shelf`** `store_pets` row — a shipped sample is already-live,
+  guard-tested public content, and migrating it off-shelf would open a
   window where the shop replaces the sample grid with an empty shelf. The
   shipped `.png` becomes `preview_png` (no PIL in the script), the sample key
   title-cased becomes the name, and the description starts as a one-line
@@ -641,7 +766,7 @@ the donor's house is full. What is left is a transfer and a thank-you.
 
 And one gate on the artifact: the bundle must be **sellable** (§5.3, the
 validator's third caller). Under "donation is final" this matters more than it
-did under review — an unsellable bundle would be a permanent, unpublishable row
+did under review — an unsellable bundle would be a permanent, unshelvable row
 the admin must clean up, paid for with a real social point. Refusing at the door
 is the honest answer: 422 with the reason, and she keeps her pet.
 
@@ -658,8 +783,9 @@ a daily donation cap at the door, not a review queue.
 Two writes and a delete, in one place:
 
 1. **The pet becomes inventory immediately** — an `insert_store_pet` row with
-   `published=0`. It is a store pet from that moment, indistinguishable at
-   runtime from one an admin published from her own house (§1.2). `animal` is
+   `status='intake'` (§1.4) — the same inbox an admin's own freshly stocked
+   pet lands in. It is a store pet from that moment, indistinguishable at
+   runtime from one she stocked herself (§1.2). `animal` is
    seeded by `_seed_animal(breed_id)`, exactly as publish-from-pet does;
    `display_name` carries over from the pet; `description` and `tags` start
    **empty** — the AI draft stays admin-triggered and metered (§4), so a
@@ -718,7 +844,7 @@ Order:
 4. `read_pet_ownership` category must be `factory` → 422 with the reason.
 5. Portrait via the admin's own `_portrait_from_bundle`, then
    `sellability_errors` → 422 if it could never be sold (§10.1).
-6. `insert_store_pet(..., published=False)`.
+6. `insert_store_pet(..., status='intake')`.
 7. `insert_donation(..., reward_state='owed')`.
 8. `delete_pet` (scoped) + drop the in-memory `JOBS` entry, as `delete_pet`'s
    route wrapper does.
@@ -732,14 +858,14 @@ social point is on its way or already there. It quotes no balance and no total
 
 ### §10.4 The admin's role — the Phase 1 surface, unchanged
 
-There is no approve and no reject. A donated pet is simply an **unpublished
-shelf row**, and every tool it needs already shipped in Phase 1:
+There is no approve and no reject. A donated pet is simply a store pet in
+**`intake`** (§1.4), and every tool it needs already shipped in Phase 1:
 
-- It appears in `GET /api/admin/store` (which already returns published and
-  unpublished rows) in the existing inventory table.
+- It appears in `GET /api/admin/store` (which returns every state) in the
+  existing inventory table.
 - The admin edits name, description, tags and animal with the existing
   `PUT /api/admin/store/{id}`, drafts listing text with the existing
-  ✨ ai-tag door (unpublished rows only — which every donation is), and publishes
+  ✨ ai-tag door (off-shelf rows only — which every donation is), and shelves it
   with the same call. **Publishing still runs the sellability validator**, so
   the shelf gate is unchanged.
 - If she does not want it, the existing `DELETE /api/admin/store/{id}` removes
@@ -749,7 +875,7 @@ shelf row**, and every tool it needs already shipped in Phase 1:
 join a donation row show "donated by *<user>*". This is a view-layer join, never
 a column on `store_pets` and never a branch in the engine (§1.2). It is what
 lets an admin triage new arrivals without a queue: sort the inventory table by
-newest, and the unpublished donated rows are the inbox.
+newest, and the `intake` rows are the inbox — which is what that state is for.
 
 So Phase 2's admin work is **one badge and one sort**, not a review workflow.
 
@@ -766,10 +892,11 @@ Two honest consequences, recorded rather than buried:
   see the bundle in the store and could re-publish it, but there is no
   "give it back" path, and building one would resurrect the whole returns
   problem. The mitigation is the confirm dialog, not a mechanism.
-- **The store accumulates unpublished rows an admin may never want.** That is
-  the charity-shop bargain: the shop takes what it is given and decides later.
-  `DELETE` is the disposal, and §10.1's tripwire covers the day it stops being
-  cheap.
+- **The store accumulates rows an admin may never want.** That is the
+  charity-shop bargain: the shop takes what it is given and decides later.
+  `archived` is the disposal (§1.4) — it keeps the bytes and the reason, and it
+  is reversible, so hard `DELETE` is reserved for genuine junk. §10.1's
+  tripwire covers the day even archiving stops being cheap.
 
 *(Rev.6 specified the opposite — a review queue with approve/reject and a
 return-as-a-kept-pet path. The owner replaced it with this model on 2026-07-31;
@@ -1042,10 +1169,10 @@ host a workflow.
   (`donatable`), computed the way `in_datsme` / `claimable` already are — a
   projection, never a visibility rule the client is trusted to enforce.
 - **House-full line** gains ", or donate one".
-- **Admin**: no new section. Donations land as unpublished rows in the shelf
+- **Admin**: no new section. Donations land as `intake` rows in the inventory
   table that already exists (§10.4); the only change is the "donated by" badge
-  and defaulting that table's sort to newest-first, so new arrivals surface
-  without a queue.
+  — the status column and the newest-first sort are Rev.9 Phase 1 work, so by
+  the time donations ship the inbox is already there.
 - **`api.ts`** gains `donatePet` and `listMyDonations` in the one adapter. No
   admin donation calls exist, because there are no admin donation routes.
 
@@ -1104,7 +1231,7 @@ host a workflow.
 - Frontend: `tsc --noEmit` + vitest; the Donate button renders only for
   `donatable` rows, and its confirm copy names the donation as permanent.
 - E2E: extend `scripts/e2e_adopt_store_pet.sh`'s shape with a donation pass —
-  donate → verify the pet left the house and arrived unpublished on the shelf →
+  donate → verify the pet left the house and arrived in `intake` →
   verify the host ledger shows exactly one social award → publish it → adopt it
   back as a different user, which proves the donated bundle survives the whole
   lane intact.
@@ -1129,7 +1256,7 @@ at the donor's click, so door and delivery ship together.)*
 - **No take-backs.** Donation is final (§10.5) — no return, no appeal, no
   admin "give it back" path. Building one resurrects the whole returns problem
   the model was chosen to delete.
-- **No review queue.** A donated pet is an unpublished shelf row and the Phase 1
+- **No review queue.** A donated pet is an `intake` row and the Phase 1
   admin is the whole toolset (§10.4). If triage ever needs more than a badge and
   a sort, that is a store-admin change, not a donation lifecycle.
 - **No AI draft on donation.** Listing text stays admin-triggered and metered
@@ -1170,7 +1297,7 @@ at the donor's click, so door and delivery ship together.)*
 
 New tests, same culture (shared validators, floor tests, scoping):
 
-- `webui/tests/test_store.py` — listing shows published only; unpublished id
+- `webui/tests/test_store.py` — listing shows `shelf` rows only; an off-shelf id
   404s on preview *and* adopt; adopt copies into the caller's house with
   `source_store_pet_id` set and `public` stamp; house-full 409s before
   insert; entitlement 403 when `can_adopt_samples` false (the §9 fix, proven
@@ -1179,8 +1306,16 @@ New tests, same culture (shared validators, floor tests, scoping):
   publish-from-pet derives mechanical facts that match the bundle; publish
   refuses an unsellable bundle (shared validator); **publish-from-pet never
   invokes the AI** (§4 — the guard against the auto-draft coming back); ai-tag
-  refuses on a published row.
-- **Floor test**: at least one *published* store pet exists after the §8
+  refuses on a shelved row.
+- `webui/tests/test_store_status.py` (Rev.9) — a shopper sees `shelf` rows and
+  only those: `intake`, `backroom` and `archived` are absent from the listing
+  and 404 on BOTH preview and adopt (invisible, not merely unlisted). Every
+  transition is allowed except one: moving to `shelf` runs the sellability
+  validator and refuses a broken bundle, while `backroom` and `archived`
+  accept it — you may keep something you cannot sell. `archived` is reversible.
+  The migration backfills `shelf` from `published=1` and `intake` from `0`, and
+  `published` is gone afterwards (no dual source of truth).
+- **Floor test**: at least one store pet is on the **shelf** after the §8
   migration script runs against a fixture — the store can't silently launch
   empty.
 - **Export pricing test** (`webui/tests`): a pet with `source_store_pet_id`
@@ -1203,6 +1338,12 @@ New tests, same culture (shared validators, floor tests, scoping):
 | 1 | the store | `store_pets` + `pet_store.py` + `store_admin.py` + AI purpose + shop page + admin page + §7 host pricing + §8 sample retirement + §9 enforcement + §12 tests |
 | 2 | donations | **specified in §10 (Rev.6); awaiting owner sign-off.** Ships in four steps (§10.12): host registry+table+knobs → donate door + queue + review → reward delivery → the owner raises the reward knob off 0 |
 
+**Rev.9's status migration ships as its own small deploy**, after Phase 1 and
+before Phase 2: it is a schema change to a live table in three environments
+(§1.4), it needs no host change, and Phase 2 depends on `intake` existing. Run
+it staging-first like everything else, and verify the shelf still serves its
+one pet afterwards — C5 is exactly that check.
+
 Phase 1 is one coherent release with a fixed internal order: **the host
 deploys §7.3 first.** A host that does not yet know `store_flat` would quote
 store pets per-pose (the quote binds, so no silent overcharge — but the wrong
@@ -1221,6 +1362,9 @@ sample grid it replaced.*
 
 Phase 1 is **code-complete in both repos and deployed nowhere.** Read this section
 rather than the prose above when the question is "what is done".
+
+Rev.9's status lifecycle (§1.4) and all of §10 are specified and **not built** —
+see §14.3.
 
 ### §14.1 Built and green
 
@@ -1267,9 +1411,16 @@ that called it. Fixed; the ordering rule is now written down.
    flow is live in both environments.
 3. ~~**Delete the sample content files.**~~ Done — §14.4 (rides the next deploy).
 4. ~~**The §12 E2E store pass.**~~ Done — dev stack and staging, §14.4.
-5. **§10 donations** — unstarted by design. The revision it was waiting on is
-   written (Rev.6): §10 is now build-ready and needs the owner's sign-off, not
-   more design. Nothing about it is coded in either repo.
+5. **§1.4's shelf lifecycle (Rev.9)** — specified, NOT built. This one changes
+   a live Phase 1 table (`store_pets.published` → `status`), so it is the next
+   thing to build and it ships on its own (§13), ahead of Phase 2, which
+   assumes `intake` exists.
+6. **§10 donations** — unstarted by design. The revision it was waiting on is
+   written (Rev.6, reshaped by Rev.7 and Rev.8): §10 is build-ready and needs
+   the owner's sign-off, not more design. Nothing about it is coded in either
+   repo.
+7. **The §1.5 gaps** — no adoption ledger, no view counting. Deliberate, with a
+   named tripwire; do not build either on speculation.
 
 ### §14.4 Deployed (Rev.5, 2026-07-31)
 
