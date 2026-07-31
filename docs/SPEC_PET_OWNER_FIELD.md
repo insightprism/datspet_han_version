@@ -7,10 +7,28 @@ specified and unbuilt.** Three `owner_*` fields in
 transfer.** One field carries the owner, and it is the DatsMe **slug** (or group tag) — the thing a
 human can look up.
 
-**Phases 1–3 are BUILT and deployed to staging**, verified end to end in a real browser: a group
-purchase by `wu.1` licensed one pet to three members. DatsPet `3afc2849` (584 pass); DatsMe
-`b518a5b9` (52/52). The ingest gates run **observe-first** (`PET_OWNER_ENFORCEMENT` unset);
-production is untouched on both sides.
+**All four phases are BUILT and DEPLOYED TO PRODUCTION** (2026-07-31). DatsPet prod `3afc2849`
+(`verify_deployment.sh` 14/14); DatsMe prod `4bbe812c` (64/64 on the prod interpreter).
+**Staging runs `PET_OWNER_ENFORCEMENT=enforce`; production runs observe** — the gates log and admit
+there until prod's own refusal log is read (§9.2). Production's log was empty at deploy time.
+
+Acceptance, driven by the owner through the real UI on staging under `enforce` — one pet, one sprite
+(`e0ded567943e21f6`), the whole lifecycle:
+
+| | `owner_name` | `owner_transferred_at` |
+|---|---|---|
+| wu.1 buys it | `wu.1` | `00:20:25.075845Z` |
+| gifted to sara.1 | `sara.1` | `00:22:19.456948Z` |
+
+and the log, symmetric in both directions:
+
+```
+door=user_upload mode=enforce reason=not_the_owner name='wu.1'   user=sara.1
+door=user_upload mode=enforce reason=not_the_owner name='sara.1' user=wu.1
+```
+
+sara.1 was refused wu.1's pet; the gift moved ownership; wu.1 was then refused the same bundle. The
+block reversed direction the moment ownership did, and sara.1's delete-then-re-upload succeeded.
 
 **For the two DatsMe use cases — purchase and gift — the answer to "what does DatsMe need to build?"
 is *nothing, it is done*.** §10.1 maps each step of both flows to where it already lives, including
