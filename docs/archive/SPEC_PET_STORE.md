@@ -1,18 +1,44 @@
 # SPEC_PET_STORE — The Pet Store: a database-backed shop of ready-made pets
 
-**Status: Rev.13 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASES 1a, 1b AND 2
-BUILT AND DEPLOYED NOWHERE.** There is no Phase 3 — §13's table is the whole
-plan, and §14.5 is the build ledger for what has not shipped. Phase 1 deployed host-first (§13) to staging and then production
-the same day, C1-verified 14/14 on both tiers, with the §12 store E2E passing on
-staging's real infrastructure (flat 50 quoted + charged; the pose formula would
-have said 110). §14 is the as-built ledger and the only place to read for "what
-is done"; §14.4 records the deploys. **§10 is now a build-ready specification
-rather than a sketch** — it needs owner sign-off before code, and §10.0 records
-the constraints that moved the design.
+> **CLOSED & ARCHIVED — 2026-07-31. Executed to completion.** Every phase this
+> spec defines — 1 (the store), 1a (the `store_sales` ledger + notification
+> outbox), 1b (the four-state shelf lifecycle), 2 (donations + the
+> `user.social_award` loop) — plus the post-launch work of §14.7 is **built and
+> live in production on both sides**. DatsPet prod `b66837ae`
+> (`verify_deployment.sh` **14/14**), host `datspet` partner at tier `official`
+> with `social.award` `required=true`. Staging is level at the same commit.
+> **There was never a Phase 3.**
+>
+> **Open at close-out — none of it is store code:**
+>
+> 1. **Stock the shelf.** Production carries one migrated sample. Count,
+>    captions and the knob values are the owner's calls; the §5 flow is live.
+> 2. **A content defect, not a store defect (§14.7).** `limbless_serpentine`
+>    animates nothing — measured cobra walk 0.35 / swim 0.19 mean frame delta,
+>    against 4–12 for locomotion on avian/quadruped/primate. ▶ Animate (§6.4)
+>    now makes that visible to shoppers. The fix is a serpentine pose clause
+>    (pipeline work); the cheap store-side guard is a static-pose check beside
+>    `store_validation`. Neither is built. Rest poses (idle/sleep/sit) are
+>    near-frozen on every body type — unbuilt, not broken.
+> 3. **The deliberately-not-done lists stand** (§11, §10.13, §1.5.4). Each has
+>    a named tripwire; none is a phase.
+>
+> **Exception to "do not read": this document is still the authority** for the
+> shelf lifecycle (§1.4), what identifies a pet (§5.4), the sellability
+> contract (§5.3), the admin surface's row-vs-dialog split (§6.2c) and the
+> donation semantics (§10) — code cites those sections by number. Guarded by
+> `webui/tests/test_store*.py` and `test_donations.py`.
+>
+> **Two decisions recorded so they never look accidental:**
+> `GET /api/store/{id}/sheet.png` publishes the full sprite sheet (§6.4), and
+> the bundle-uniqueness invariant is enforced at the doors rather than as a
+> `UNIQUE` index (§5.4).
 
-**Everything this spec defines is now LIVE IN PRODUCTION** — Phase 1 earlier,
-and 1a/1b/2 on 2026-07-31 (§14.6). §1–§13 describe the design in its finished state; §14 is the ledger
-of what actually exists.
+**Status: Rev.15 (2026-07-31) — CLOSED & ARCHIVED; everything built and in
+production (see the banner).** §1–§13 describe the design in its finished
+state; §14 is the ledger of what actually exists, and §14.7 records the eleven
+post-launch commits that came from the owner *using* the store rather than from
+any test or review.
 
 Supersedes the file-based samples surface of `SPEC_DATSPET_CATALOG_PURCHASE`
 (archived, executed 2026-07-30) — see §8 for exactly what it absorbs and retires.
