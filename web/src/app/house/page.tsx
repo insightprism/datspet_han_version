@@ -26,6 +26,19 @@ import ConfirmModal from "@/components/ConfirmModal";
 // mount a desktop-sized page on a phone."
 const MOBILE_PAGE_CEILING = 6;
 
+// The house's ownership split: a pet is either already in the caller's DatsMe
+// house (`in_datsme`, stamped by the host's post-import ack) or not yet adopted.
+// "All" stays first and default so the wandering stage keeps showing everything;
+// the tabs are a FILTER over the one list, not separate fetches. The row only
+// renders once at least one pet is adopted — a house with nothing adopted has
+// nothing to differentiate, and a standalone user should not see DatsMe tabs.
+type HouseTab = "all" | "inDatsme" | "notInDatsme";
+const HOUSE_TABS: { key: HouseTab; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "inDatsme", label: "✓ In DatsMe" },
+  { key: "notInDatsme", label: "Not adopted yet" },
+];
+
 /**
  * The Pet House — the pets you've made, wandering the page.
  *
@@ -54,6 +67,7 @@ export default function HousePage() {
   const [error, setError] = useState("");
   const [petToRemove, setPetToRemove] = useState<PetSummary | null>(null);
   const [page, setPage] = useState(0);
+  const [tab, setTab] = useState<HouseTab>("all");
   const [isNarrow, setIsNarrow] = useState(false);
 
   const loadHouse = useCallback(() => {
@@ -106,14 +120,32 @@ export default function HousePage() {
       ? Math.min(house?.page_size ?? 10, MOBILE_PAGE_CEILING)
       : house?.page_size ?? 10,
   );
+  // Capacity ("N / max pets") always counts the WHOLE house — the tab filter
+  // must never make the house look emptier than the cap sees it.
   const total = pets?.length ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / pageSize));
-  // Clamp rather than store-and-sync: a removal can shrink the list under the
-  // current page, so the page shown is always derived, never stale.
+  const inDatsmeCount = useMemo(
+    () => (pets ?? []).filter((p) => p.in_datsme).length,
+    [pets],
+  );
+  const showTabs = inDatsmeCount > 0;
+  // If a reload empties the adopted set while a filter tab is active, fall back
+  // to "all" by derivation — never leave the user staring at a filter for a
+  // distinction that no longer exists.
+  const activeTab: HouseTab = showTabs ? tab : "all";
+  const tabPets = useMemo(() => {
+    const all = pets ?? [];
+    if (activeTab === "all") return all;
+    return all.filter((p) => (activeTab === "inDatsme" ? p.in_datsme : !p.in_datsme));
+  }, [pets, activeTab]);
+
+  const pageCount = Math.max(1, Math.ceil(tabPets.length / pageSize));
+  // Clamp rather than store-and-sync: a removal (or a tab switch to a shorter
+  // list) can shrink the list under the current page, so the page shown is
+  // always derived, never stale.
   const safePage = Math.min(page, pageCount - 1);
   const pagedPets = useMemo(
-    () => (pets ?? []).slice(safePage * pageSize, safePage * pageSize + pageSize),
-    [pets, safePage, pageSize],
+    () => tabPets.slice(safePage * pageSize, safePage * pageSize + pageSize),
+    [tabPets, safePage, pageSize],
   );
 
   function toggle(petId: string) {
@@ -260,6 +292,38 @@ export default function HousePage() {
             </span>
           </div>
 
+          {showTabs && (
+            <div className="mb-3 flex flex-wrap gap-2">
+              {HOUSE_TABS.map((t) => {
+                const count =
+                  t.key === "all"
+                    ? total
+                    : t.key === "inDatsme"
+                      ? inDatsmeCount
+                      : total - inDatsmeCount;
+                const active = activeTab === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => {
+                      setTab(t.key);
+                      setPage(0);
+                    }}
+                    className="rounded-lg border px-3 py-1.5 text-xs font-semibold transition hover:opacity-85"
+                    style={
+                      active
+                        ? { background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }
+                        : { color: "var(--muted)", borderColor: "var(--line)" }
+                    }
+                  >
+                    {t.label} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
             {pagedPets.map((p) => (
               <div
@@ -280,9 +344,7 @@ export default function HousePage() {
                       onChange={() => toggle(p.id)}
                       style={{ accentColor: "var(--green)" }}
                     />
-                    {/* in_datsme is informational, never a gate: re-importing is
-                        free and updates the pet in place. */}
-                    {p.in_datsme ? "✓ In DatsMe" : "Select"}
+                    Select
                   </label>
                 )}
                 <div className="mx-auto w-fit">
@@ -294,6 +356,18 @@ export default function HousePage() {
                 <div className="mono mt-0.5 truncate text-[11px]" style={{ color: "var(--faint)" }}>
                   {p.breed_id}
                 </div>
+                {/* in_datsme is informational, never a gate: re-importing is free
+                    and updates the pet in place — so the badge marks the state
+                    without hiding the Select box. Shown even outside a DatsMe
+                    launch: adoption survives the session that did it. */}
+                {p.in_datsme && (
+                  <div
+                    className="mono mt-1 inline-block rounded-md border px-2 py-0.5 text-[10px] font-semibold"
+                    style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}
+                  >
+                    ✓ In DatsMe
+                  </div>
+                )}
                 {/* NO "🎨 Redesign" button. It linked to /design?base=<id> and had never
                     worked in any revision: the landing never read ?base, and after the
                     redesign nothing reads it at all. Rather than ship a third revision of
