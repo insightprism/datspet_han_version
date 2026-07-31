@@ -1120,6 +1120,47 @@ On refusal in enforce mode the **owner** gets an `ownership_block` object on the
 payload shape (`reason`, `owner_category`, `owner_name`, `message`); a **visitor** gets the plain
 `{"pet": null}` the endpoint already returns for a visibility denial, with no ownership detail.
 
-**The frontend does not consume `ownership_block` yet.** The server-side gate is complete and
-`PetOverlay` simply renders no pet, which is the correct fallback — but the owner is not yet *told*
-why. That is the remaining piece of §10.4, and it is a UI change only.
+**The owner is told (built).** `useUserActivePet` carries `ownership_block` through and `PetOverlay`
+renders a notice for the owner instead of silently nothing. Rendered *before* the `config.enabled`
+gate, because the explanation is owed whether or not the overlay is configured.
+
+### 10.9 Leaving a group — the case that actually happens
+
+Nobody can *acquire* a pet they are not entitled to: upload refuses a bundle stamped to someone
+else, and checkout and gift both **stamp** the acquirer, so their result always matches. The render
+gate therefore exists for ownership that changed **after** a legitimate acquisition. Three real
+paths, none of them an attack:
+
+1. **A member leaves, or is removed from, the group** their pet is licensed to. The common one.
+2. **The group is deleted** → `group_not_found`.
+3. **A stale gifter copy.** A gift transfers *with removal*, but the gifter's local delete is
+   best-effort (`pet_gift_accept_fail class=gifter_delete_fail` is logged and tolerated, with a
+   reconciliation sweep behind it) while the accept has already stamped the recipient. Between the
+   failed delete and the sweep, the render gate is the only thing stopping a pet you gave away from
+   still animating on your site.
+
+**A message alone was not enough for case 1.** `get_active_pet` returns the single `is_active` row
+and the gate returns no pet — **there is no fallthrough**. So if the blocked pet is the active one,
+the profile goes blank even when the owner has a house full of working pets, and a visitor sees an
+empty profile with nothing to indicate a problem.
+
+**Handled at the membership event, not in the gate.** Leaving is a discrete act; the gate runs on
+every page view and cannot write or notify without doing it repeatedly. `_retire_group_pet`
+(`api/templates/group/routes.py`) runs from **both** `leave_group` and `remove_member`:
+deactivate the affected pet, promote the next by `slot_index`, notify once.
+
+- `pet_service.activate_next_available(user_db, exclude_pet_id=…)` — **extracted** from
+  `delete_pet`, which already had this exact logic. The `exclude` argument is the difference between
+  the two cases: a deleted pet is gone, a group pet **stays in the house** (the owner may rejoin, or
+  remove it) and must merely not be re-chosen.
+- Best-effort throughout: `on_group_membership_ended` swallows its own failures and the notification
+  is wrapped. The membership change is the user's actual intent and must never fail on a
+  pet-display concern.
+- Only the **active** pet is touched. A non-active group pet simply stops rendering if promoted
+  later, which the gate handles.
+
+**Still open:** the pet list does not badge a blocked pet. It occupies a `max_pets` slot and can
+never render, and the list has no affordance explaining that. `GET /api/pets/me` returns no
+ownership information, so this needs an API shape change as well as UI — the one piece of §10 that
+is more than a display fix. The notification carries the guidance in the meantime ("rejoin the group
+to use it again, or remove it to free the slot").
