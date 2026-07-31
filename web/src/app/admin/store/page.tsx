@@ -5,7 +5,7 @@
  *
  * Same gate posture as the other five (mount-time check; a 401 bounces through
  * the host admin-launch). Three panels: the admin's own house (the
- * publish-from-pet picker — the designer is the authoring tool, §5.1), the
+ * intake-from-pet picker — the designer is the authoring tool, §5.1), the
  * inventory, and a listing dialog.
  *
  * THE SPLIT THIS PAGE IS BUILT ON (§6.2c): a row owns the LIFECYCLE, the
@@ -90,6 +90,7 @@ export default function StoreAdminPage() {
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [suggestion, setSuggestion] = useState<string | null>(null);
   const [toDelete, setToDelete] = useState<StoreAdminListing | null>(null);
+  const [toIntake, setToIntake] = useState<PetSummary | null>(null);
   const [gateState, setGateState] = useState<"checking" | "ok" | "denied">("checking");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
@@ -110,7 +111,7 @@ export default function StoreAdminPage() {
     const r = await storeAdmin.list();
     setInventory(r.pets);
     setGateState("ok");
-    // The picker reads the admin's OWN house — publish-from-pet is scoped to it
+    // The picker reads the admin's OWN house — intake-from-pet is scoped to it
     // server-side (§3.2); this list is simply the same truth, shown.
     listPets().then(setHousePets).catch(() => setHousePets([]));
   }, []);
@@ -183,19 +184,28 @@ export default function StoreAdminPage() {
     }
   }
 
-  async function publishFromPet(pet: PetSummary) {
+  /** Move a house pet into inventory (§5.1). The pet LEAVES the house, so it
+   *  goes through a confirm — the same shape the donate door uses, because it
+   *  is the same transfer. */
+  async function confirmIntake() {
+    const pet = toIntake;
+    if (!pet) return;
     setBusy(true);
     setNotice("");
     try {
-      const r = await storeAdmin.publishFromPet(pet.id);
+      const r = await storeAdmin.intakeFromPet(pet.id);
       // Genuinely new, so it DOES go to the front — the one case where the
       // list reorders, and the row the admin is about to caption.
       setInventory((prev) => [r.listing, ...(prev ?? [])]);
+      // It is no longer in her house; the picker must say so immediately.
+      setHousePets((prev) => prev.filter((p) => p.id !== pet.id));
+      setToIntake(null);
       setEditor(editorFromListing(r.listing));
       setSuggestion(r.display_name_suggestion);
       setNotice(`"${pet.display_name}" is in intake — caption it, then set its state.`);
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : "Could not copy that pet.");
+      setToIntake(null);
+      setNotice(e instanceof Error ? e.message : "Could not move that pet.");
     } finally {
       setBusy(false);
     }
@@ -304,11 +314,13 @@ export default function StoreAdminPage() {
       {/* The stocking door: the admin's own house (§5.1). */}
       <section className="mb-8">
         <h2 className="mb-2 text-sm font-semibold" style={{ color: "var(--heading)" }}>
-          Stock from your house
+          Move a pet into inventory
         </h2>
         <p className="mono mb-3 text-xs" style={labelStyle}>
-          Design a pet the normal way, then copy it into the store. Copying never
-          moves your pet — the store gets its own, and it lands in intake.
+          Design a pet the normal way, then move it into the store. It{" "}
+          <strong style={{ color: "var(--heading)" }}>leaves your house</strong>{" "}
+          and lands in <span style={{ color: "var(--gold)" }}>intake</span> — the
+          store owns it from then on, just like a pet somebody donates.
         </p>
         {housePets.length === 0 ? (
           <p className="mono text-xs" style={{ color: "var(--faint)" }}>
@@ -326,11 +338,11 @@ export default function StoreAdminPage() {
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => publishFromPet(pet)}
+                  onClick={() => setToIntake(pet)}
                   className="mono shrink-0 rounded-lg border px-3 py-1.5 text-xs font-semibold transition hover:opacity-85 disabled:opacity-40"
                   style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}
                 >
-                  Copy to store →
+                  Move to intake →
                 </button>
               </div>
             ))}
@@ -555,6 +567,20 @@ export default function StoreAdminPage() {
           </>
         )}
       </ModalOverlay>
+
+      <ConfirmModal
+        open={toIntake !== null}
+        title={`Move ${toIntake?.display_name ?? "this pet"} into inventory?`}
+        body="It leaves your house and belongs to the store from then on — the same
+              transfer a donation makes. It lands in intake, so nobody can buy it
+              until you put it on the shelf."
+        confirmLabel="Move to intake"
+        tone="primary"
+        pending={busy}
+        pendingLabel="Moving…"
+        onConfirm={confirmIntake}
+        onCancel={() => setToIntake(null)}
+      />
 
       <ConfirmModal
         open={aiTagOpen}

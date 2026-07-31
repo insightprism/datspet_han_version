@@ -2,8 +2,9 @@
 
 What each case protects:
 - the gate — every route 401s without an admin launch;
-- publish-from-pet reads its source through the CALLER'S OWN owner scope
-  (§3.2): someone else's pet 404s exactly like an absent one;
+- intake-from-pet MOVES the source out of the caller's own house (§5.1) and
+  reads it through her OWN owner scope (§3.2): someone else's pet 404s
+  exactly like an absent one;
 - the mechanical facts a publish derives match the bundle, and publish NEVER
   invokes the AI — listing text is written only through the ai-tag door (§4);
 - the publish flip runs the shared sellability validator (§5.3), so the admin
@@ -34,7 +35,7 @@ FAKE_PNG = b"\x89PNG\r\n\x1a\nDATA"
 
 
 def _real_sheet_png() -> bytes:
-    """A genuinely decodable PNG — publish-from-pet CROPS the sheet with PIL,
+    """A genuinely decodable PNG — intake-from-pet CROPS the sheet with PIL,
     so the conftest's fake PNG bytes are not enough here."""
     from PIL import Image
     buf = io.BytesIO()
@@ -45,7 +46,7 @@ def _real_sheet_png() -> bytes:
 def make_croppable_pet(db_mod, pet_id="adminpet0001", external_user_id=ANON_OWNER,
                        breed_id="white_snow_leopard",
                        display_name="White Snow Leopard"):
-    """A house pet whose bundle publish-from-pet can actually open and crop."""
+    """A house pet whose bundle intake-from-pet can actually open and crop."""
     sheet = _real_sheet_png()
     manifest = {"animations": dict(WALK_IDLE), "columns": 8,
                 "frame_width": 256, "frame_height": 256}
@@ -108,7 +109,7 @@ def test_every_route_requires_the_admin_gate(dpp_env):
     assert client.get("/api/admin/store").status_code == 401
     assert client.get("/api/admin/store/x").status_code == 401
     assert client.get("/api/admin/store/x/preview.png").status_code == 401
-    assert client.post("/api/admin/store/publish-from-pet",
+    assert client.post("/api/admin/store/intake-from-pet",
                        json={"pet_id": "x"}).status_code == 401
     assert client.put("/api/admin/store/x", json={
         "display_name": "X", "animal": "cat",
@@ -119,10 +120,10 @@ def test_every_route_requires_the_admin_gate(dpp_env):
     assert client.delete("/api/admin/store/x").status_code == 401
 
 
-# --- publish-from-pet ------------------------------------------------------
-def test_publish_from_pet_copies_and_seeds(admin_client, dpp_env):
+# --- intake-from-pet -------------------------------------------------------
+def test_intake_from_pet_moves_and_seeds(admin_client, dpp_env):
     make_croppable_pet(dpp_env["db"])
-    r = admin_client.post("/api/admin/store/publish-from-pet",
+    r = admin_client.post("/api/admin/store/intake-from-pet",
                           json={"pet_id": "adminpet0001"},
                           cookies=anon_cookies())
     assert r.status_code == 200, r.text
@@ -141,25 +142,25 @@ def test_publish_from_pet_copies_and_seeds(admin_client, dpp_env):
     # No AI key in tests → best-effort draft degrades to empty text (§4).
     assert listing["description"] == ""
 
-    # The house copy remains the admin's — publish COPIES, never moves (§5.1).
-    assert dpp_env["db"].get_pet("adminpet0001") is not None
+    # The pet LEFT her house — stocking is a move, not a copy (§5.1).
+    assert dpp_env["db"].get_pet("adminpet0001") is None
     # And the shopper cannot see it until the admin publishes.
     assert dpp_env["db"].list_store_pets(shelf_only=True) == []
 
 
-def test_publish_from_pet_reads_through_the_callers_own_scope(admin_client,
+def test_intake_from_pet_reads_through_the_callers_own_scope(admin_client,
                                                               dpp_env):
     """§3.2: an admin publishes only a pet she can see in her house. Another
     owner's pet 404s exactly like an absent one — no existence oracle."""
     make_croppable_pet(dpp_env["db"], pet_id="notmine00001",
                        external_user_id=ANON_OWNER_2)
     for pet_id in ("notmine00001", "absent000001"):
-        r = admin_client.post("/api/admin/store/publish-from-pet",
+        r = admin_client.post("/api/admin/store/intake-from-pet",
                               json={"pet_id": pet_id}, cookies=anon_cookies())
         assert r.status_code == 404, (pet_id, r.text)
 
 
-def test_publish_from_pet_NEVER_calls_the_ai(admin_client, dpp_env, monkeypatch):
+def test_intake_from_pet_NEVER_calls_the_ai(admin_client, dpp_env, monkeypatch):
     """§4 — stocking never generates listing text. The AI is an explicit
     invocation (the ai-tag door), never a side effect: an admin who stocks ten
     pets spends no tokens and reads no prose she did not ask for, and a model
@@ -169,12 +170,12 @@ def test_publish_from_pet_NEVER_calls_the_ai(admin_client, dpp_env, monkeypatch)
     sa = admin_client._store_admin
 
     def _boom(*a, **kw):                      # noqa: ANN001 - test double
-        raise AssertionError("publish-from-pet must not invoke the AI")
+        raise AssertionError("intake-from-pet must not invoke the AI")
 
     monkeypatch.setattr(sa.ai_engine, "is_available", lambda: True)
     monkeypatch.setattr(sa.ai_engine, "call_purpose", _boom)
 
-    r = admin_client.post("/api/admin/store/publish-from-pet",
+    r = admin_client.post("/api/admin/store/intake-from-pet",
                           json={"pet_id": "adminpet0001"},
                           cookies=anon_cookies())
     body = r.json()
@@ -430,3 +431,50 @@ def test_editing_a_SHELVED_listing_re_runs_the_sellability_gate(admin_client,
     assert r.status_code == 422, r.text
     assert "display_name" in json.dumps(r.json())
     assert db.get_store_pet("storerow0001")["display_name"] == "Shelf Cat"
+
+
+# --- stocking is a MOVE (§5.1) ---------------------------------------------
+def test_stocking_frees_the_house_slot_and_leaves_no_duplicate(admin_client,
+                                                               dpp_env):
+    """The whole point of the 2026-07-31 change. A house copy left behind
+    cannot be sold, holds a slot, doubles the bundle on disk, and — because the
+    picker cannot see what is already stocked — invites stocking the same pet
+    twice, which is how two Vampires reached staging inventory."""
+    db = dpp_env["db"]
+    make_croppable_pet(db)
+    before = len(db.list_saved_pets(external_user_id=ANON_OWNER))
+
+    r = admin_client.post("/api/admin/store/intake-from-pet",
+                          json={"pet_id": "adminpet0001"},
+                          cookies=anon_cookies())
+    assert r.status_code == 200, r.text
+
+    assert db.get_pet("adminpet0001") is None
+    assert len(db.list_saved_pets(external_user_id=ANON_OWNER)) == before - 1
+    assert len(db.list_store_pets(shelf_only=False)) == 1
+
+    # Same pet again: it is gone, so there is nothing to double up.
+    again = admin_client.post("/api/admin/store/intake-from-pet",
+                              json={"pet_id": "adminpet0001"},
+                              cookies=anon_cookies())
+    assert again.status_code == 404
+    assert len(db.list_store_pets(shelf_only=False)) == 1
+
+
+def test_a_lost_delete_race_undoes_the_store_row(admin_client, dpp_env,
+                                                 monkeypatch):
+    """Store row FIRST, house row second — a crash between them leaves a
+    duplicate, which is recoverable, rather than a vaporised pet, which is
+    not. When the delete reports the pet already gone, the listing we just
+    wrote is withdrawn rather than left as the second listing this change
+    exists to prevent (the donate door's rule, §10.5)."""
+    db = dpp_env["db"]
+    make_croppable_pet(db)
+    sa = admin_client._store_admin
+    monkeypatch.setattr(sa.db, "delete_pet", lambda *a, **kw: False)
+
+    r = admin_client.post("/api/admin/store/intake-from-pet",
+                          json={"pet_id": "adminpet0001"},
+                          cookies=anon_cookies())
+    assert r.status_code == 409, r.text
+    assert db.list_store_pets(shelf_only=False) == []

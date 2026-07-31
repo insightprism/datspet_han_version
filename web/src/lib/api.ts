@@ -812,7 +812,7 @@ export const settingsAdmin = {
 // ── Store admin (SPEC_PET_STORE §3.2) — the sixth admin surface ──────────────
 //
 // DB-backed and runtime-writable everywhere (no writability gate): stocking
-// prod must not require a deploy. The stocking door is publishFromPet — the
+// prod must not require a deploy. The stocking door is intakeFromPet — the
 // admin designs a pet in the NORMAL designer, then copies it onto the shelf.
 
 /** The shelf lifecycle (SPEC_PET_STORE §1.4). Only `shelf` is visible to
@@ -874,8 +874,11 @@ export const storeAdmin = {
     `${API_URL}/api/admin/store/${encodeURIComponent(id)}/preview.png`,
   get: (id: string): Promise<StoreAdminListing> =>
     storeFetch(`/${encodeURIComponent(id)}`),
-  publishFromPet: (petId: string): Promise<StoreDraftResult> =>
-    storeFetch("/publish-from-pet", {
+  /** MOVE a house pet into store inventory (§5.1) — the pet leaves the house,
+   *  exactly as a donation does. Not a copy: a house duplicate cannot be sold,
+   *  holds a slot, and invites stocking the same pet twice. */
+  intakeFromPet: (petId: string): Promise<StoreDraftResult> =>
+    storeFetch("/intake-from-pet", {
       method: "POST", body: JSON.stringify({ pet_id: petId }),
     }),
   /** The AUTHORED fields only. Shelf state moves through `setStatus`. */

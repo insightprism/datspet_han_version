@@ -5,14 +5,15 @@ require_admin_launch, audited via admin_common. DB-backed with NO writability
 gate — the settings_admin posture, and the store's whole reason to exist:
 stocking prod must not require a deploy (§0 / §8).
 
-The stocking door is publish-from-pet (§5.1): the admin designs a pet through
-the NORMAL designer, then this copies her house pet's bundle into an
-`intake` store row, extracts the portrait and seeds the facts. The listing
-text starts EMPTY — she writes it, or taps the sparkle to have the AI write it
-(§4, the ai-tag door). The AI never runs as a side effect of stocking. She then
-moves it to `shelf`, which the shared sellability validator gates (§5.3) so
-the admin can never shelve a listing the build would reject. Every other
-transition is free (§1.4).
+The stocking door is intake-from-pet (§5.1): the admin designs a pet through
+the NORMAL designer, then this MOVES it out of her house and into an `intake`
+store row, extracts the portrait and seeds the facts. A move, not a copy — the
+same transfer a donation performs (§10.5), so the store has exactly one way to
+acquire a pet. The listing text starts EMPTY — she writes it, or taps the
+sparkle to have the AI write it (§4, the ai-tag door). The AI never runs as a
+side effect of stocking. She then moves it to `shelf`, which the shared
+sellability validator gates (§5.3) so the admin can never shelve a listing the
+build would reject. Every other transition is free (§1.4).
 """
 from __future__ import annotations
 
@@ -172,7 +173,7 @@ def _store_row_or_404(store_id: str):
 # ---------------------------------------------------------------------------
 # Request bodies
 # ---------------------------------------------------------------------------
-class PublishFromPetBody(BaseModel):
+class IntakeFromPetBody(BaseModel):
     pet_id: str
 
 
@@ -249,12 +250,36 @@ def get_listing(store_id: str):
 # ---------------------------------------------------------------------------
 # Writes (no writability gate — DB-backed, runtime-writable on prod by design)
 # ---------------------------------------------------------------------------
-@router.post("/publish-from-pet")
-def publish_from_pet(body: PublishFromPetBody, request: Request):
-    """The stocking door (§5.1). COPIES the admin's own house pet into a new
-    UNPUBLISHED store row — her house copy remains hers, the two lifecycles
-    stay separate. The source pet is read through the caller's OWN owner scope
-    (§3.2): an arbitrary pet id that isn't hers 404s exactly like an absent one.
+def _drop_job_entry(pet_id: str) -> None:
+    """Mirror app.py's delete route. Imported at call time because `app`
+    imports THIS module to mount its router — a module-level import would be
+    a cycle. (Same helper, same reason, as donations.py.)"""
+    try:
+        import app as app_mod
+        with app_mod.JOBS_LOCK:
+            app_mod.JOBS.pop(pet_id, None)
+    except Exception:                            # noqa: BLE001
+        pass
+
+
+@router.post("/intake-from-pet")
+def intake_from_pet(body: IntakeFromPetBody, request: Request):
+    """The stocking door (§5.1). MOVES one of the admin's own house pets into
+    store inventory: the store row is created and the house row is deleted.
+
+    It copied until 2026-07-31, and the copy had no value to anyone. The house
+    duplicate could not be sold, occupied a slot, doubled ~3 MB of bundle, and
+    — because the picker gives no sign of what is already stocked — invited
+    stocking the same pet twice, which is how two Vampires and two Blue
+    Butterflies appeared in staging inventory within a single session.
+
+    This is deliberately the SAME transfer a donation performs (§10.5), so the
+    store has one way to acquire a pet rather than two: same order, same race
+    handling, differing only in that no donation ledger row is written — an
+    admin stocking her own pet is not a gift and earns nothing.
+
+    The source is read through the caller's OWN owner scope (§3.2): an
+    arbitrary pet id that is not hers 404s exactly like an absent one.
     """
     owner = owner_scope.require_owner(request)
     pet = db.get_pet_for_owner(body.pet_id, external_user_id=owner)
@@ -270,6 +295,11 @@ def publish_from_pet(body: PublishFromPetBody, request: Request):
 
     animal = _seed_animal(pet["breed_id"])
 
+    # Order matters, and it is the donation's order: the store row is written
+    # FIRST, the house row deleted second. A crash between them leaves a
+    # duplicate, which is recoverable, rather than a vaporised pet, which is
+    # not.
+    #
     # §4 — the row arrives with EMPTY listing text. The AI is never run here:
     # it is an explicit invocation (the ai-tag door below), never a side effect
     # of stocking, so no admin is billed attention or tokens for text she did
@@ -283,7 +313,15 @@ def publish_from_pet(body: PublishFromPetBody, request: Request):
         package_json=pet["package_json"], bundle_zip=pet["bundle_zip"],
         status=db.STORE_STATUS_INTAKE,
     )
-    admin_common.audit(AUDIT_TAG, request, "publish-from-pet",
+
+    if not db.delete_pet(body.pet_id, external_user_id=owner):
+        # Lost the race: a concurrent call already moved this pet. Undo ours
+        # rather than leaving the second listing this change exists to prevent.
+        db.delete_store_pet(store_id)
+        raise HTTPException(409, "That pet has already been moved into inventory.")
+    _drop_job_entry(body.pet_id)
+
+    admin_common.audit(AUDIT_TAG, request, "intake-from-pet",
                        f"{body.pet_id} -> store {store_id}")
     return {
         "listing": _admin_view(db.get_store_pet(store_id)),

@@ -26,7 +26,7 @@ already-live sample (no empty-shop window), host-first deploy order, tag
 normalization, and Phase 2 mint hardening on the host side.
 
 **Rev.3 (2026-07-31)** — accepted for implementation. Four readiness
-clarifications, all since verified against the built code (§14): publish-from-pet
+clarifications, all since verified against the built code (§14): intake-from-pet
 reads its source pet through the caller's own owner scope (§3.2); the export seam
 names `export_pets` (§7.2); the physical sample files outlive the §8 code
 retirement by one deploy cycle (the migration script must read them); and
@@ -754,7 +754,7 @@ a deploy.
 | `GET /api/admin/store` | all rows in every state, newest-first so `intake` surfaces without a queue. Built row-by-row through the **same `_admin_view` builder the detail route uses** — the list and the detail are field-for-field identical, and a test asserts it. It served the raw byteless projection until 2026-07-31, which silently dropped `donated_by` and `sellability_errors`: the list is the only surface that renders either, so both were unreachable in production while every gate was green. |
 | `GET /api/admin/store/{id}` | one row, full metadata: the listing shape + `status` + `admin_note` + `first_shelved_at` (the editor gates the animal field on it) + `donated_by` (§10.4) + `sellability_errors` (§5.3) |
 | `GET /api/admin/store/{id}/preview.png` | the portrait **in every shelf state**. The shopper's preview route (§3.1) resolves through the shelf gate and 404s anything off it — correct there and exactly wrong here, since most of this surface is `intake`. Same bytes, same 24 h immutability, but `Cache-Control: private` (`ADMIN_PREVIEW_CACHE_CONTROL`) because it is served from behind the admin gate. Pointing the admin at the shopper's route made every donation a broken image. |
-| `POST /api/admin/store/publish-from-pet` | body `{pet_id}` — **the stocking door**, §5. The source pet is read through the caller's OWN owner scope (the same scoped access keep/delete use): an admin publishes only a pet she can see in her house, never an arbitrary row by id. |
+| `POST /api/admin/store/intake-from-pet` | body `{pet_id}` — **the stocking door**, §5.1. **MOVES** the pet: the `intake` store row is written, then the house row is deleted. The source is read through the caller's OWN owner scope (the same scoped access keep/delete use): an admin stocks only a pet she can see in her house, never an arbitrary row by id. A lost delete race withdraws the store row and 409s. |
 | `PUT /api/admin/store/{id}` | edit the AUTHORED fields: `display_name`, `description`, `tags`, `animal` (only while `first_shelved_at` is NULL — §1.3), `admin_note`. **Carries no `status`.** Tags are normalized on write — lowercased, trimmed, deduplicated, capped by named constants (`STORE_MAX_TAGS = 16`, `STORE_MAX_TAG_LEN = 32`). If the row is *currently* shelved the sellability gate re-runs (§5.3), so an edit can never make a live listing unsellable in place. |
 | `POST /api/admin/store/{id}/status` | **the triage door** — body `{status, admin_note?}` and nothing else. One shelf move, no prior read, so it cannot clobber text someone is editing in another tab. Moving to `shelf` runs the sellability validator (§5.3) and refuses on failure; every other transition is free (§1.4). This is the route a script or an agent drives, and the one behind the per-row control in §6.2c. |
 | `POST /api/admin/store/{id}/ai-tag` | write description + tags with AI (§4) — the ONE generator of listing text, overwriting both, **only if the row is off the shelf** (a live listing is the admin's text, and regenerating it would change what shoppers are reading) |
@@ -842,7 +842,7 @@ existing `ai_usage` ledger. DatsPet charges nothing for it: the host's version
 debits credits, and this one has no credit concept to debit (the host's own
 portability note says credit integration is the optional part).
 
-**Why not draft at publish-from-pet, which is where Rev.1–Rev.8 put it?**
+**Why not draft at intake-from-pet, which is where Rev.1–Rev.8 put it?**
 Because "best-effort at stocking" quietly made three promises it should not: it
 spent tokens on prose nobody had asked for, it made a model outage part of the
 stocking path, and it produced text the admin had to *review to reject* rather
@@ -860,24 +860,43 @@ auto-draft had shipped in Phase 1 and was removed in the same change.)*
    production this runs on the pool like any user's pet. No parallel
    authoring surface, no CLI, no GPU box required.
 2. From the admin store page, she picks that pet from her house and hits
-   **Publish to store** (`POST /api/admin/store/publish-from-pet`). This
-   **copies** the pet's bundle into a new `intake` `store_pets` row
-   (her house copy remains hers), extracts the portrait, derives the
-   mechanical facts, and seeds `display_name` from the house pet's name. The
-   description and tags start **empty**: the AI is never run by stocking (§4).
-   She writes them, or taps ✨ and confirms — and that draft's
-   `display_name_suggestion` is offered beside the name field, never
-   auto-applied.
-3. She edits the name, description, and tags in the admin editor, then flips
-   the status to **`shelf`**. The row appears in the shop on the next listing
+   **Move to intake** (`POST /api/admin/store/intake-from-pet`). This **moves**
+   the pet into a new `intake` `store_pets` row — the house row is deleted —
+   extracts the portrait, derives the mechanical facts, and seeds
+   `display_name` from the house pet's name. The description and tags start
+   **empty**: the AI is never run by stocking (§4). She writes them, or taps ✨
+   and confirms — and that draft's `display_name_suggestion` is offered beside
+   the name field, never auto-applied.
+3. She edits the name, description, and tags in the ⓘ dialog, then sets the
+   row's state to **`shelf`**. The row appears in the shop on the next listing
    fetch.
 
-Copy, not move, at step 2 — the same semantics adoption already has, and it
-keeps the admin's house pet and the store row on their separate lifecycles.
+**Move, not copy, at step 2 — corrected 2026-07-31.** Rev.1–Rev.14 specified a
+copy "so the two lifecycles stay separate", which sounded principled and was
+wrong in practice: the leftover house pet cannot be sold, holds a house slot,
+duplicates ~3 MB of bundle, and — because the picker shows no sign of what is
+already stocked — invites stocking the same pet twice. Within one session of
+real use that produced two Vampires and two Blue Butterflies in staging
+inventory, and the owner's verdict was the right one: *"it should be removed
+from your house stock (like gifting), otherwise you will have two vampires,
+which doesn't have any value."*
+
+The deeper reason it is right: this is **the same transfer a donation performs**
+(§10.5), so the store now has exactly ONE way to acquire a pet rather than two
+that behave differently. `intake-from-pet` follows the donate door's order and
+race handling exactly — store row written FIRST, house row deleted second (a
+crash between them leaves a recoverable duplicate rather than a vaporised pet),
+and a lost delete race withdraws the store row and 409s. It differs in one
+respect only: **no donation ledger row is written**, because an admin stocking
+her own pet is not a gift and earns no social points. That also keeps
+`donated_by` correctly NULL for anything an admin stocked herself (§10.4).
+
+Because it is destructive to the house, the button opens a confirm — the same
+shape the donate door uses, for the same reason.
 
 ### §5.2 Portrait extraction
 
-`publish-from-pet` extracts a portrait from the sprite sheet's idle frame,
+`intake-from-pet` extracts a portrait from the sprite sheet's idle frame,
 using the webui PIL pin (the logic exists in
 `pet_factory/animal_catalog/generate_sample.py:_portrait_from_bundle`; it is
 **moved** — not imported — into the webui boundary as part of §8's
@@ -933,7 +952,7 @@ listing payload itself gets heavy (~200+ rows), filtering moves server-side
 ### §6.2 Admin page
 
 `web/src/app/admin/store/page.tsx`, following the existing admin surfaces:
-inventory table (status visible at a glance, newest first), the publish-from-pet
+inventory table (status visible at a glance, newest first), the intake-from-pet
 picker (reads the admin's own house via the existing `listPets()`), and the
 listing editor (name, description, tags, the four-state status selector and
 `admin_note` of §1.4, and the ✨ that writes description + tags — §4, behind its
@@ -974,7 +993,7 @@ wheel, and this is the one list where a mis-set state puts a pet in front of
 shoppers. The dirty row is outlined in gold, so a triage pass shows at a glance
 what is unsaved. Rows **never reorder on save**: a listing that jumps to the top
 when its state changes moves the next row under the cursor, which is how a pass
-mis-files a pet. Only publish-from-pet prepends, because that row is genuinely
+mis-files a pet. Only intake-from-pet prepends, because that row is genuinely
 new.
 
 **Removed from the row:** the 🎁 donated badge. It cost a permanent column of
@@ -1244,7 +1263,7 @@ Two writes and a delete, in one place:
    `status='intake'` (§1.4) — the same inbox an admin's own freshly stocked
    pet lands in. It is a store pet from that moment, indistinguishable at
    runtime from one she stocked herself (§1.2). `animal` is
-   seeded by `_seed_animal(breed_id)`, exactly as publish-from-pet does;
+   seeded by `_seed_animal(breed_id)`, exactly as intake-from-pet does;
    `display_name` carries over from the pet; `description` and `tags` start
    **empty** — the AI draft stays admin-triggered and metered (§4), so a
    donation never spends AI budget on a shopper's action.
@@ -1910,8 +1929,8 @@ New tests, same culture (shared validators, floor tests, scoping):
   insert; entitlement 403 when `can_adopt_samples` false (the §9 fix, proven
   server-side); adopted copies are invisible to other owners (scoping).
 - `webui/tests/test_store_admin.py` — gate required on every route;
-  publish-from-pet derives mechanical facts that match the bundle; publish
-  refuses an unsellable bundle (shared validator); **publish-from-pet never
+  intake-from-pet derives mechanical facts that match the bundle; publish
+  refuses an unsellable bundle (shared validator); **intake-from-pet never
   invokes the AI** (§4 — the guard against the auto-draft coming back); ai-tag
   refuses on a shelved row.
 - `webui/tests/test_store_sales.py` (§1.5.3) — the ack writes exactly one sale
@@ -1953,7 +1972,7 @@ New tests, same culture (shared validators, floor tests, scoping):
 - Frontend: `tsc --noEmit` + vitest; a small test for the client filter
   function (search/tags/animal) — the one piece of page logic worth pinning.
 - E2E: extend the `scripts/e2e_design_a_pet.sh` pattern with a store pass —
-  publish-from-pet → shop → adopt → hand off → verify the host charged the
+  intake-from-pet → shop → adopt → hand off → verify the host charged the
   flat knob and acked.
 
 ---

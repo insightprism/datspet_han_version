@@ -417,7 +417,7 @@ def get_pet_for_owner(pet_id: str,
                       external_user_id: Optional[str] = None) -> Optional[sqlite3.Row]:
     """One pet row the caller may access — None when absent OR not theirs. The
     read-side companion of the scoped mutations (same _scope_clause), for
-    callers that need the bytes: the store's publish-from-pet reads its source
+    callers that need the bytes: the store's intake-from-pet reads its source
     pet through this so an admin can publish only a pet she can see in her own
     house (SPEC_PET_STORE §3.2), never an arbitrary row by id."""
     clause, params = _scope_clause(external_user_id)
