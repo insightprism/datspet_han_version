@@ -4,8 +4,8 @@ What each case protects:
 - the gate — every route 401s without an admin launch;
 - publish-from-pet reads its source through the CALLER'S OWN owner scope
   (§3.2): someone else's pet 404s exactly like an absent one;
-- the mechanical facts a publish derives match the bundle, and the AI draft is
-  best-effort — no key, no block (§4);
+- the mechanical facts a publish derives match the bundle, and publish NEVER
+  invokes the AI — listing text is written only through the ai-tag door (§4);
 - the publish flip runs the shared sellability validator (§5.3), so the admin
   cannot ship a listing the build would reject;
 - tags are normalized on write, and `animal` is fixed once published (§1.3).
@@ -109,7 +109,7 @@ def test_every_route_requires_the_admin_gate(dpp_env):
     assert client.put("/api/admin/store/x", json={
         "display_name": "X", "animal": "cat", "published": False,
     }).status_code == 401
-    assert client.post("/api/admin/store/x/redraft").status_code == 401
+    assert client.post("/api/admin/store/x/ai-tag").status_code == 401
     assert client.delete("/api/admin/store/x").status_code == 401
 
 
@@ -153,25 +153,30 @@ def test_publish_from_pet_reads_through_the_callers_own_scope(admin_client,
         assert r.status_code == 404, (pet_id, r.text)
 
 
-def test_publish_from_pet_applies_an_available_ai_draft(admin_client, dpp_env,
-                                                        monkeypatch):
+def test_publish_from_pet_NEVER_calls_the_ai(admin_client, dpp_env, monkeypatch):
+    """§4 — stocking never generates listing text. The AI is an explicit
+    invocation (the ai-tag door), never a side effect: an admin who stocks ten
+    pets spends no tokens and reads no prose she did not ask for, and a model
+    outage can never make stocking fail. The row arrives empty and stays empty
+    until she taps the sparkle."""
     make_croppable_pet(dpp_env["db"])
     sa = admin_client._store_admin
+
+    def _boom(*a, **kw):                      # noqa: ANN001 - test double
+        raise AssertionError("publish-from-pet must not invoke the AI")
+
     monkeypatch.setattr(sa.ai_engine, "is_available", lambda: True)
-    monkeypatch.setattr(
-        sa.ai_engine, "call_purpose",
-        lambda key, **kw: ({"description": "A proud snow leopard.",
-                            "tags": [" Fluffy ", "fluffy", "CAT"],
-                            "display_name_suggestion": "Snowy"}, None))
+    monkeypatch.setattr(sa.ai_engine, "call_purpose", _boom)
+
     r = admin_client.post("/api/admin/store/publish-from-pet",
                           json={"pet_id": "adminpet0001"},
                           cookies=anon_cookies())
     body = r.json()
-    assert body["listing"]["description"] == "A proud snow leopard."
-    # Normalized on write: trimmed, lowercased, deduped (§3.2).
-    assert body["listing"]["tags"] == ["fluffy", "cat"]
-    # A suggestion, never auto-applied (§5.1).
-    assert body["display_name_suggestion"] == "Snowy"
+    assert body["listing"]["description"] == ""
+    assert body["listing"]["tags"] == []
+    assert body["display_name_suggestion"] is None
+    # The pet's own name carries over — that is a fact about the bundle, not
+    # generated text.
     assert body["listing"]["display_name"] == "White Snow Leopard"
 
 
@@ -212,15 +217,15 @@ def test_animal_is_fixed_once_published(admin_client, dpp_env):
     assert r.status_code == 409
 
 
-# --- redraft ---------------------------------------------------------------
-def test_redraft_is_refused_on_a_published_row(admin_client, dpp_env):
+# --- ai-tag ---------------------------------------------------------------
+def test_ai_tag_is_refused_on_a_published_row(admin_client, dpp_env):
     make_store_row(dpp_env["db"], published=True)
-    r = admin_client.post("/api/admin/store/storerow0001/redraft",
+    r = admin_client.post("/api/admin/store/storerow0001/ai-tag",
                           cookies=anon_cookies())
     assert r.status_code == 409
 
 
-def test_redraft_overwrites_draft_text_and_surfaces_ai_failures(
+def test_ai_tag_overwrites_draft_text_and_surfaces_ai_failures(
         admin_client, dpp_env, monkeypatch):
     make_store_row(dpp_env["db"], published=False)
     sa = admin_client._store_admin
@@ -229,7 +234,7 @@ def test_redraft_overwrites_draft_text_and_surfaces_ai_failures(
         sa.ai_engine, "call_purpose",
         lambda key, **kw: ({"description": "Fresh words.", "tags": ["cat"],
                             "display_name_suggestion": None}, None))
-    r = admin_client.post("/api/admin/store/storerow0001/redraft",
+    r = admin_client.post("/api/admin/store/storerow0001/ai-tag",
                           cookies=anon_cookies())
     assert r.status_code == 200, r.text
     assert r.json()["listing"]["description"] == "Fresh words."
@@ -238,7 +243,7 @@ def test_redraft_overwrites_draft_text_and_surfaces_ai_failures(
     def _boom(key, **kw):
         raise sa.ai_engine.AIUnavailable("no key")
     monkeypatch.setattr(sa.ai_engine, "call_purpose", _boom)
-    r = admin_client.post("/api/admin/store/storerow0001/redraft",
+    r = admin_client.post("/api/admin/store/storerow0001/ai-tag",
                           cookies=anon_cookies())
     assert r.status_code == 503
 

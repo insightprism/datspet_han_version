@@ -7,10 +7,11 @@ stocking prod must not require a deploy (§0 / §8).
 
 The stocking door is publish-from-pet (§5.1): the admin designs a pet through
 the NORMAL designer, then this copies her house pet's bundle into an
-unpublished store row, extracts the portrait, seeds the facts, and drafts the
-listing text with the AI (best-effort — stocking never blocks on AI, §4).
-She edits, then flips `published`, which the shared sellability validator
-gates (§5.3) so the admin can never ship a listing the build would reject.
+unpublished store row, extracts the portrait and seeds the facts. The listing
+text starts EMPTY — she writes it, or taps the sparkle to have the AI write it
+(§4, the ai-tag door). The AI never runs as a side effect of stocking. She then
+flips `published`, which the shared sellability validator gates (§5.3) so the
+admin can never ship a listing the build would reject.
 """
 from __future__ import annotations
 
@@ -114,7 +115,7 @@ def _draft_listing(preview_png: bytes, animal: str,
                    owner: Optional[str]) -> tuple[str, list[str], Optional[str]]:
     """One AI draft: (description, tags, display_name_suggestion). Raises the
     engine's typed errors — the CALLER decides whether to degrade (publish is
-    best-effort) or surface (redraft is an explicit ask)."""
+    best-effort) or surface (the ai-tag door is an explicit ask)."""
     clause = f" The pet is a {animal}." if animal else ""
     result, _ = ai_engine.call_purpose(
         LISTING_PURPOSE_KEY, image=preview_png, media_type="image/png",
@@ -200,21 +201,15 @@ def publish_from_pet(body: PublishFromPetBody, request: Request):
 
     animal = _seed_animal(pet["breed_id"])
 
-    # §4 — best-effort: the AI drafts text, and its absence never blocks
-    # stocking. The admin writes by hand or hits redraft later.
-    description, tags, suggestion = "", [], None
-    if ai_engine.is_available():
-        try:
-            description, tags, suggestion = _draft_listing(
-                preview_png, animal, owner)
-        except (ai_engine.AIUnavailable, ai_engine.AIError) as e:
-            print(f"[{AUDIT_TAG}] listing draft degraded: {e}", flush=True)
-
+    # §4 — the row arrives with EMPTY listing text. The AI is never run here:
+    # it is an explicit invocation (the ai-tag door below), never a side effect
+    # of stocking, so no admin is billed attention or tokens for text she did
+    # not ask for and a model outage can never make stocking fail.
     store_id = uuid.uuid4().hex[:12]
     db.insert_store_pet(
         store_id=store_id, display_name=pet["display_name"],
-        breed_id=pet["breed_id"], animal=animal, description=description,
-        tags=tags, created_at=time.time(), preview_png=preview_png,
+        breed_id=pet["breed_id"], animal=animal, description="",
+        tags=[], created_at=time.time(), preview_png=preview_png,
         sheet_png=pet["sheet_png"], manifest_json=pet["manifest_json"],
         package_json=pet["package_json"], bundle_zip=pet["bundle_zip"],
         published=False,
@@ -223,8 +218,9 @@ def publish_from_pet(body: PublishFromPetBody, request: Request):
                        f"{body.pet_id} -> store {store_id}")
     return {
         "listing": _admin_view(db.get_store_pet(store_id)),
-        # Shown in the editor as a SUGGESTION, never auto-applied (§5.1).
-        "display_name_suggestion": suggestion,
+        # No text was generated, so there is no name idea to offer. The key
+        # stays in the response shape because the ai-tag door fills it.
+        "display_name_suggestion": None,
     }
 
 
@@ -260,11 +256,21 @@ def update_listing(store_id: str, body: ListingBody, request: Request):
     return {"listing": _admin_view(db.get_store_pet(store_id))}
 
 
-@router.post("/{store_id}/redraft")
-def redraft_listing(store_id: str, request: Request):
-    """Re-run the AI draft, overwriting description/tags — UNPUBLISHED rows
-    only (§3.2): a live listing is the admin's text. Unlike the publish-time
-    draft this is an explicit ask, so AI failures surface instead of degrading.
+@router.post("/{store_id}/ai-tag")
+def ai_tag_listing(store_id: str, request: Request):
+    """Write description + tags with AI — the ONE way listing text is ever
+    generated (§4), and always an explicit ask.
+
+    Modelled on the host's AI-tag door (`POST /api/ai-tag/{kind}/{id}`): one
+    call returns caption AND tags together, it OVERWRITES rather than merging,
+    and because it overwrites, the browser puts a confirm in front of it. The
+    result is persisted here and then re-read into the editor, so the admin
+    edits the AI's text as ordinary text — a draft, not a verdict.
+
+    UNPUBLISHED rows only (§3.2): a live listing is the admin's text, and
+    regenerating it would change what shoppers are reading. Failures surface
+    (503/502) rather than degrading — an explicit ask deserves an explicit
+    answer.
     """
     row = _store_row_or_404(store_id)
     if row["published"]:
@@ -282,7 +288,7 @@ def redraft_listing(store_id: str, request: Request):
     db.update_store_listing(store_id, display_name=row["display_name"],
                             description=description, tags=tags,
                             animal=row["animal"])
-    admin_common.audit(AUDIT_TAG, request, "redraft", store_id)
+    admin_common.audit(AUDIT_TAG, request, "ai-tag", store_id)
     return {
         "listing": _admin_view(db.get_store_pet(store_id)),
         "display_name_suggestion": suggestion,

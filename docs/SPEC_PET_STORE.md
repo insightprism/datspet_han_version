@@ -254,7 +254,7 @@ pattern (`webui/app.py:170-208`):
 | Route | Auth | Returns |
 |---|---|---|
 | `GET /api/store` | none (anonymous browsing, §0.4 of the catalog spec) | `{pets: [Listing]}` — **published rows only**, newest first. `Listing = {id, display_name, animal, breed_id, description, tags, pose_count, poses, preview_url}`. Never bytes, never unpublished rows. |
-| `GET /api/store/{id}/preview.png` | none (an `<img>` has no 401 handler — `owner_scope.py:120-122` precedent) | the `preview_png` blob, long cache headers — safe because a preview is immutable per id (derived once at insert; redraft touches only text). 404 for unknown *or unpublished* ids — unpublished must be invisible, not just unlisted. |
+| `GET /api/store/{id}/preview.png` | none (an `<img>` has no 401 handler — `owner_scope.py:120-122` precedent) | the `preview_png` blob, long cache headers — safe because a preview is immutable per id (derived once at insert; ai-tag touches only text). 404 for unknown *or unpublished* ids — unpublished must be invisible, not just unlisted. |
 | `POST /api/store/{id}/adopt` | `require_owner` | `{pet_id, display_name, breed_id}` |
 
 **Adopt** is the existing adopt-a-sample primitive re-pointed at the DB, and
@@ -282,7 +282,7 @@ a deploy.
 | `GET /api/admin/store/{id}` | one row, full metadata |
 | `POST /api/admin/store/publish-from-pet` | body `{pet_id}` — **the stocking door**, §5. The source pet is read through the caller's OWN owner scope (the same scoped access keep/delete use): an admin publishes only a pet she can see in her house, never an arbitrary row by id. |
 | `PUT /api/admin/store/{id}` | edit `display_name`, `description`, `tags`, `animal` (unpublished rows only, §1.3), `published`. Tags are normalized on write — lowercased, trimmed, deduplicated, capped by named constants (`STORE_MAX_TAGS = 16`, `STORE_MAX_TAG_LEN = 32`). Flipping `published: true` re-runs the sellability validator (§5.3) and refuses on failure — the admin cannot ship a listing the build would reject. |
-| `POST /api/admin/store/{id}/redraft` | re-run the AI listing draft (§4), overwriting description/tags **only if the row is unpublished** — a live listing is the admin's text |
+| `POST /api/admin/store/{id}/ai-tag` | write description + tags with AI (§4) — the ONE generator of listing text, overwriting both, **only if the row is unpublished** (a live listing is the admin's text, and regenerating it would change what shoppers are reading) |
 | `DELETE /api/admin/store/{id}` | remove from inventory. Copies already adopted into houses are unaffected (they are copies). |
 
 ### §3.3 `webui/db.py` additions
@@ -311,15 +311,40 @@ contract: `{display_name_suggestion, description, tags}` — a shopper-facing
 paragraph (2–3 sentences, warm, concrete: colors, markings, mood) and 4–8
 lowercase tags.
 
-Runs **only when an admin triggers it** (`publish-from-pet` and `redraft`),
-metered in the existing `ai_usage` ledger. It never runs on a shopper request
-and never publishes anything by itself — the admin edit-then-publish step is
-the quality gate for prose exactly as the sellability validator is for bytes.
+**It runs on one trigger only: the admin taps ✨ and confirms.** Nothing else
+in this spec invokes it — not stocking, not donating, not publishing, and never
+a shopper request. A new row's description is empty and its tags are `[]` until
+someone asks for words.
 
-The draft is **best-effort**: if the AI call fails or no key is configured,
-`publish-from-pet` still creates the row with empty description and tags —
-the admin writes by hand, or hits redraft once AI is available. Stocking is
-never blocked on AI availability.
+This follows the host's **AI-tag** door (`POST /api/ai-tag/{kind}/{id}`), and
+deliberately copies its four load-bearing properties:
+
+1. **One call writes both** description and tags. They are one thought about one
+   portrait; two buttons would let them disagree.
+2. **It overwrites, it does not merge.** Simpler to reason about, and the only
+   honest thing to do with generated prose.
+3. **Because it overwrites, a confirm stands in front of it** — "This replaces
+   the current description and tags." Tapping ✨ never fires the request. That
+   dialog is where the overwrite is disclosed, which is the whole reason the
+   host has one.
+4. **The result is a draft, not a verdict.** It is persisted, re-read into the
+   editor, and edited as ordinary text. The name idea is offered as a
+   *suggestion* beside the name field and never auto-applied (§5.1).
+
+Failures **surface** (503 unavailable / 502 failed) rather than degrading
+silently, and the dialog stays open with the error inline so the admin can
+retry — an explicit ask deserves an explicit answer. Usage is metered in the
+existing `ai_usage` ledger. DatsPet charges nothing for it: the host's version
+debits credits, and this one has no credit concept to debit (the host's own
+portability note says credit integration is the optional part).
+
+**Why not draft at publish-from-pet, which is where Rev.1–Rev.8 put it?**
+Because "best-effort at stocking" quietly made three promises it should not: it
+spent tokens on prose nobody had asked for, it made a model outage part of the
+stocking path, and it produced text the admin had to *review to reject* rather
+than *ask for*. Explicit invocation costs one tap and removes all three.
+*(Changed 2026-07-31 after the owner compared it to DatsMe's AI tagging; the
+auto-draft had shipped in Phase 1 and was removed in the same change.)*
 
 ---
 
@@ -403,7 +428,8 @@ listing payload itself gets heavy (~200+ rows), filtering moves server-side
 `web/src/app/admin/store/page.tsx`, following the existing admin surfaces:
 inventory table (published state visible at a glance), the publish-from-pet
 picker (reads the admin's own house via the existing `listPets()`), and the
-listing editor (name, description, tags, publish toggle, redraft button).
+listing editor (name, description, tags, publish toggle, and the ✨ that writes
+description + tags — §4, behind its confirm).
 Linked from the admin nav exactly as motions/design/ai/settings are.
 
 ### §6.3 `api.ts`
@@ -468,7 +494,7 @@ Two premade-pet systems may not coexist. In the same phase the store ships:
   window where the shop replaces the sample grid with an empty shelf. The
   shipped `.png` becomes `preview_png` (no PIL in the script), the sample key
   title-cased becomes the name, and the description starts as a one-line
-  deterministic caption the admin polishes afterwards (redraft is available).
+  deterministic caption the admin polishes afterwards (✨ is available).
   Run once per environment. Today that is exactly one pet (cat/snowleopard).
   **The script reads the physical files, so they must still exist when it
   runs** (Rev.3): the sample *code* retires in the Phase 1 commit, but the
@@ -701,7 +727,7 @@ shelf row**, and every tool it needs already shipped in Phase 1:
   unpublished rows) in the existing inventory table.
 - The admin edits name, description, tags and animal with the existing
   `PUT /api/admin/store/{id}`, drafts listing text with the existing
-  `redraft` (unpublished rows only — which every donation is), and publishes
+  ✨ ai-tag door (unpublished rows only — which every donation is), and publishes
   with the same call. **Publishing still runs the sellability validator**, so
   the shelf gate is unchanged.
 - If she does not want it, the existing `DELETE /api/admin/store/{id}` removes
@@ -1038,7 +1064,7 @@ host a workflow.
   publishes it, which is the test that proves donations cannot self-publish.
   The donor's ledger rows are invisible to another owner.
 - `webui/tests/test_donation_inventory.py` — a donated row is editable,
-  redraftable and publishable through the **existing Phase 1 admin routes** with
+  ai-taggable and publishable through the **existing Phase 1 admin routes** with
   no donation-specific endpoint; publishing it still runs the sellability
   validator; deleting the store pet leaves the ledger row intact (audit
   survives disposal); the "donated by" badge is a read-time join and no
@@ -1139,8 +1165,9 @@ New tests, same culture (shared validators, floor tests, scoping):
   server-side); adopted copies are invisible to other owners (scoping).
 - `webui/tests/test_store_admin.py` — gate required on every route;
   publish-from-pet derives mechanical facts that match the bundle; publish
-  refuses an unsellable bundle (shared validator); redraft refuses on a
-  published row.
+  refuses an unsellable bundle (shared validator); **publish-from-pet never
+  invokes the AI** (§4 — the guard against the auto-draft coming back); ai-tag
+  refuses on a published row.
 - **Floor test**: at least one *published* store pet exists after the §8
   migration script runs against a fixture — the store can't silently launch
   empty.

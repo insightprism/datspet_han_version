@@ -836,8 +836,10 @@ export const storeAdmin = {
     storeFetch(`/${encodeURIComponent(id)}`, {
       method: "PUT", body: JSON.stringify(body),
     }),
-  redraft: (id: string): Promise<StoreDraftResult> =>
-    storeFetch(`/${encodeURIComponent(id)}/redraft`, { method: "POST" }),
+  /** Write description + tags with AI (SPEC_PET_STORE §4). Overwrites both,
+   *  so the caller confirms first — the host's AI-tag door works the same way. */
+  aiTag: (id: string): Promise<StoreDraftResult> =>
+    storeFetch(`/${encodeURIComponent(id)}/ai-tag`, { method: "POST" }),
   remove: (id: string): Promise<{ deleted: string }> =>
     storeFetch(`/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

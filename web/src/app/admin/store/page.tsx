@@ -9,6 +9,12 @@
  * the inventory table (published + staging, with the live sellability verdict),
  * and the listing editor. The AI's name idea is shown as a SUGGESTION next to
  * the name field, never auto-applied (§5.1).
+ *
+ * Listing text is never written by AI as a side effect of anything (§4). A new
+ * row arrives with an empty description and no tags; the ✨ next to the
+ * description writes both, and only from its confirm dialog. This mirrors the
+ * host's AI-tag door: one call for caption AND tags, an overwrite rather than a
+ * merge, and therefore a confirm in front of it.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -23,6 +29,14 @@ import {
   type StoreAdminListing,
 } from "@/lib/api";
 import ConfirmModal from "@/components/ConfirmModal";
+
+/** The host's sparkle purple, so the affordance reads as the same feature
+ *  across the two apps rather than as a DatsPet invention. */
+const AI_SPARKLE_BG = "#7c3aed";
+const AI_TAG_LABEL = "Write the description and tags with AI";
+const DESCRIPTION_EMPTY_HINT =
+  "No description yet — write one, or tap ✨ to generate.";
+const TAGS_EMPTY_HINT = "#add #tags";
 
 interface EditorState {
   id: string;
@@ -53,6 +67,12 @@ export default function StoreAdminPage() {
   const [gateState, setGateState] = useState<"checking" | "ok" | "denied">("checking");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  // The AI-tag flow owns its own three-state slice rather than riding `busy`:
+  // the dialog has to stay open on failure to show the error, which a shared
+  // page-wide flag cannot express.
+  const [aiTagOpen, setAiTagOpen] = useState(false);
+  const [aiTagPending, setAiTagPending] = useState(false);
+  const [aiTagError, setAiTagError] = useState("");
 
   const refresh = useCallback(async () => {
     const r = await storeAdmin.list();
@@ -128,18 +148,25 @@ export default function StoreAdminPage() {
     }
   }
 
-  async function redraft() {
+  /** The AI writes description + tags — only ever from the confirm dialog
+   *  (SPEC_PET_STORE §4). It OVERWRITES both, which is exactly why the sparkle
+   *  opens a dialog instead of firing: the host's AI-tag door makes the same
+   *  trade, and the confirm is where the overwrite is disclosed. */
+  async function runAiTag() {
     if (!editor) return;
-    setBusy(true);
-    setNotice("");
+    setAiTagPending(true);
+    setAiTagError("");
     try {
-      const r = await storeAdmin.redraft(editor.id);
+      const r = await storeAdmin.aiTag(editor.id);
       applyResult(r.listing, r.display_name_suggestion);
-      setNotice("Redrafted — the AI's text replaced the draft.");
+      setAiTagOpen(false);
+      setNotice("The AI wrote the description and tags — edit them freely.");
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : "Redraft failed.");
+      // Inline in the dialog, never a toast, and the dialog STAYS OPEN so the
+      // admin can retry or cancel without re-finding the button.
+      setAiTagError(e instanceof Error ? e.message : "AI tagging failed.");
     } finally {
-      setBusy(false);
+      setAiTagPending(false);
     }
   }
 
@@ -303,14 +330,30 @@ export default function StoreAdminPage() {
                 </button>
               )}
             </label>
-            <label className="text-xs" style={labelStyle}>
-              Description
+            <div className="text-xs" style={labelStyle}>
+              <div className="flex items-center gap-2">
+                <span>Description</span>
+                {!editor.published && (
+                  <button
+                    type="button"
+                    onClick={() => { setAiTagError(""); setAiTagOpen(true); }}
+                    title={AI_TAG_LABEL}
+                    aria-label={AI_TAG_LABEL}
+                    className="flex h-6 w-6 items-center justify-center rounded-full text-xs transition hover:opacity-85"
+                    style={{ backgroundColor: AI_SPARKLE_BG, color: "#fff" }}
+                  >
+                    ✨
+                  </button>
+                )}
+              </div>
               <textarea className={inputClass} rows={3} value={editor.description}
+                        placeholder={editor.published ? "" : DESCRIPTION_EMPTY_HINT}
                         onChange={(e) => setEditor({ ...editor, description: e.target.value })} />
-            </label>
+            </div>
             <label className="text-xs" style={labelStyle}>
               Tags (comma-separated; lowercased and deduped on save)
               <input className={inputClass} value={editor.tagsText}
+                     placeholder={TAGS_EMPTY_HINT}
                      onChange={(e) => setEditor({ ...editor, tagsText: e.target.value })} />
             </label>
             <label className="text-xs" style={labelStyle}>
@@ -337,15 +380,6 @@ export default function StoreAdminPage() {
               >
                 {editor.published ? "Save (published)" : "Publish to shop"}
               </button>
-              {!editor.published && (
-                <button
-                  type="button" disabled={busy} onClick={redraft}
-                  className="mono rounded-lg border px-4 py-2 text-xs font-semibold transition hover:opacity-85 disabled:opacity-40"
-                  style={{ color: "var(--gold)", borderColor: "var(--line)" }}
-                >
-                  ↻ Redraft with AI
-                </button>
-              )}
               <button
                 type="button" onClick={() => { setEditor(null); setSuggestion(null); }}
                 className="mono rounded-lg border px-4 py-2 text-xs transition hover:opacity-85"
@@ -357,6 +391,19 @@ export default function StoreAdminPage() {
           </div>
         </section>
       )}
+
+      <ConfirmModal
+        open={aiTagOpen}
+        title="Write the description and tags with AI?"
+        body="This replaces the current description and tags. You can edit the result before publishing."
+        confirmLabel="Generate"
+        pendingLabel="Analyzing…"
+        pending={aiTagPending}
+        error={aiTagError}
+        tone="primary"
+        onConfirm={runAiTag}
+        onCancel={() => setAiTagOpen(false)}
+      />
 
       <ConfirmModal
         open={toDelete !== null}
