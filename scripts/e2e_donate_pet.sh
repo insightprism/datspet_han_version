@@ -40,8 +40,18 @@ PYRUN() {
     PYTHONPATH="$DATSME_API/sdk:$DATSME_API" "$py" -c "$1" )
 }
 DATSPET_PYRUN() {
-  ( cd "$REPO"; set -a; . ./pet_env.sh >/dev/null 2>&1; set +a
-    PYTHONPATH="$REPO/webui:$REPO" python3 -c "$1" )
+  # Read the env the RUNNING SERVICE reads. On a dev box that is pet_env.sh; on
+  # a deployed box the unit uses EnvironmentFile=webui/.env and pet_env.sh does
+  # NOT export PETMAKER_OUTPUT_DIR there. Sourcing only pet_env.sh sent this to
+  # the default DB path, found an empty store, and reported a sale as missing
+  # when it had been recorded correctly — a false failure, which is a bug in a
+  # check whose whole job is to be believed.
+  ( cd "$REPO"; set -a
+    [ -f ./pet_env.sh ] && . ./pet_env.sh >/dev/null 2>&1
+    [ -f ./webui/.env ] && . ./webui/.env >/dev/null 2>&1
+    set +a
+    PY="python3"; [ -x ./webui/venv/bin/python ] && PY=./webui/venv/bin/python
+    PYTHONPATH="$REPO/webui:$REPO" "$PY" -c "$1" )
 }
 
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
