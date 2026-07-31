@@ -148,6 +148,25 @@ CREATE TABLE IF NOT EXISTS ai_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_ai_usage_ts ON ai_usage(ts);
 CREATE INDEX IF NOT EXISTS idx_ai_usage_purpose ON ai_usage(purpose_key);
+
+-- The store's transaction record (SPEC_PET_STORE §1.5.3): who bought a store
+-- pet, how much the HOST charged, when, and which listing. Append-only — a
+-- re-delivered notification writes nothing (pet_id is the key), never an
+-- UPDATE. It outlives everything it references: deleting the listing, the
+-- buyer emptying their house, or the buyer being forgotten all leave the row.
+--
+-- credits_paid is NULLABLE and NULL means "the host did not tell us" — NOT
+-- zero, which is a legitimate amount (a re-import delta can genuinely be
+-- free). buyer_user_id goes EMPTY (not NULL) on revoke, so "forgotten" stays
+-- distinguishable from "never knew".
+CREATE TABLE IF NOT EXISTS store_sales (
+    pet_id          TEXT PRIMARY KEY,   -- the adopted copy; the idempotency key
+    store_pet_id    TEXT NOT NULL,      -- WHAT was sold
+    buyer_user_id   TEXT NOT NULL,      -- WHO bought it ('' once forgotten)
+    credits_paid    INTEGER,            -- HOW MUCH; NULL = host did not report
+    sold_at         REAL NOT NULL       -- WHEN (unix epoch float)
+);
+CREATE INDEX IF NOT EXISTS idx_store_sales_listing ON store_sales(store_pet_id);
 """
 
 
@@ -590,6 +609,15 @@ def revoke_user(external_user_id: str, action: str) -> int:
             cur = conn.execute(
                 "UPDATE pets SET external_user_id=NULL WHERE external_user_id=?",
                 (external_user_id,))
+        # SPEC_PET_STORE §1.5.3 — the SALE survives being forgotten, the PERSON
+        # does not. A shop's books are not a personal record, and deleting them
+        # would make revenue depend on who has left; but the buyer stops being
+        # named. Empty string rather than NULL keeps "forgotten" distinguishable
+        # from "we never knew". Both actions do this: neither `delete` nor
+        # `anonymize` is a licence to lose a transaction.
+        conn.execute(
+            "UPDATE store_sales SET buyer_user_id='' WHERE buyer_user_id=?",
+            (external_user_id,))
         conn.commit()
         return cur.rowcount
 
@@ -665,6 +693,47 @@ def burn_bundle_token(token: str) -> None:
             "UPDATE bundle_tokens SET downloaded_at=? WHERE token=?",
             (time.time(), token))
         conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# The store's transaction ledger (SPEC_PET_STORE §1.5.3). Append-only, like
+# ai_usage: one row per sale, never an UPDATE, and every report is a GROUP BY
+# over it rather than a counter anyone has to keep in step.
+# ---------------------------------------------------------------------------
+def insert_store_sale(*, pet_id: str, store_pet_id: str, buyer_user_id: str,
+                      credits_paid: Optional[int], sold_at: float) -> bool:
+    """Record one sale. Returns True if this call wrote it, False if it was
+    already recorded.
+
+    INSERT OR IGNORE, and `pet_id` being the primary key is the whole
+    idempotency story: the host's notification is at-least-once, so this WILL
+    be called twice for the same sale, and a second call must be a no-op rather
+    than a duplicate row or a rewritten amount. That also means a first
+    delivery carrying no amount keeps credits_paid NULL even if a retry carries
+    one — deliberate, and why the host sends the amount from the start.
+    """
+    with _lock:
+        conn = _connect()
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO store_sales
+                   (pet_id, store_pet_id, buyer_user_id, credits_paid, sold_at)
+               VALUES (?,?,?,?,?)""",
+            (pet_id, store_pet_id, buyer_user_id, credits_paid, sold_at))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def sales_for_store_pet(store_pet_id: str) -> dict:
+    """Sales of one listing: count and total credits. Derived at read time —
+    there is no counter column to drift (§1.5.3). `credits` sums only the rows
+    whose amount is known; NULLs are excluded by SUM, which is correct: an
+    unknown amount must not read as zero revenue."""
+    with _lock:
+        row = _connect().execute(
+            """SELECT COUNT(*) AS n, SUM(credits_paid) AS credits
+                 FROM store_sales WHERE store_pet_id=?""",
+            (store_pet_id,)).fetchone()
+    return {"count": row["n"] or 0, "credits": row["credits"] or 0}
 
 
 # ---------------------------------------------------------------------------

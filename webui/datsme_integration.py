@@ -799,6 +799,12 @@ def _export_item(row: dict) -> dict:
     # the host maps — never a source branch in the host's engine.
     item["price_basis"] = (PRICE_BASIS_STORE_FLAT if row.get("source_store_pet_id")
                            else PRICE_BASIS_PER_POSE)
+    # SPEC_PET_STORE §1.5.3 — which listing this copy came from, echoed back to
+    # us in the imported notification. It rides the item rather than being
+    # looked up later because a retry can arrive after this pet row is gone,
+    # and that is precisely the sale the ledger must still record. NULL for a
+    # designed pet, which is how the host knows there is no sale to report.
+    item["source_store_pet_id"] = row.get("source_store_pet_id")
     if row["bundle_sha256"] and row["pose_count"] is not None:
         # Fresh single-use token per call: serve_bundle burns it only after a
         # SUCCESSFUL send, and the host fetches at checkout, so a re-listed page
@@ -814,6 +820,35 @@ def _export_item(row: dict) -> dict:
             "content_type": "application/zip",
         }
     return item
+
+
+def _imported_item_details(body: dict, item_ids: list) -> dict:
+    """The optional `items` enrichment, keyed by pet id (SPEC_PET_STORE §1.5.3).
+
+    Validated LENIENTLY on purpose. `item_ids` stays the authoritative list of
+    what landed; `items` only adds the sale's price and listing id. A malformed
+    entry must never turn a reporting problem into a lost acknowledgement, so
+    anything unparseable is simply dropped and the sale records what it can —
+    with `credits_paid` NULL, which means "unknown" and never zero.
+    """
+    out: dict = {}
+    ids = {i for i in item_ids if isinstance(i, str)}
+    for entry in body.get("items") or []:
+        if not isinstance(entry, dict):
+            continue
+        pet_id = entry.get("id")
+        if not (isinstance(pet_id, str) and pet_id in ids):
+            continue          # an id we were not told landed is not a sale
+        raw = entry.get("credits_charged")
+        credits = raw if isinstance(raw, int) and not isinstance(raw, bool) \
+            and raw >= 0 else None
+        store_pet_id = entry.get("store_pet_id")
+        out[pet_id] = {
+            "credits_charged": credits,
+            "store_pet_id": store_pet_id if isinstance(store_pet_id, str)
+            and store_pet_id else None,
+        }
+    return out
 
 
 @router.post("/partner/imported/{user_id}")
@@ -846,6 +881,9 @@ async def partner_imported(user_id: str, request: Request):
     if not isinstance(item_ids, list):
         raise HTTPException(status_code=400, detail="item_ids required")
 
+    details = _imported_item_details(body, item_ids)
+
+    now = time.time()
     acked = []
     for pet_id in item_ids:
         if not (isinstance(pet_id, str) and pet_id.isalnum()):
@@ -853,10 +891,25 @@ async def partner_imported(user_id: str, request: Request):
         row = db.get_pet(pet_id)
         # Only ack a pet this user actually owns. The host is trusted, but a bug
         # there must not let one user's import stamp another user's pet.
-        if row is None or row["external_user_id"] != user_id:
-            continue
-        db.stamp_writeback_acked(pet_id, None, time.time())
-        acked.append(pet_id)
+        owned = row is not None and row["external_user_id"] == user_id
+        if owned:
+            db.stamp_writeback_acked(pet_id, None, now)
+            acked.append(pet_id)
+
+        # SPEC_PET_STORE §1.5.3 — the sale is recorded here because this is the
+        # moment the host confirms it charged. Deliberately NOT gated on `owned`:
+        # this notification is at-least-once, so a retry can arrive after the
+        # buyer deleted the pet, and dropping the sale then is exactly the loss
+        # the ledger exists to prevent. The listing id comes from the row when
+        # it is still there and from the notification when it is not.
+        store_pet_id = (row["source_store_pet_id"] if owned else None) \
+            or details.get(pet_id, {}).get("store_pet_id")
+        if store_pet_id:
+            db.insert_store_sale(
+                pet_id=pet_id, store_pet_id=store_pet_id,
+                buyer_user_id=user_id,
+                credits_paid=details.get(pet_id, {}).get("credits_charged"),
+                sold_at=now)
     return {"acked": acked}
 
 
