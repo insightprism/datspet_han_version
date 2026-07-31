@@ -1288,6 +1288,27 @@ runtime from one an admin made (§1.2).
 
 ### §10.7 The reward — how a social point reaches the donor
 
+**DatsPet awards nothing. It asks, and DatsMe decides.** This is the same
+posture as pricing (§0.6.1), and it is worth stating in its own words because
+the shorthand "the donation pays a social point" invites the wrong picture:
+
+- DatsPet has **no ledger, no balance, and no write access to DatsMe's**. The
+  only thing it can do is send a signed message naming a donation it approved.
+- **The amount is not on the wire.** DatsPet never states a figure, because a
+  partner that could name one could name a bigger one. The host reads its own
+  knob.
+- **The host may decline, and declining is normal, not an error.** The knob at
+  0 (`disabled`), the donor already thanked today (`capped`), the capability
+  revoked (`capability_not_granted`) — each is a legitimate answer that DatsPet
+  records and stops asking about.
+- So the partner's side of this is *bookkeeping*: which donations it has told
+  the host about, and what the host said. Whether a point exists is DatsMe's
+  fact, held in DatsMe's ledger, and DatsPet never displays it (§0.6.1).
+
+What Phase 2 adds to DatsPet is therefore the ability to **make a request**,
+not the ability to pay. Everything below is about getting that request
+delivered exactly once and recording the answer.
+
 #### §10.7.1 Earned at the donate click, delivered as soon as it can be
 
 The award is earned the moment she donates — that is the product promise, and
