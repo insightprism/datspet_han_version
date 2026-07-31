@@ -998,6 +998,28 @@ on a card was the only way to SET it — the chip at the top merely cleared it.
 shopper could not act on; it does not say whether the bird flies. The names are
 already in the listing (`store_listing_view` derives `poses` from the manifest),
 so this renders data that was being fetched and thrown away.
+
+### §6.1a The admin's ⓘ on a shop card
+
+An admin needs to see the listing text the card no longer shows — to check what
+the AI wrote, or what another admin wrote, on the surface a shopper actually
+sees rather than by cross-referencing the admin page. So each card carries an ⓘ
+in its top-right corner **only when `session.admin` is true**, opening the
+description and tags in a `ModalOverlay`.
+
+It keys on **`admin`**, the VERIFIED adm-claim cookie — the "render the admin
+tools" signal — and never on `system_admin`, which answers the different
+question "would this user pass the admin bounce" and is an unverified display
+hint the host sends on ordinary launches. Choosing the wrong one here would put
+an admin tool in front of anyone the host merely *thinks* could become an admin.
+
+**This is a convenience, not a confidentiality boundary, and the distinction
+matters.** `description` and `tags` ship in the public listing to every browser
+— that is precisely what makes client-side search work (§6.1) — so this decides
+who is *shown* them, not who can *obtain* them. Nothing here should ever be
+mistaken for hiding data; if listing text ever becomes genuinely non-public,
+that is a `pet_store.py` change plus server-side search, not a frontend flag.
+No fetch is involved: the dialog renders what the page already holds.
 - **Adopt this one** — the existing adopt handler, including the
   adopt-then-sign-in resume via `?adopted=<pet_id>`, re-pointed at
   `POST /api/store/{id}/adopt`.

@@ -40,10 +40,15 @@ import {
 } from "@/lib/api";
 import { animalsPresent, filterListings, NO_FILTER, tagsPresent,
          type StoreFilter } from "./storeFilter";
+import ModalOverlay from "@/components/ModalOverlay";
 
 /** Carries an adopted pet across the sign-in bounce, so the hand-off can resume
  *  on the way back. Same idea as the designer's `?job=`. */
 const ADOPTED_PARAM = "adopted";
+
+const LISTING_TEXT_LABEL = "Listing text — description and tags (admin)";
+const NO_DESCRIPTION = "No description.";
+const NO_TAGS = "No tags.";
 
 export default function PetStorePage() {
   const [listings, setListings] = useState<StoreListing[] | null>(null);
@@ -52,6 +57,10 @@ export default function PetStorePage() {
   const [filter, setFilter] = useState<StoreFilter>(NO_FILTER);
   const [busy, setBusy] = useState<string | null>(null);   // store pet id
   const [error, setError] = useState("");
+  // The listing whose text an ADMIN asked to see (§6.1a). Never a fetch: the
+  // description and tags are already in the payload every browser receives —
+  // that is what makes search work — so this only chooses to render them.
+  const [details, setDetails] = useState<StoreListing | null>(null);
 
   useEffect(() => {
     fetchStoreListings().then(setListings).catch(() =>
@@ -219,7 +228,24 @@ export default function PetStorePage() {
 
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             {shown.map((pet) => (
-              <figure key={pet.id} className="card m-0 flex flex-col gap-2 p-3">
+              <figure key={pet.id} className="card relative m-0 flex flex-col gap-2 p-3">
+                {/* Admin-only peek at the listing text this card no longer
+                    shows (§6.1a). Keyed on `session.admin` — the VERIFIED adm
+                    cookie, the "render the admin tools" signal — not on
+                    `system_admin`, which only answers "would this user pass the
+                    bounce" and is a display hint the host sends unverified. */}
+                {session?.admin && (
+                  <button
+                    type="button"
+                    title={LISTING_TEXT_LABEL}
+                    aria-label={`${LISTING_TEXT_LABEL} for ${pet.display_name}`}
+                    onClick={() => setDetails(pet)}
+                    className="mono absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full border text-[11px] transition hover:opacity-85"
+                    style={{ background: "#151515", color: "var(--gold)", borderColor: "var(--line)" }}
+                  >
+                    ⓘ
+                  </button>
+                )}
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={storePreviewUrl(pet.id)}
@@ -271,6 +297,57 @@ export default function PetStorePage() {
           </div>
         </>
       )}
+
+      {/* The listing text, for an admin checking what the AI or another admin
+          wrote. A convenience, NOT a confidentiality boundary: description and
+          tags ship in the public listing to every browser, because that is what
+          makes client-side search work (§6.1). This decides who is SHOWN them,
+          not who can obtain them. */}
+      <ModalOverlay open={details !== null} onClose={() => setDetails(null)}
+                    labelledBy="listing-text-title" maxWidth="max-w-md">
+        {details && (
+          <>
+            <h2 id="listing-text-title" className="mb-1 text-sm font-semibold"
+                style={{ color: "var(--heading)" }}>
+              {details.display_name}
+            </h2>
+            <p className="mono mb-3 text-[11px]" style={{ color: "var(--faint)" }}>
+              {details.id} · {details.animal} · {details.poses.length} pose
+              {details.poses.length === 1 ? "" : "s"}
+            </p>
+            <p className="mono mb-1 text-[11px]" style={{ color: "var(--muted)" }}>
+              Description
+            </p>
+            <p className="mb-3 text-sm leading-relaxed"
+               style={{ color: details.description ? "var(--heading)" : "var(--faint)" }}>
+              {details.description || NO_DESCRIPTION}
+            </p>
+            <p className="mono mb-1 text-[11px]" style={{ color: "var(--muted)" }}>
+              Tags
+            </p>
+            {details.tags.length > 0 ? (
+              <span className="mb-4 flex flex-wrap gap-1">
+                {details.tags.map((tag) => (
+                  <span key={tag} className="mono rounded border px-1.5 py-0.5 text-[10px]"
+                        style={{ color: "var(--faint)", borderColor: "var(--line)" }}>
+                    #{tag}
+                  </span>
+                ))}
+              </span>
+            ) : (
+              <p className="mb-4 text-sm" style={{ color: "var(--faint)" }}>{NO_TAGS}</p>
+            )}
+            <button
+              type="button"
+              onClick={() => setDetails(null)}
+              className="mono w-full rounded-lg border px-4 py-2.5 text-sm transition hover:opacity-85"
+              style={{ background: "#151515", color: "var(--muted)", borderColor: "var(--line)" }}
+            >
+              Close
+            </button>
+          </>
+        )}
+      </ModalOverlay>
     </main>
   );
 }
