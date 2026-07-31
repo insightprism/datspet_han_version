@@ -1491,17 +1491,46 @@ New tests, same culture (shared validators, floor tests, scoping):
 
 ## §13 Rollout
 
-| Phase | Ships | Contains |
-|---|---|---|
-| 0 | this spec, reviewed | owner sign-off on §1–§9; §10 acknowledged as sketch |
-| 1 | the store | `store_pets` + `pet_store.py` + `store_admin.py` + AI purpose + shop page + admin page + §7 host pricing + §8 sample retirement + §9 enforcement + §12 tests |
-| 2 | donations | **specified in §10 (Rev.6); awaiting owner sign-off.** Ships in four steps (§10.12): host registry+table+knobs → donate door + queue + review → reward delivery → the owner raises the reward knob off 0 |
+Five pieces of work, not three. Rev.9 and §1.5 added two that are **extensions
+of the shipped store, not part of donations** — Phase 2 stays exactly what the
+owner has always been told it is.
 
-**Rev.9's status migration ships as its own small deploy**, after Phase 1 and
-before Phase 2: it is a schema change to a live table in three environments
-(§1.4), it needs no host change, and Phase 2 depends on `intake` existing. Run
-it staging-first like everything else, and verify the shelf still serves its
-one pet afterwards — C5 is exactly that check.
+| Phase | Ships | Repos | Depends on | Status |
+|---|---|---|---|---|
+| 0 | this spec, reviewed | — | — | done |
+| 1 | the store | DatsPet + host | — | **live in production** (§14.4) |
+| 1a | **the transaction ledger** (§1.5.3) — `store_sales`, the amount on the imported notification, and making that notification at-least-once | DatsPet + host | Phase 1 | specified, not built |
+| 1b | **the shelf lifecycle** (§1.4) — `published` → four-state `status`, with the migration | DatsPet only | Phase 1 | specified, not built |
+| 2 | **donations** (§10) | DatsPet + host | Phase 1 **and 1b** | specified, awaiting sign-off |
+
+**Why 1a and 1b are not folded into Phase 2.** Neither has anything to do with
+donations. 1a is about sales that are happening *today* through the shipped
+store; 1b is about inventory an admin manages *today*. Attaching them to
+donations would hold live-store fixes hostage to a feature that has not been
+signed off, and would make Phase 2 a bundle whose parts fail for unrelated
+reasons — the thing §2's second test question exists to prevent.
+
+**Suggested order: 1a, then 1b, then 2** — and only the last arrow is a real
+dependency.
+
+- **1a first because it is the only one losing something.** Every sale that
+  completes before it ships is a transaction with no record, and the amount is
+  unrecoverable afterwards (§1.5.3). Nothing degrades while 1b or 2 wait.
+- **1b before 2 is a genuine dependency**: donations land in `intake`, which
+  does not exist until the lifecycle ships.
+- **1a and 1b are independent of each other** and could ship in either order or
+  together; the ordering above is urgency, not coupling.
+
+Deploy ceremony differs, and it is worth knowing before planning:
+
+- **1a is a two-repo change** and follows the Phase 1 rule — **host first**, so
+  the amount is being sent before the partner starts recording it. A DatsPet
+  tier deployed first simply records `credits_paid` NULL until the host catches
+  up, which the NULL-is-not-zero rule already handles correctly.
+- **1b is DatsPet-only**, but it is a schema change to a live table in three
+  environments (§1.4). Staging first, and verify the shelf still serves its pet
+  afterwards — deploy checklist C5 is exactly that check.
+- **2 has its own internal order**, given in §10.12.
 
 Phase 1 is one coherent release with a fixed internal order: **the host
 deploys §7.3 first.** A host that does not yet know `store_flat` would quote
@@ -1570,23 +1599,25 @@ that called it. Fixed; the ordering rule is now written down.
    flow is live in both environments.
 3. ~~**Delete the sample content files.**~~ Done — §14.4 (rides the next deploy).
 4. ~~**The §12 E2E store pass.**~~ Done — dev stack and staging, §14.4.
-5. **§1.4's shelf lifecycle (Rev.9)** — specified, NOT built. This one changes
-   a live Phase 1 table (`store_pets.published` → `status`), so it is the next
-   thing to build and it ships on its own (§13), ahead of Phase 2, which
-   assumes `intake` exists.
-6. **§10 donations** — unstarted by design. The revision it was waiting on is
-   written (Rev.6, reshaped by Rev.7 and Rev.8): §10 is build-ready and needs
-   the owner's sign-off, not more design. Nothing about it is coded in either
-   repo.
-7. **§1.5.3's `store_sales` transaction ledger** — specified, not built. Two
-   small changes that must ship together: one insert in `partner_imported`
+5. **The shelf lifecycle — §13's Phase 1b** (§1.4). Specified, NOT built.
+   Changes a live Phase 1 table (`store_pets.published` → `status`). DatsPet
+   only. Phase 2 depends on it (donations land in `intake`); nothing else
+   does.
+6. **Donations — §13's Phase 2** (§10). Unstarted by design. The revision it
+   was waiting on is written (Rev.6, reshaped by Rev.7 and Rev.8): it is
+   build-ready and needs the owner's sign-off, not more design. Nothing about
+   it is coded in either repo. **It does not contain 1a or 1b** — those are
+   fixes to the store that is already live.
+7. **The transaction ledger — §13's Phase 1a** (§1.5.3). Specified, not
+   built, and **the only item on this list that is losing something while it
+   waits.** Three changes that ship together: one insert in `partner_imported`
    (DatsPet), one enriched field on `notify_partner_imported` (host, which
    already computes the amount and drops it), and making that notification
-   **at-least-once** — it is fire-and-forget today, which is fine for a badge
-   and not for a transaction (§1.5.3). Every day it is not built is
-   transaction history that no longer exists — the amount is unrecoverable
-   afterwards, and a buyer's house cleanup erases the rest. View counting stays
-   unbuilt and unspecified beyond §1.5.4 — it is a beacon, not a counter.
+   at-least-once — it is fire-and-forget today, which is fine for a badge and
+   not for a transaction. Every completed sale before it ships is a transaction
+   with no record: the amount is unrecoverable afterwards, and a buyer's house
+   cleanup erases the rest. View counting stays unbuilt and unspecified beyond
+   §1.5.4 — it is a beacon, not a counter.
 
 ### §14.4 Deployed (Rev.5, 2026-07-31)
 
