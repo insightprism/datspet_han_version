@@ -526,3 +526,29 @@ def test_the_session_says_whether_the_donor_can_be_thanked(dpp_env, monkeypatch)
     # cookie must not be able to claim a capability the host never granted.
     spoofed = _session_with([di.CAP_SOCIAL_AWARD], verified_caps=["pets.write"])
     assert spoofed["can_be_thanked"] is False
+
+
+def test_a_donation_of_bytes_the_store_already_holds_is_refused(
+        donate_client, dpp_env, monkeypatch):
+    """§5.4 — the store never holds the same bundle twice, whichever door it
+    arrives through. Refused BEFORE anything is written: a donation is final,
+    so a duplicate caught after the transfer would cost her the pet."""
+    db = dpp_env["db"]
+    _designed_pet(db)
+    pet = db.get_pet("mypet0000001")
+    # The exact bytes are already on the shelf.
+    db.insert_store_pet(
+        store_id="already000001", display_name="Already Here",
+        breed_id=pet["breed_id"], animal="panda", description="", tags=[],
+        created_at=1783800000.0, preview_png=b"\x89PNG\r\n\x1a\nDATA",
+        sheet_png=pet["sheet_png"], manifest_json=pet["manifest_json"],
+        package_json=pet["package_json"], bundle_zip=pet["bundle_zip"],
+        status=db.STORE_STATUS_SHELF)
+
+    r = donate_client.post("/api/pets/mypet0000001/donate")
+    assert r.status_code == 409, r.text
+
+    # She still has her pet, and no ledger row was written.
+    assert db.get_pet("mypet0000001") is not None
+    assert db.donations_for_donor(DONOR) == []
+    assert len(db.list_store_pets(shelf_only=False)) == 1

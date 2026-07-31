@@ -119,6 +119,19 @@ def donate_pet(pet_id: str, request: Request,
     if errors:
         raise HTTPException(422, {"error": "not_donatable", "errors": errors})
 
+    # §5.4 — the store never holds the same bytes twice, whichever door they
+    # arrive through. Checked BEFORE anything is written, because a donation is
+    # final: refusing now costs her a click, refusing after the pet is gone
+    # would cost her the pet. Practically unreachable (a store-adopted pet is
+    # stamped `public` and already refused above), which is exactly why it is
+    # cheap to hold as an invariant rather than an argument about reachability.
+    if db.store_pet_id_with_bundle(
+            db.store_bundle_digest(pet["bundle_zip"])) is not None:
+        raise HTTPException(409, {
+            "error": "not_donatable",
+            "errors": ["The store already has this exact pet, so it cannot be "
+                       "donated again — you keep yours."]})
+
     now = time.time()
     store_pet_id = uuid.uuid4().hex[:12]
     donation_id = uuid.uuid4().hex[:16]

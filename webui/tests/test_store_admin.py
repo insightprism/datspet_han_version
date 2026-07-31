@@ -45,10 +45,12 @@ def _real_sheet_png() -> bytes:
 
 def make_croppable_pet(db_mod, pet_id="adminpet0001", external_user_id=ANON_OWNER,
                        breed_id="white_snow_leopard",
-                       display_name="White Snow Leopard"):
-    """A house pet whose bundle intake-from-pet can actually open and crop."""
+                       display_name="White Snow Leopard", animations=None):
+    """A house pet whose bundle intake-from-pet can actually open and crop.
+    Pass `animations` to make the BYTES differ — the store's identity for a pet
+    is its bundle digest (§5.4), so a test about duplicates has to control it."""
     sheet = _real_sheet_png()
-    manifest = {"animations": dict(WALK_IDLE), "columns": 8,
+    manifest = {"animations": dict(animations or WALK_IDLE), "columns": 8,
                 "frame_width": 256, "frame_height": 256}
     manifest_json = json.dumps(manifest)
     buf = io.BytesIO()
@@ -478,3 +480,59 @@ def test_a_lost_delete_race_undoes_the_store_row(admin_client, dpp_env,
                           cookies=anon_cookies())
     assert r.status_code == 409, r.text
     assert db.list_store_pets(shelf_only=False) == []
+
+
+# --- the store never holds the same bytes twice (§5.4) ---------------------
+def test_identical_bytes_are_refused_and_nothing_is_consumed(admin_client,
+                                                             dpp_env):
+    """The bundle digest IS a pet's identity here — no manifest field is.
+    `fingerprint` is the constant issuer mark ("datspet" on every pet ever
+    built), `reference_id` names a step-1 reference IMAGE and never reaches the
+    bundle, and `display_name` is not unique: staging held two "Vampire" rows
+    that were genuinely different pets.
+
+    The refusal must land BEFORE any write, because this door deletes the
+    house pet — a duplicate rejected after the delete would cost the pet."""
+    db = dpp_env["db"]
+    make_croppable_pet(db, pet_id="firstpet0001")
+    # A second house pet built from byte-identical bundle bytes.
+    make_croppable_pet(db, pet_id="secondpet001")
+
+    ok = admin_client.post("/api/admin/store/intake-from-pet",
+                           json={"pet_id": "firstpet0001"},
+                           cookies=anon_cookies())
+    assert ok.status_code == 200, ok.text
+    listed_id = ok.json()["listing"]["id"]
+
+    dupe = admin_client.post("/api/admin/store/intake-from-pet",
+                             json={"pet_id": "secondpet001"},
+                             cookies=anon_cookies())
+    assert dupe.status_code == 409, dupe.text
+    assert listed_id in json.dumps(dupe.json())
+
+    # Refused BEFORE the move: the second pet is still in her house, and the
+    # store gained nothing.
+    assert db.get_pet("secondpet001") is not None
+    assert len(db.list_store_pets(shelf_only=False)) == 1
+
+
+def test_a_different_pet_with_the_SAME_NAME_is_not_a_duplicate(admin_client,
+                                                               dpp_env):
+    """Name is not identity. Two pets called "Vampire" with different bytes are
+    two pets, and the guard must not conflate them — that is why it keys on the
+    digest and not on display_name or breed_id."""
+    db = dpp_env["db"]
+    make_croppable_pet(db, pet_id="vampire00001", display_name="Vampire",
+                       breed_id="vampire")
+    # Same name, genuinely different bytes — a real second design.
+    make_croppable_pet(db, pet_id="vampire00002", display_name="Vampire",
+                       breed_id="vampire",
+                       animations={"walk": {"frames": [0]},
+                                   "idle": {"frames": [1]},
+                                   "sit": {"frames": [2]}})
+
+    for pet_id in ("vampire00001", "vampire00002"):
+        r = admin_client.post("/api/admin/store/intake-from-pet",
+                              json={"pet_id": pet_id}, cookies=anon_cookies())
+        assert r.status_code == 200, (pet_id, r.text)
+    assert len(db.list_store_pets(shelf_only=False)) == 2

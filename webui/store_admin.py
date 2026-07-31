@@ -293,6 +293,18 @@ def intake_from_pet(body: IntakeFromPetBody, request: Request):
             422, "could not extract a portrait from this pet's bundle — "
                  "the sprite sheet or manifest is unreadable")
 
+    # §5.4 — refuse bytes the store already holds, BEFORE anything is written
+    # or deleted. A pet's identity is its bundle digest: there is no unique id
+    # in the manifest to key on (`fingerprint` is the constant issuer mark and
+    # `display_name` is not unique — two different pets can both be "Vampire").
+    duplicate_of = db.store_pet_id_with_bundle(
+        db.store_bundle_digest(pet["bundle_zip"]))
+    if duplicate_of is not None:
+        raise HTTPException(409, {
+            "error": "already_in_inventory",
+            "errors": [f"the store already holds this exact pet as listing "
+                       f"{duplicate_of}"]})
+
     animal = _seed_animal(pet["breed_id"])
 
     # Order matters, and it is the donation's order: the store row is written

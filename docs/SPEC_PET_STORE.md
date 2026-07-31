@@ -917,6 +917,41 @@ same function's third caller (§10.1).
 
 ---
 
+### §5.4 What uniquely identifies a pet — and what does not
+
+**A manifest carries no per-pet unique id.** This is worth stating plainly
+because two fields look like one and neither is:
+
+| Field | What it actually is | Unique per pet? |
+|---|---|---|
+| `fingerprint` | the **issuer** mark — the literal string `datspet`, stamped once at mint (SPEC_PET_OWNER_FIELD §1.7) | **No.** Identical on every pet ever built |
+| `reference_id` | the step-1 reference **image**, a designer input to `POST /api/generate`; a design mints a NEW one | **No**, and it never reaches the bundle |
+| `owner_name` / `owner_category` | who holds it now — changes on every transfer | No |
+| `display_name` | what a human called it | **No.** Staging held two `Vampire` rows that were genuinely different pets |
+| `bundle_sha256` | SHA-256 of the bundle bytes, derived by `insert_store_pet` | **Yes** — the only per-pet identity the store has |
+
+So the store's identity for a pet is **its bytes**, and there is precedent:
+`migrate_samples_to_store.py` has always been idempotent on `bundle_sha256`.
+
+**The invariant: the store never holds the same bundle twice.** Both stocking
+doors — `intake-from-pet` (§5.1) and the donate door (§10) — look the digest up
+via `db.store_pet_id_with_bundle` and refuse with **409** before writing
+anything. "Before" is load-bearing on both: each door *removes the source pet*,
+so a duplicate caught afterwards would cost someone their pet rather than a
+click. The admin's refusal names the listing that already holds those bytes.
+
+It is enforced at the doors and **not** as a `UNIQUE` index, deliberately:
+environments that predate the guard already hold duplicates (staging carried two
+byte-identical `Blue Butterfly` rows from the copy-era stocking door), and a
+UNIQUE index would make `init_db` fail at boot instead of letting an admin
+resolve them. `idx_store_pets_bundle_sha` makes the lookup free without that
+hazard. If every environment is ever cleaned, promoting it is a one-line change.
+
+Note what this correctly does **not** catch: two pets designed separately are
+different bytes and are two legitimate listings even when they share a name.
+Keying on `display_name` or `breed_id` would have refused the second Vampire,
+which was a real pet.
+
 ## §6 The shop frontend
 
 ### §6.1 The page

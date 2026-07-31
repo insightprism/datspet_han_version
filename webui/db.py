@@ -121,6 +121,13 @@ CREATE TABLE IF NOT EXISTS store_pets (
     package_json    TEXT,
     bundle_zip      BLOB NOT NULL
 );
+-- Backs the uniqueness guard both stocking doors run (§5.4). NOT a UNIQUE
+-- index: environments that predate the guard already hold duplicates, and a
+-- UNIQUE index would make init_db fail on boot rather than let the admin
+-- resolve them. The invariant is enforced at the doors; this only makes the
+-- lookup free.
+CREATE INDEX IF NOT EXISTS idx_store_pets_bundle_sha
+    ON store_pets(bundle_sha256);
 
 CREATE TABLE IF NOT EXISTS bundle_tokens (
     token               TEXT PRIMARY KEY,
@@ -1127,6 +1134,30 @@ def list_store_pets(shelf_only: bool = True) -> list[dict]:
                 FROM store_pets {where}
                 ORDER BY created_at DESC""").fetchall()
     return [store_listing_view(r) for r in rows]
+
+
+def store_bundle_digest(bundle_zip: bytes) -> str:
+    """THE store's identity for a pet's bytes — the same digest
+    `insert_store_pet` derives and stores as `bundle_sha256`. Named once here
+    so the uniqueness guard and the stored column can never drift apart."""
+    return hashlib.sha256(bundle_zip).hexdigest()
+
+
+def store_pet_id_with_bundle(bundle_sha256: str) -> Optional[str]:
+    """The listing already holding these exact bytes, or None.
+
+    There is NO per-pet unique id in a manifest to key on: `fingerprint` is the
+    constant issuer mark (`datspet` on every pet ever built), `reference_id`
+    identifies a step-1 reference IMAGE and never reaches the bundle, and
+    `display_name` is not unique — two genuinely different pets can both be
+    called "Vampire". The bytes are the only per-pet identity the store has,
+    and `migrate_samples_to_store.py` already treats them as one.
+    """
+    with _lock:
+        row = _connect().execute(
+            "SELECT id FROM store_pets WHERE bundle_sha256=? LIMIT 1",
+            (bundle_sha256,)).fetchone()
+    return row["id"] if row else None
 
 
 def list_store_rows(shelf_only: bool = False) -> list[sqlite3.Row]:
