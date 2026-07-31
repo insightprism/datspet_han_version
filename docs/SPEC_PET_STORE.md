@@ -1,20 +1,34 @@
 # SPEC_PET_STORE — The Pet Store: a database-backed shop of ready-made pets
 
-Rev.2 (2026-07-30) — **draft for owner review; nothing in this spec is built.**
+**Status: Rev.4 (2026-07-31) — PHASE 1 BUILT, not yet deployed.** Both repos
+green; nothing has shipped to staging or production. §14 is the as-built ledger
+and the only place to read for "what is done".
+
 Supersedes the file-based samples surface of `SPEC_DATSPET_CATALOG_PURCHASE`
 (archived, executed 2026-07-30) — see §8 for exactly what it absorbs and retires.
-Rev.2 folds in the owner's pricing direction (the price is a host knob; its
-value is not this spec's concern) and the design-review fixes: the AI draft is
-best-effort, the migration publishes the already-live sample (no empty-shop
-window), host-first deploy order, tag normalization, and Phase 2 mint
-hardening on the host side.
-Rev.3 (2026-07-31) — **accepted for implementation.** Readiness
-clarifications: publish-from-pet reads its source pet through the caller's
-own owner scope (§3.2); the export seam names `export_pets` (§7.2); the
-physical sample files outlive the §8 code retirement by one deploy cycle
-(the migration script must read them); and `animal` moved from derived to
-seeded-and-confirmed (§1.3) — a typed-animal bundle carries no canonical
-species key to derive it from.
+
+<details><summary>Revision history</summary>
+
+**Rev.2 (2026-07-30)** — draft for owner review. Folded in the owner's pricing
+direction (the price is a host knob; its value is not this spec's concern) and
+the design-review fixes: the AI draft is best-effort, the migration publishes the
+already-live sample (no empty-shop window), host-first deploy order, tag
+normalization, and Phase 2 mint hardening on the host side.
+
+**Rev.3 (2026-07-31)** — accepted for implementation. Four readiness
+clarifications, all since verified against the built code (§14): publish-from-pet
+reads its source pet through the caller's own owner scope (§3.2); the export seam
+names `export_pets` (§7.2); the physical sample files outlive the §8 code
+retirement by one deploy cycle (the migration script must read them); and
+`animal` moved from derived to seeded-and-confirmed (§1.3) — a typed-animal
+bundle carries no canonical species key to derive it from.
+
+**Rev.4 (2026-07-31)** — status corrected from "nothing is built" to as-built,
+which it had stopped being. Adds §14 (as-built ledger) and §8.1 (the retirement
+ordering rule the build violated). Records that the host's price-basis test ran
+nowhere and how that was fixed.
+
+</details>
 
 ---
 
@@ -419,6 +433,26 @@ Two premade-pet systems may not coexist. In the same phase the store ships:
 Pre-launch, no back-compat (the standing rule): the sample endpoints get no
 deprecation window.
 
+### §8.1 The retirement ordering rule — learned here, not theorised
+
+**The backend surface and the frontend that calls it retire in the SAME commit.**
+
+The Phase 1 build broke this and the tree stopped compiling. `app.py` and
+`animal_catalog/__init__.py` dropped the sample routes and `api.ts` dropped
+`adoptSample` / `catalogSamplePreviewUrl` / the `samples` key, while
+`catalog/page.tsx` still imported and called all three — five `tsc` errors, so
+`npm run build` could not run at all.
+
+That is worse than an ordinary bug, because of what the deploy checklist already
+records: **a build that dies leaves the previous `.next` in place with an
+unchanged `BUILD_ID`**, so the deploy reports success and silently serves the old
+bundle. A retirement that lands backend-first is therefore not "briefly broken",
+it is a false-green deploy waiting to happen.
+
+Fixed in the build; recorded here because the next retirement will be tempted the
+same way. A `tsc --noEmit` on the frontend is the cheapest possible check that a
+backend retirement was complete, and it belongs in the same commit.
+
 ---
 
 ## §9 Entitlement, enforced server-side
@@ -576,3 +610,59 @@ Before the production flip, the shelf is stocked: the migrated sample plus
 whatever the owner wants on it via §5 (the count is the owner's call). The
 launch checklist line is: *the store must not be visibly emptier than the
 sample grid it replaced.*
+
+---
+
+## §14 As built (Rev.4) — the ledger
+
+Phase 1 is **code-complete in both repos and deployed nowhere.** Read this section
+rather than the prose above when the question is "what is done".
+
+### §14.1 Built and green
+
+| Area | Where | Gate |
+|---|---|---|
+| `store_pets` table + `source_store_pet_id` ALTER | `webui/db.py` | — |
+| Six store functions (`insert_store_pet` … `delete_store_pet`) | `webui/db.py` | — |
+| Public shop + adopt | `webui/pet_store.py` | `test_store.py` |
+| Admin CRUD + `_seed_animal` | `webui/store_admin.py` | `test_store_admin.py` |
+| Sellability validator | `webui/store_validation.py` | shared by both callers |
+| AI listing purpose | `pet_factory/ai_purposes/store_listing.json` | registry guard |
+| Migration script | `scripts/migrate_samples_to_store.py` | reads the live sample files |
+| `price_basis` on export items | `webui/datsme_integration.py` | — |
+| Shop page (`/catalog` evolved) + admin page + `api.ts` | `web/src/app/{catalog,admin/store}` | `tsc`, vitest, `storeFilter` test |
+| **Host** `credit_pet_store_cost` knob | `social_ledger_config.py:54` (default 50) | — |
+| **Host** basis at quote **and** charge | `pet_writeback.py:188`, `:404` | `test_pet_store_price_basis.py` |
+| §8 retirement | sample routes/helpers/scripts gone; live files retained per §8 | `tsc` clean |
+
+**Gates:** DatsPet 593 pass (20 store) · `tsc` clean · vitest 36 · 0 lint errors.
+Host: owner-fields 70/70, price-basis 10/10, app imports clean.
+
+### §14.2 Two defects the readiness pass found
+
+**The host's price-basis test ran nowhere.** It was written pytest-style; the api
+venv has no pytest and it was never registered in `test_all.py`, so the suite was
+green having never executed one assertion about **what a user is charged**. That
+is the exact false-green shape this project keeps meeting. Converted to the house
+in-process convention (`TestResults` + `run()`) and registered — 10/10, on the
+interpreter the app itself runs.
+
+*The rule this yields:* on this host, a new test is in-process and registered, or
+it does not exist. pytest-style is reserved for the `_CAMPAIGN_PYTEST_GATES` list,
+which at least skips **loudly**.
+
+**The frontend did not compile.** §8.1 — backend retirement landed before the page
+that called it. Fixed; the ordering rule is now written down.
+
+### §14.3 What is genuinely left
+
+1. **Deploy.** Host first (§13), staging then production. Nothing has shipped.
+2. **Stock the shelf** before the production flip — run the migration, then §5 for
+   anything more. The launch line stands: *not visibly emptier than the grid it
+   replaced.*
+3. **Delete the sample content files** one deploy cycle after the last environment
+   migrates (§8) — a checklist line, not a follow-up someone remembers.
+4. **The §12 E2E store pass** — publish → shop → adopt → hand off → verify the host
+   charged the flat knob. The one gate that exercises the whole lane; everything
+   above it is unit-level.
+5. **§10 donations** — unstarted by design, needs its own revision first.
