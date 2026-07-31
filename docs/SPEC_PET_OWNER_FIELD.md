@@ -14,11 +14,11 @@ production is untouched on both sides.
 
 **For the two DatsMe use cases — purchase and gift — the answer to "what does DatsMe need to build?"
 is *nothing, it is done*.** §10.1 maps each step of both flows to where it already lives, including
-the one update function they need (`set_pet_ownership`). **§10 is the one genuinely new
-requirement**: the render gate, which decides whether a pet may animate on a given website and tells
-the owner who actually holds it. It is specified and unbuilt.
+the one update function they need (`set_pet_ownership`). §10's render gate — which decides whether a pet may animate on a
+given website and tells the owner who actually holds it — is **also built** (Phase 4), along with the
+group-gift rule (§2.5a).
 
-Remaining work, in order: the `enforce` flip (§9.2), Phase 4 (§10), then production.
+Remaining work: the `enforce` flip (§9.2), then production.
 
 > ## Rev.12 — the owner is a slug, and the HOST writes it
 >
@@ -441,10 +441,35 @@ the gift's `at` from it would report the wrong date for the new owner. The purch
 from the DB because a re-checkout is a genuine re-run of the same transfer; a gift is a new transfer
 and takes the wall clock.
 
-**A group pet gifted to a member becomes an individual pet.** That is the honest reading of a
-transfer: the recipient now holds it personally. Whether a group pet should be giftable *out* of its
-group is a policy question this spec does not decide; today's transfer path has no such restriction
-and this spec adds none.
+**Gifting HEALS a legacy pet.** The stamp is unconditional — `accept_offer` never reads the incoming
+owner fields, it just writes the recipient's. So a pet with no owner fields comes out of a gift fully
+stamped: the three keys are *added* (a manifest is a dict; setting a key creates it), every other key
+survives, and `fingerprint` is correctly **not** invented, because that is DatsPet's mint-only mark
+(§1.7). This is right, not lucky: the gift's authority is `PetOwnership` in Postgres, never the
+manifest (§0.6). It also means the legacy population drains through ordinary use rather than needing
+a migration.
+
+### 2.5a A GROUP pet may not be gifted
+
+**Refuse at offer time** (`pet_gift_routes.gift_pet_to_friend`), via
+`pet_gift_service.pet_is_group_licensed`. The gifter holds a licensed *copy*; the group holds the
+licence. And because §2.5's stamp is unconditional, an accepted gift would rewrite a `group` pet to
+`individual`/recipient — laundering a shared licence into one outsider's personal pet.
+
+**It is a multiplier, not a corner case.** One group purchase licenses up to `max_group_members`
+(default 500), and each of those members may legitimately take a copy into their own house through
+the upload door. Without this rule every one of those copies is independently giftable to any friend,
+so a single purchase can mint up to 500 personal licences for arbitrary non-members. §7.4 accepts
+"one purchase serves 500 members" as the feature working as asked; this is not that.
+
+Refused at **offer** rather than accept, because the gifter is the one who can act on it, and failing
+early keeps the recipient out of a transaction that was never going to complete. Unstamped, `public`
+and `individual` pets stay giftable exactly as before — the check can only ever refuse a pet whose own
+manifest says `group`. Pinned by four tests.
+
+*(An earlier revision left this open: "whether a group pet should be giftable out of its group is a
+policy question this spec does not decide." Once the mechanics were traced the answer was not
+balanced — it was a hole with a 500× multiplier.)*
 
 **`_export_item` gains NO owner condition — the trap, preserved.** `webui/datsme_integration.py:763`
 keeps exactly its existing honesty gates (no digest, no `pose_count`, no block).
@@ -744,6 +769,23 @@ Anonymous use stays fully supported: base-tier pet making with no login keeps wo
    pet *living on DatsMe*, which is where the value is.
 7. **DatsPet's own copy stays `factory` after a sale** — §1.4. Accepted; the cheap fix is named
    there and deliberately unbuilt.
+9. **A legacy pet's owner cannot re-upload it.** The upload door refuses absent owner fields (§4.3),
+   which catches the owner's own pre-feature pet coming back through
+   `GET /api/pets/me/{pet_id}/bundle` → upload. Accepted: it is a 409 with a reason rather than data
+   loss (the pet stays in their house), the set only shrinks, and re-uploading a pet you already own
+   is unusual.
+
+   **A date check cannot fix this, and the reason is worth keeping.** A pre-feature manifest carries
+   *no date at all* — `owner_transferred_at` is written by the same stamp that writes the owner, so
+   no owner means no date (verified: 11 of one staging user's 12 pets have no date field of any
+   kind). And even if one existed it would not help, because **a stripped bundle is
+   indistinguishable from an old one**: delete the three fields from a purchased pet and it is
+   byte-identical to a legacy one. Any rule of the form "trust bundles that look old" is one an
+   attacker satisfies in a text editor.
+
+   If it ever bites, the fix is exact and dateless: on upload, admit when the incoming sheet's
+   `sha256` matches a pet this user **already owns** (`write_assets` computes `sheet_sha256` on every
+   intake path). Unforgeable — to pass you would have to already hold the pet. Deliberately unbuilt.
 8. **The checkout door's enforcement value is modest.** `/partner/export/{user_id}` is exact-match on
    the DatsMe id and the host imports into that user's house, so identity is already bound there.
    The real value of the ladder is concentrated in the **upload door** (§4.2 door 2) and the **gift
@@ -784,7 +826,7 @@ Anonymous use stays fully supported: base-tier pet making with no login keeps wo
 | **2** | The two transfer stamps (§2.5), the access ladder + the two doors (§4), tests 12–15b | DatsMe | — | **BUILT** 2026-07-30 (`325b6909`) |
 | **2b** | Flip `PET_OWNER_ENFORCEMENT=observe` → `enforce`, staging then prod | DatsMe (config) | Phase 1 **deployed** in that environment (§6.16) | **not done** — see §9.2 |
 | **3** | The group chooser on the host's checkout page (§3, §5.2), the purchase-target check (§4.4) | DatsMe | Phase 2 | **BUILT** 2026-07-30 |
-| **4** | The render gate on `/api/pets/{slug}/active` (§10.2–§10.4) | DatsMe | Phase 2 | **not started** — the only unbuilt work in this spec |
+| **4** | The render gate on `/api/pets/{slug}/active` (§10.2–§10.4) + the group-gift rule (§2.5a) | DatsMe | Phase 2 | **BUILT** 2026-07-30 |
 
 ### 9.1 What Phase 1 shipped, for whoever picks up Phase 2
 
@@ -953,7 +995,7 @@ re-points `PetOwnership` — so ownership can never half-move.
 — manifest text in, manifest text out, exactly the three fields (§2.1). It already exists at
 `api/apps/pets/pet_ownership.py`. Both call sites above use it, and any third one must too.
 
-### 10.2 Phase 4 — the render gate (NOT built)
+### 10.2 Phase 4 — the render gate (BUILT)
 
 Everything above is about *acquiring* a pet. The new requirement is about *showing* one: a pet
 should only animate on a website whose owner is entitled to it, and when it is not, the owner should
@@ -1046,3 +1088,20 @@ by review.
   pre-Phase-2 pet and a fresh storefront adoption, since those are the two real populations.
 - The gate observes by default: with `PET_OWNER_ENFORCEMENT` unset, a mismatching pet still renders
   and logs.
+
+### 10.8 As built
+
+`check_render_access` (`api/apps/pets/pet_ownership.py`) + the call in
+`get_active_pet_for_slug` (`api/apps/pets/pet_routes.py`), placed where
+`read_asset_manifest` already runs so it costs no extra query. Absent fields short-circuit to
+allowed with reason `unstamped_legacy`; everything else delegates to §4.1's ladder with the website
+owner as the user. Refusals log `pet_owner_render_refused` with mode, reason, category, name, site
+and pet id — and in observe mode the pet still renders.
+
+On refusal in enforce mode the **owner** gets an `ownership_block` object on the existing no-pet
+payload shape (`reason`, `owner_category`, `owner_name`, `message`); a **visitor** gets the plain
+`{"pet": null}` the endpoint already returns for a visibility denial, with no ownership detail.
+
+**The frontend does not consume `ownership_block` yet.** The server-side gate is complete and
+`PetOverlay` simply renders no pet, which is the correct fallback — but the owner is not yet *told*
+why. That is the remaining piece of §10.4, and it is a UI change only.
