@@ -69,6 +69,23 @@ def migrate() -> int:
             print(f"ok   {animal}/{key}: already in the store (sha {digest[:12]}…)")
             continue
 
+        preview_png = preview_path.read_bytes()
+        display_name = key.title()
+        breed_id = key
+
+        # Validate BEFORE reading members: sellability_errors never raises, and
+        # a bundle that passes is guaranteed to unpack with the manifest the
+        # reads below assume — a broken zip must take this SKIP path, not
+        # crash the loop halfway through a migration. The seed name/animal are
+        # non-empty by construction (filename stem, directory name);
+        # package.json can only refine them below.
+        errors = store_validation.sellability_errors(
+            bundle_zip=bundle_zip, preview_png=preview_png,
+            display_name=display_name, animal=animal)
+        if errors:
+            print(f"SKIP {animal}/{key}: not sellable: {'; '.join(errors)}")
+            continue
+
         # The bundle parts, read the way app._unpack_bundle does.
         with zipfile.ZipFile(zip_path) as z:
             sheet_png = next((z.read(n) for n in z.namelist()
@@ -77,23 +94,16 @@ def migrate() -> int:
             package_json = (z.read("package.json").decode("utf-8")
                             if "package.json" in z.namelist() else None)
 
-        display_name = key.title()
-        breed_id = key
         if package_json:
             try:
                 pkg = json.loads(package_json)
-                display_name = pkg.get("display_name", display_name)
-                breed_id = pkg.get("breed_id", breed_id)
+                # `or`, not .get(default): an explicitly empty name in
+                # package.json must not hollow out a row that already
+                # passed validation on the seed.
+                display_name = pkg.get("display_name") or display_name
+                breed_id = pkg.get("breed_id") or breed_id
             except json.JSONDecodeError:
                 pass
-
-        preview_png = preview_path.read_bytes()
-        errors = store_validation.sellability_errors(
-            bundle_zip=bundle_zip, preview_png=preview_png,
-            display_name=display_name, animal=animal)
-        if errors:
-            print(f"SKIP {animal}/{key}: not sellable: {'; '.join(errors)}")
-            continue
 
         db.insert_store_pet(
             store_id=f"smpl{digest[:8]}",   # deterministic → stable across envs

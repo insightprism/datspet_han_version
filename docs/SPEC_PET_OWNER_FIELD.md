@@ -400,9 +400,10 @@ the insert** and the derived columns are correct by construction.
 `_unpack_bundle` (`:563`), shared by fresh generation and pool reattach, and is the last point before
 the row is stored. Stamps `factory` / `datspet` / build time, plus `fingerprint`.
 
-**Curated samples — `adopt_sample` (`webui/app.py:1476`).** Same shape, same position: it unpacks a
-stored sample bundle and calls `insert_pet` directly. Stamps `public` / `""` / now, plus
-`fingerprint`.
+**Store adopts — `adopt_store_pet` (`webui/pet_store.py`).** Same shape, same position: it copies a
+store row's bundle and calls `insert_pet` directly. Stamps `public` / `""` / now, plus
+`fingerprint`. (Originally `adopt_sample` in `webui/app.py`; the file-samples surface retired into
+the DB-backed store — SPEC_PET_STORE §8 — same stamp, new inventory.)
 
 **Not in `pack_datsme_bundle`.** That runs on pool GPU nodes
 (`pool_handler/pet_factory_handler.py`), which must never hold identity or partner state. Rendering
@@ -731,7 +732,8 @@ Anonymous use stays fully supported: base-tier pet making with no login keeps wo
 5. A freshly built pet's bundle carries `factory` / `datspet` / a parseable UTC `Z` timestamp, and
    `fingerprint == BUNDLE_FINGERPRINT`. Its stored `bundle_sha256` matches the **stamped** bytes —
    proof the stamp ran upstream of `insert_pet` (§2.4).
-6. `adopt_sample` stamps `public` with an empty name, same digest assertion.
+6. A store adopt (`adopt_store_pet`; formerly `adopt_sample`) stamps `public` with an empty name,
+   same digest assertion.
 7. Non-manifest zip members survive a stamp **byte for byte** and keep their names —
    `_unpack_bundle` matches members by name, so a renamed member is an unrenderable pet.
 8. **`_export_item` still offers a `factory` pet.** The forbidden filter (§2.5), pinned. Under

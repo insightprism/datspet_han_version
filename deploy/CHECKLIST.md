@@ -238,10 +238,13 @@ old numbers is actively dangerous**, which is the whole reason for the change.
       ```bash
       source pet_env.sh && webui/venv/bin/python scripts/migrate_samples_to_store.py
       ```
-      Idempotent (keyed on bundle sha), so a re-run is a no-op. **After the LAST
-      environment has migrated**, delete `pet_factory/animal_catalog/*/samples/` from
-      the repo — the files are migration input only (§8 Rev.3), and this line is where
-      that deletion was promised.
+      Idempotent (keyed on bundle sha), so a re-run is a no-op. **One deploy cycle
+      AFTER the last environment has migrated** (§8 — the buffer keeps the migration
+      input available to a Phase-D rollback), delete
+      `pet_factory/animal_catalog/*/samples/` from the repo, and
+      `webui/tests/test_sample_migration_input.py` with it — that test guards the
+      physical files and skips once they are gone. This line is where that deletion
+      was promised.
 
 ---
 

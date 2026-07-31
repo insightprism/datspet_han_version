@@ -577,7 +577,8 @@ def _unpack_bundle(zip_bytes: bytes, *, default_display_name: str,
     render the pet without unzipping in the browser. Returns
     (sheet_png, manifest_json, package_json, display_name, breed_id) — display
     name + breed id are authoritative from package.json when present. Shared by
-    fresh-generation finalize, pool-job reattach, and sample adopt (§4.4)."""
+    fresh-generation finalize and pool-job reattach (the store adopt builds its
+    row from store_pets columns instead)."""
     sheet_png = None
     manifest_json = None
     package_json = None
