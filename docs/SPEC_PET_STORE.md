@@ -1,6 +1,6 @@
 # SPEC_PET_STORE — The Pet Store: a database-backed shop of ready-made pets
 
-**Status: Rev.11 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASES 1a, 1b AND 2
+**Status: Rev.12 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASES 1a, 1b AND 2
 BUILT AND DEPLOYED NOWHERE.** There is no Phase 3 — §13's table is the whole
 plan, and §14.5 is the build ledger for what has not shipped. Phase 1 deployed host-first (§13) to staging and then production
 the same day, C1-verified 14/14 on both tiers, with the §12 store E2E passing on
@@ -10,12 +10,8 @@ is done"; §14.4 records the deploys. **§10 is now a build-ready specification
 rather than a sketch** — it needs owner sign-off before code, and §10.0 records
 the constraints that moved the design.
 
-**Three things are built and deployed nowhere** (§13, §14.5): the transaction
-ledger (**Phase 1a**, §1.5.3 — the only one losing data while it waits), the
-shelf lifecycle (**Phase 1b**, §1.4 — it changes a live Phase 1 table), and
-donations (**Phase 2**, §10). All three have since been hardened by an
-independent review pass (Rev.11) whose findings all sat in paths no test
-exercised. §1–§13 describe the design in its finished state; §14 is the ledger
+**Everything this spec defines is now LIVE IN PRODUCTION** — Phase 1 earlier,
+and 1a/1b/2 on 2026-07-31 (§14.6). §1–§13 describe the design in its finished state; §14 is the ledger
 of what actually exists.
 
 Supersedes the file-based samples surface of `SPEC_DATSPET_CATALOG_PURCHASE`
@@ -2005,6 +2001,43 @@ deliberately not done.
    purpose-built beacon with its own privacy argument (§1.5.4).
 5. **Design provenance is a different spec**, not a phase of this one —
    `SPEC_PET_DESIGN_PROVENANCE.md`, draft, nothing built.
+
+### §14.6 Deployed — 1a, 1b and 2 (Rev.12, 2026-07-31)
+
+Host-first (§13), staging verified before production, both tiers at the same
+commit (Rule 0). DatsPet `79bf3b3c`; host `cd7c2ff0` (prod picked it up inside
+`868bfe9e`).
+
+| Check | Staging | Production |
+|---|---|---|
+| C1 `verify_deployment.sh` | **14/14** | **14/14** |
+| 1b migration on real data | `published` dropped; the shelved row → `shelf` + `first_shelved_at` stamped; two others → `intake` | same, on its one row |
+| Store E2E (incl. the sale ledger) | **PASSED** — charged 50, `store_sales` recorded 50 | shelf serves; C5 pass |
+| Donation E2E (the reward loop) | **PASSED** — donor's social balance moved 10 → 11, claim row written, re-delivery paid nothing | — |
+| Shop surface in a real browser | only the `shelf` row visible; no price; no admin state leaked | same |
+
+`datspet.db` was copied before each restart (B8b) — 93 MB staging, 251 MB
+production — because 1b drops a column and rollback is a file restore.
+
+**What only the live run could find.** The donation E2E failed on its first
+execution, twice, for two different real reasons:
+
+1. **DatsPet's manifest never requested `social.award`.** The user could
+   therefore never grant it, the host correctly answered
+   `capability_not_granted`, and the donation was marked `declined` — *after*
+   the donor had irreversibly given the pet away. Every unit test passed
+   because they stub the HTTP call entirely.
+2. **The E2E read the wrong database.** It sourced `pet_env.sh`, but a deployed
+   box takes its env from `webui/.env`; it reported a sale as missing that had
+   been recorded correctly. A false failure is safer than a false pass and is
+   still a bug in a check whose job is to be believed.
+
+**The rollout fact to carry forward: `datspet` is `community` tier, so
+`social.award` does NOT auto-grant** (that needs `official` + low risk).
+Every existing user must consent on a later launch. Until they do, donations
+complete and settle `declined` — so the donor surface says so plainly rather
+than thanking someone who received nothing. Verified deliberately in both
+directions on staging: `declined` without the grant, `delivered` with it.
 
 ### §14.5 Built after the Phase 1 deploy, shipped nowhere
 
