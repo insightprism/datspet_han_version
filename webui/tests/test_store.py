@@ -28,7 +28,7 @@ WALK_IDLE = {"walk": {"frames": [0]}, "idle": {"frames": [1]}}
 FAKE_PNG = b"\x89PNG\r\n\x1a\nDATA"
 
 
-def make_store_pet(db_mod, store_id="store0000001", published=True,
+def make_store_pet(db_mod, store_id="store0000001", shelved=True,
                    animal="cat", display_name="Snowy The Leopard",
                    breed_id="white_snow_leopard",
                    description="A fluffy mountain cat.", tags=("cat", "fluffy"),
@@ -41,7 +41,8 @@ def make_store_pet(db_mod, store_id="store0000001", published=True,
         animal=animal, description=description, tags=list(tags),
         created_at=1783800000.0, preview_png=FAKE_PNG, sheet_png=FAKE_PNG,
         manifest_json=manifest_json, package_json=None, bundle_zip=zip_bytes,
-        published=published)
+        status=db_mod.STORE_STATUS_SHELF if shelved
+        else db_mod.STORE_STATUS_INTAKE)
     return store_id
 
 
@@ -61,9 +62,9 @@ def store_client(dpp_env):
 
 
 # --- the listing -----------------------------------------------------------
-def test_listing_shows_published_rows_only(store_client, dpp_env):
-    make_store_pet(dpp_env["db"], store_id="pubpet000001", published=True)
-    make_store_pet(dpp_env["db"], store_id="stagepet0001", published=False,
+def test_listing_shows_shelf_rows_only(store_client, dpp_env):
+    make_store_pet(dpp_env["db"], store_id="pubpet000001", shelved=True)
+    make_store_pet(dpp_env["db"], store_id="stagepet0001", shelved=False,
                    display_name="Not Ready Yet")
 
     body = store_client.get("/api/store").json()
@@ -79,13 +80,13 @@ def test_listing_shows_published_rows_only(store_client, dpp_env):
     assert listing["poses"] == ["walk", "idle"]
     assert listing["preview_url"] == "/api/store/pubpet000001/preview.png"
     # Always true on this surface — not a browser fact (§3.1).
-    assert "published" not in listing
+    assert "status" not in listing
 
 
-def test_unpublished_is_invisible_not_just_unlisted(store_client, dpp_env):
+def test_off_shelf_is_invisible_not_just_unlisted(store_client, dpp_env):
     """§3.1: the staging shelf 404s exactly like an absent id, on the preview
     AND on adopt — being unlisted is not the same as being invisible."""
-    make_store_pet(dpp_env["db"], store_id="stagepet0001", published=False)
+    make_store_pet(dpp_env["db"], store_id="stagepet0001", shelved=False)
     for sid in ("stagepet0001", "nosuchpet001"):
         assert store_client.get(f"/api/store/{sid}/preview.png").status_code == 404
         assert store_client.post(f"/api/store/{sid}/adopt",
@@ -220,11 +221,11 @@ def test_migration_floor_the_store_cannot_launch_empty(dpp_env, tmp_path,
     monkeypatch.setattr(mig, "CATALOG_DIR", tmp_path)
 
     assert mig.migrate() == 1
-    listings = dpp_env["db"].list_store_pets(published_only=True)
+    listings = dpp_env["db"].list_store_pets(shelf_only=True)
     assert len(listings) == 1
     assert listings[0]["animal"] == "cat"
     assert listings[0]["pose_count"] == 2
 
     # Idempotent on bundle_sha256 — a re-run is a no-op, not a duplicate shelf.
     assert mig.migrate() == 0
-    assert len(dpp_env["db"].list_store_pets(published_only=False)) == 1
+    assert len(dpp_env["db"].list_store_pets(shelf_only=False)) == 1

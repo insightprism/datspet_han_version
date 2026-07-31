@@ -3,12 +3,12 @@
 (SPEC_PET_STORE §8).
 
 Reads every `pet_factory/animal_catalog/<animal>/samples/<key>.{zip,png}` pair
-and inserts a **published** store_pets row: a shipped sample is already-live,
-guard-tested public content, and migrating it unpublished would open a window
-where the shop replaces the sample grid with an empty shelf. The shipped .png
-becomes the preview (no PIL here), the key title-cased becomes the name, and
-the description starts as a one-line deterministic caption the admin polishes
-afterwards (redraft is available).
+and inserts a store_pets row straight onto the **shelf**: a shipped sample is
+already-live, guard-tested public content, and landing it in `intake` would
+open a window where the shop replaces the sample grid with an empty shelf. The
+shipped .png becomes the preview (no PIL here), the key title-cased becomes the
+name, and the description starts as a one-line deterministic caption the admin
+polishes afterwards (✨ is available).
 
 Globs the directories DIRECTLY — the animal_catalog sample helpers are retired
 (§8) and this script is the one reader the leftover files have. Run once per
@@ -112,13 +112,13 @@ def migrate() -> int:
             tags=[animal], created_at=time.time(), preview_png=preview_png,
             sheet_png=sheet_png, manifest_json=manifest_json,
             package_json=package_json, bundle_zip=bundle_zip,
-            published=True,
+            status=db.STORE_STATUS_SHELF,
         )
         seen.add(digest)
         migrated += 1
-        print(f"MIGRATED {animal}/{key} -> published store pet smpl{digest[:8]}")
+        print(f"MIGRATED {animal}/{key} -> shelved store pet smpl{digest[:8]}")
     print(f"done: {migrated} migrated, store now holds "
-          f"{len(db.list_store_pets(published_only=False))} pets")
+          f"{len(db.list_store_pets(shelf_only=False))} pets")
     return migrated
 
 

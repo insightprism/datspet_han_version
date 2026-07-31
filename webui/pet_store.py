@@ -35,24 +35,27 @@ router = APIRouter(prefix="/api/store")
 PREVIEW_CACHE_CONTROL = "public, max-age=86400"
 
 
-def _published_store_pet(store_id: str):
-    """Resolve a store id a SHOPPER may see. Unpublished rows 404 exactly like
-    absent ones — the staging shelf must be invisible, not just unlisted."""
+def _shelved_store_pet(store_id: str):
+    """Resolve a store id a SHOPPER may see. Anything off the shelf — intake,
+    backroom, archived — 404s exactly like an absent id: invisible, not merely
+    unlisted (SPEC_PET_STORE §1.4)."""
     row = db.get_store_pet(store_id)
-    if row is None or not row["published"]:
+    if row is None or row["status"] != db.STORE_STATUS_SHELF:
         raise HTTPException(404, "store pet not found")
     return row
 
 
 @router.get("")
 def list_store():
-    """The shelf: published listings only, newest first. Byteless — portraits
+    """The shelf: `shelf` rows only, newest first. Byteless — portraits
     load through the preview route, bundles never leave the server here."""
-    listings = db.list_store_pets(published_only=True)
+    listings = db.list_store_pets(shelf_only=True)
     for item in listings:
-        # Always true on this surface — published is the admin's word, not a
-        # browser fact.
-        item.pop("published", None)
+        # Shelf state is the admin's word, not a browser fact — and on this
+        # surface it has exactly one possible value, so it would be a field
+        # that says nothing.
+        for admin_only in ("status", "admin_note", "first_shelved_at"):
+            item.pop(admin_only, None)
         item["preview_url"] = f"/api/store/{item['id']}/preview.png"
     return {"pets": listings}
 
@@ -61,7 +64,7 @@ def list_store():
 def store_preview(store_id: str):
     """The card portrait. Deliberately no owner resolution (the catalog
     precedent, owner_scope.py: an <img> has no 401 handler)."""
-    row = _published_store_pet(store_id)
+    row = _shelved_store_pet(store_id)
     return Response(content=row["preview_png"], media_type="image/png",
                     headers={"Cache-Control": PREVIEW_CACHE_CONTROL})
 
@@ -75,7 +78,7 @@ def adopt_store_pet(store_id: str, request: Request):
     pet_id per adopt: two adopts = two pets = two charges at the host — the
     "template, not a licence" rule (§3.1).
     """
-    row = _published_store_pet(store_id)
+    row = _shelved_store_pet(store_id)
     owner = owner_scope.require_owner(request)
 
     # SPEC_PET_STORE §9 — the entitlement, enforced where it counts. The tier

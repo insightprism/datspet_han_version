@@ -6,7 +6,8 @@
  * Same gate posture as the other five (mount-time check; a 401 bounces through
  * the host admin-launch). Three panels in one page: the admin's own house
  * (the publish-from-pet picker — the designer is the authoring tool, §5.1),
- * the inventory table (published + staging, with the live sellability verdict),
+ * the inventory table (every shelf state, newest first, with the live
+ * sellability verdict),
  * and the listing editor. The AI's name idea is shown as a SUGGESTION next to
  * the name field, never auto-applied (§5.1).
  *
@@ -21,12 +22,15 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   AdminApiError,
+  STORE_STATUSES,
+  STORE_STATUS_LABEL,
   getDatsmeSession,
   listPets,
   storeAdmin,
   storePreviewUrl,
   type PetSummary,
   type StoreAdminListing,
+  type StoreStatus,
 } from "@/lib/api";
 import ConfirmModal from "@/components/ConfirmModal";
 
@@ -44,7 +48,11 @@ interface EditorState {
   description: string;
   tagsText: string;      // comma-separated in the field; normalized server-side
   animal: string;
-  published: boolean;
+  status: StoreStatus;
+  admin_note: string;
+  /** Read-only. Once set, `animal` is frozen for good (§1.3) — moving the row
+   *  back off the shelf does NOT re-open it. */
+  first_shelved_at: number | null;
 }
 
 function editorFromListing(listing: StoreAdminListing): EditorState {
@@ -54,7 +62,9 @@ function editorFromListing(listing: StoreAdminListing): EditorState {
     description: listing.description,
     tagsText: listing.tags.join(", "),
     animal: listing.animal,
-    published: listing.published,
+    status: listing.status,
+    admin_note: listing.admin_note ?? "",
+    first_shelved_at: listing.first_shelved_at ?? null,
   };
 }
 
@@ -115,7 +125,7 @@ export default function StoreAdminPage() {
     try {
       const r = await storeAdmin.publishFromPet(pet.id);
       applyResult(r.listing, r.display_name_suggestion);
-      setNotice(`"${pet.display_name}" copied to the shelf — edit, then publish.`);
+      setNotice(`"${pet.display_name}" is in intake — caption it, then choose a shelf state.`);
     } catch (e) {
       setNotice(e instanceof Error ? e.message : "Could not copy that pet.");
     } finally {
@@ -123,7 +133,10 @@ export default function StoreAdminPage() {
     }
   }
 
-  async function saveEditor(publish: boolean) {
+  /** One save. The chosen status is applied with the edits, in that order, so
+   *  a call that fixes `animal` AND shelves the row behaves like the two calls
+   *  an admin would have made (§1.4). */
+  async function saveEditor(status: StoreStatus) {
     if (!editor) return;
     setBusy(true);
     setNotice("");
@@ -133,10 +146,13 @@ export default function StoreAdminPage() {
         description: editor.description,
         tags: editor.tagsText.split(",").map((t) => t.trim()).filter(Boolean),
         animal: editor.animal,
-        published: publish,
+        status,
+        admin_note: editor.admin_note,
       });
       applyResult(r.listing);
-      setNotice(publish ? "Published — it is on the shelf now." : "Saved.");
+      setNotice(status === "shelf"
+        ? "On the shelf — shoppers can see it now."
+        : `Saved as ${STORE_STATUS_LABEL[status].split(" — ")[0]}.`);
     } catch (e) {
       if (e instanceof AdminApiError && e.errors.length > 0) {
         setNotice(`Not sellable yet: ${e.errors.join("; ")}`);
@@ -284,8 +300,9 @@ export default function StoreAdminPage() {
                 )}
               </div>
               <span className="mono text-[11px]"
-                    style={{ color: listing.published ? "var(--green)" : "var(--faint)" }}>
-                {listing.published ? "published" : "staging"}
+                    style={{ color: listing.status === "shelf" ? "var(--green)"
+                      : listing.status === "intake" ? "var(--gold)" : "var(--faint)" }}>
+                {listing.status}
               </span>
               <button
                 type="button"
@@ -333,7 +350,7 @@ export default function StoreAdminPage() {
             <div className="text-xs" style={labelStyle}>
               <div className="flex items-center gap-2">
                 <span>Description</span>
-                {!editor.published && (
+                {editor.status !== "shelf" && (
                   <button
                     type="button"
                     onClick={() => { setAiTagError(""); setAiTagOpen(true); }}
@@ -347,7 +364,7 @@ export default function StoreAdminPage() {
                 )}
               </div>
               <textarea className={inputClass} rows={3} value={editor.description}
-                        placeholder={editor.published ? "" : DESCRIPTION_EMPTY_HINT}
+                        placeholder={editor.status === "shelf" ? "" : DESCRIPTION_EMPTY_HINT}
                         onChange={(e) => setEditor({ ...editor, description: e.target.value })} />
             </div>
             <label className="text-xs" style={labelStyle}>
@@ -357,28 +374,48 @@ export default function StoreAdminPage() {
                      onChange={(e) => setEditor({ ...editor, tagsText: e.target.value })} />
             </label>
             <label className="text-xs" style={labelStyle}>
-              Animal {editor.published && (
+              Animal {editor.first_shelved_at !== null && (
                 <span className="mono" style={{ color: "var(--faint)" }}>
-                  (fixed once published — §1.3)
+                  (fixed — this listing has been on the shelf; §1.3)
                 </span>
               )}
-              <input className={inputClass} value={editor.animal} disabled={editor.published}
+              <input className={inputClass} value={editor.animal}
+                     disabled={editor.first_shelved_at !== null}
                      onChange={(e) => setEditor({ ...editor, animal: e.target.value })} />
             </label>
+            <label className="text-xs" style={labelStyle}>
+              Shelf state
+              <select
+                className={inputClass}
+                value={editor.status}
+                onChange={(e) => setEditor({ ...editor, status: e.target.value as StoreStatus })}
+              >
+                {STORE_STATUSES.map((s) => (
+                  <option key={s} value={s}>{STORE_STATUS_LABEL[s]}</option>
+                ))}
+              </select>
+            </label>
+            {/* Asked for on the way to `archived` — the one transition whose
+                reason nobody remembers in three months. Optional server-side;
+                a required field would only ever collect the word "no". */}
+            {editor.status === "archived" && (
+              <label className="text-xs" style={labelStyle}>
+                Why archived? (optional, for whoever reads this later)
+                <input className={inputClass} value={editor.admin_note}
+                       onChange={(e) => setEditor({ ...editor, admin_note: e.target.value })} />
+              </label>
+            )}
             <div className="mt-1 flex flex-wrap gap-2">
+              {/* ONE save. The status selector above is what it applies —
+                  two buttons could only ever express two of the four states. */}
               <button
-                type="button" disabled={busy} onClick={() => saveEditor(false)}
+                type="button" disabled={busy} onClick={() => saveEditor(editor.status)}
                 className="mono rounded-lg border px-4 py-2 text-xs font-semibold transition hover:opacity-85 disabled:opacity-40"
-                style={{ color: "var(--heading)", borderColor: "var(--line)" }}
+                style={editor.status === "shelf"
+                  ? { background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }
+                  : { color: "var(--heading)", borderColor: "var(--line)" }}
               >
-                Save draft
-              </button>
-              <button
-                type="button" disabled={busy} onClick={() => saveEditor(true)}
-                className="mono rounded-lg border px-4 py-2 text-xs font-semibold transition hover:opacity-85 disabled:opacity-40"
-                style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}
-              >
-                {editor.published ? "Save (published)" : "Publish to shop"}
+                {editor.status === "shelf" ? "Save — on the shelf" : "Save"}
               </button>
               <button
                 type="button" onClick={() => { setEditor(null); setSuggestion(null); }}

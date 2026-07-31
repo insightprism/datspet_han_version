@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 -- purpose: store pets are visible to everyone, and no owner value in the scoped
 -- pets table can express that — widening _scope_clause is exactly the bug the
 -- exact-match fix removed. No owner column (nobody owns inventory), no draft
--- column (`published` is the store's own word; the draft purge sweeps never
+-- column (`status` is the store's own word; the draft purge sweeps never
 -- touch it). Derived columns (pose_count, bundle_sha256, size_bytes) are
 -- computed in insert_store_pet from the bytes it is handed, so a row can never
 -- disagree with its own bundle.
@@ -100,7 +100,17 @@ CREATE TABLE IF NOT EXISTS store_pets (
     description     TEXT NOT NULL DEFAULT '',
     tags_json       TEXT NOT NULL DEFAULT '[]',
     pose_count      INTEGER NOT NULL,
-    published       INTEGER NOT NULL DEFAULT 0,
+    -- SPEC_PET_STORE §1.4: intake | shelf | backroom | archived. Replaced a
+    -- `published` boolean, which could not tell apart the three different
+    -- reasons a pet is not for sale — and those three are what an admin acts on.
+    status          TEXT NOT NULL DEFAULT 'intake',
+    admin_note      TEXT NOT NULL DEFAULT '',
+    -- Stamped by the store on the first move to `shelf`, never cleared. It is
+    -- what freezes `animal` (§1.3): under the old boolean "not published" and
+    -- "never published" were the same condition; under four states they are
+    -- not, and the weaker rule would let shelf -> backroom -> re-animal ->
+    -- shelf change a listing shoppers had already filtered on.
+    first_shelved_at REAL,
     created_at      REAL NOT NULL,
     bundle_sha256   TEXT NOT NULL,
     size_bytes      INTEGER NOT NULL,
@@ -187,6 +197,28 @@ def init_db() -> None:
         pet_cols = {r["name"] for r in conn.execute("PRAGMA table_info(pets)")}
         if "source_store_pet_id" not in pet_cols:
             conn.execute("ALTER TABLE pets ADD COLUMN source_store_pet_id TEXT")
+        # SPEC_PET_STORE §1.4 — the shelf lifecycle replaces the `published`
+        # boolean. One-shot and guarded on the column's absence, so it is a
+        # no-op on every boot after the first. `published` is DROPPED rather
+        # than left behind a shim: two sources of truth for "is this for sale"
+        # is the failure this replaces. Rollback for this deploy is a restore
+        # of datspet.db, which the deploy checklist takes first.
+        store_cols = {r["name"]
+                      for r in conn.execute("PRAGMA table_info(store_pets)")}
+        if store_cols and "status" not in store_cols:
+            conn.execute(
+                "ALTER TABLE store_pets ADD COLUMN status TEXT NOT NULL "
+                "DEFAULT 'intake'")
+            conn.execute(
+                "ALTER TABLE store_pets ADD COLUMN admin_note TEXT NOT NULL "
+                "DEFAULT ''")
+            conn.execute(
+                "ALTER TABLE store_pets ADD COLUMN first_shelved_at REAL")
+            if "published" in store_cols:
+                conn.execute(
+                    "UPDATE store_pets SET status='shelf', "
+                    "first_shelved_at=created_at WHERE published=1")
+                conn.execute("ALTER TABLE store_pets DROP COLUMN published")
         conn.commit()
     _migrate_legacy_folders()
     _backfill_bundle_digests()
@@ -826,9 +858,19 @@ def purge_expired_bundle_tokens(grace_s: float = 3600) -> int:
 # ---------------------------------------------------------------------------
 # The Pet Store inventory (SPEC_PET_STORE §1.2, §3.3). Unscoped on purpose —
 # store pets belong to nobody and are visible to everyone; the routers decide
-# what each caller may see (published_only for shoppers, everything for the
+# what each caller may see (shelf_only for shoppers, everything for the
 # admin). Blobs stay in-row like pets. insert_store_pet is the ONLY writer of
 # the derived columns.
+# ---------------------------------------------------------------------------
+#: The shelf lifecycle (SPEC_PET_STORE §1.4). Closed set: an unknown value is
+#: refused at the door rather than stored, so a row can never be in a state no
+#: reader understands. Only STORE_STATUS_SHELF is visible to shoppers.
+STORE_STATUS_INTAKE = "intake"
+STORE_STATUS_SHELF = "shelf"
+STORE_STATUS_BACKROOM = "backroom"
+STORE_STATUS_ARCHIVED = "archived"
+STORE_STATUSES = (STORE_STATUS_INTAKE, STORE_STATUS_SHELF,
+                  STORE_STATUS_BACKROOM, STORE_STATUS_ARCHIVED)
 # ---------------------------------------------------------------------------
 def _pose_names(manifest_json: str) -> list[str]:
     """The animation names in manifest order — the listing's `poses` field.
@@ -845,7 +887,8 @@ def insert_store_pet(*, store_id: str, display_name: str, breed_id: str,
                      animal: str, description: str, tags: list[str],
                      created_at: float, preview_png: bytes, sheet_png: bytes,
                      manifest_json: str, package_json: Optional[str],
-                     bundle_zip: bytes, published: bool = False) -> None:
+                     bundle_zip: bytes,
+                     status: str = STORE_STATUS_INTAKE) -> None:
     """Persist one store pet. pose_count / bundle_sha256 / size_bytes are
     DERIVED here (the insert_pet rule): a caller supplying them is only a
     chance to be wrong. Raises ValueError on a manifest whose poses cannot be
@@ -861,11 +904,13 @@ def insert_store_pet(*, store_id: str, display_name: str, breed_id: str,
         conn.execute(
             """INSERT OR REPLACE INTO store_pets
                (id, display_name, breed_id, animal, description, tags_json,
-                pose_count, published, created_at, bundle_sha256, size_bytes,
+                pose_count, status, first_shelved_at, created_at,
+                bundle_sha256, size_bytes,
                 preview_png, sheet_png, manifest_json, package_json, bundle_zip)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (store_id, display_name, breed_id, animal, description,
-             json.dumps(tags), count, 1 if published else 0, created_at,
+             json.dumps(tags), count, status,
+             created_at if status == STORE_STATUS_SHELF else None, created_at,
              hashlib.sha256(bundle_zip).hexdigest(), len(bundle_zip),
              preview_png, sheet_png, manifest_json, package_json, bundle_zip),
         )
@@ -887,20 +932,23 @@ def store_listing_view(row: sqlite3.Row) -> dict:
         "tags": tags if isinstance(tags, list) else [],
         "pose_count": row["pose_count"],
         "poses": _pose_names(row["manifest_json"]),
-        "published": bool(row["published"]),
+        "status": row["status"],
+        "admin_note": row["admin_note"],
+        "first_shelved_at": row["first_shelved_at"],
         "created_at": row["created_at"],
     }
 
 
-def list_store_pets(published_only: bool = True) -> list[dict]:
-    """Listings, newest first. Shoppers get published rows only; the admin
-    list passes published_only=False and sees the staging shelf too."""
-    where = "WHERE published=1" if published_only else ""
+def list_store_pets(shelf_only: bool = True) -> list[dict]:
+    """Listings, newest first. Shoppers see `shelf` rows and nothing else; the
+    admin passes shelf_only=False and sees every state, with `intake` newest
+    first — which is what makes the inbox an ordering rather than a queue."""
+    where = f"WHERE status='{STORE_STATUS_SHELF}'" if shelf_only else ""
     with _lock:
         rows = _connect().execute(
             f"""SELECT id, display_name, breed_id, animal, description,
-                       tags_json, pose_count, published, created_at,
-                       manifest_json
+                       tags_json, pose_count, status, admin_note,
+                       first_shelved_at, created_at, manifest_json
                 FROM store_pets {where}
                 ORDER BY created_at DESC""").fetchall()
     return [store_listing_view(r) for r in rows]
@@ -915,26 +963,48 @@ def get_store_pet(store_id: str) -> Optional[sqlite3.Row]:
 
 
 def update_store_listing(store_id: str, *, display_name: str, description: str,
-                         tags: list[str], animal: str) -> bool:
+                         tags: list[str], animal: str,
+                         admin_note: Optional[str] = None) -> bool:
     """Rewrite the authored listing fields (SPEC_PET_STORE §1.3). The mechanical
     facts (pose_count, breed_id, the digests) are deliberately not updatable —
     editing them would let a listing lie about its artifact. False if absent."""
     with _lock:
         conn = _connect()
-        cur = conn.execute(
-            """UPDATE store_pets SET display_name=?, description=?, tags_json=?,
-                                     animal=? WHERE id=?""",
-            (display_name, description, json.dumps(tags), animal, store_id))
+        if admin_note is None:
+            cur = conn.execute(
+                """UPDATE store_pets SET display_name=?, description=?,
+                                         tags_json=?, animal=? WHERE id=?""",
+                (display_name, description, json.dumps(tags), animal, store_id))
+        else:
+            cur = conn.execute(
+                """UPDATE store_pets SET display_name=?, description=?,
+                                         tags_json=?, animal=?, admin_note=?
+                   WHERE id=?""",
+                (display_name, description, json.dumps(tags), animal,
+                 admin_note, store_id))
         conn.commit()
         return cur.rowcount > 0
 
 
-def set_store_published(store_id: str, published: bool) -> bool:
+def set_store_status(store_id: str, status: str) -> bool:
+    """Move a listing between shelf states (SPEC_PET_STORE §1.4). Stamps
+    `first_shelved_at` on the FIRST move to `shelf` and never again — it is a
+    derived fact like bundle_sha256, not an editable field, and it is what
+    freezes `animal` for good (§1.3). Callers validate `status` against
+    STORE_STATUSES; this layer refuses an unknown one rather than storing it."""
+    if status not in STORE_STATUSES:
+        raise ValueError(f"unknown store status {status!r}")
     with _lock:
         conn = _connect()
-        cur = conn.execute(
-            "UPDATE store_pets SET published=? WHERE id=?",
-            (1 if published else 0, store_id))
+        if status == STORE_STATUS_SHELF:
+            cur = conn.execute(
+                """UPDATE store_pets
+                      SET status=?,
+                          first_shelved_at=COALESCE(first_shelved_at, ?)
+                    WHERE id=?""", (status, time.time(), store_id))
+        else:
+            cur = conn.execute(
+                "UPDATE store_pets SET status=? WHERE id=?", (status, store_id))
         conn.commit()
         return cur.rowcount > 0
 

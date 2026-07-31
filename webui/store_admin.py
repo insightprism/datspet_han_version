@@ -7,11 +7,12 @@ stocking prod must not require a deploy (§0 / §8).
 
 The stocking door is publish-from-pet (§5.1): the admin designs a pet through
 the NORMAL designer, then this copies her house pet's bundle into an
-unpublished store row, extracts the portrait and seeds the facts. The listing
+`intake` store row, extracts the portrait and seeds the facts. The listing
 text starts EMPTY — she writes it, or taps the sparkle to have the AI write it
 (§4, the ai-tag door). The AI never runs as a side effect of stocking. She then
-flips `published`, which the shared sellability validator gates (§5.3) so the
-admin can never ship a listing the build would reject.
+moves it to `shelf`, which the shared sellability validator gates (§5.3) so
+the admin can never shelve a listing the build would reject. Every other
+transition is free (§1.4).
 """
 from __future__ import annotations
 
@@ -74,7 +75,8 @@ def _normalize_tags(tags: list) -> list[str]:
 def _seed_animal(breed_id: str) -> str:
     """Best-effort species seed (§1.3, Rev.3): a catalog breed resolves to its
     animal; a typed-animal breed_id ('white_snow_leopard') falls back to its
-    last word. The admin confirms or corrects it while the row is unpublished —
+    last word. The admin confirms or corrects it until it first reaches the
+    shelf (§1.3) —
     this is a SEED, not a derivation, because the bundle carries no canonical
     species key."""
     for a in animal_catalog_mod.list_animals():
@@ -137,7 +139,7 @@ def _draft_listing(preview_png: bytes, animal: str, poses: list[str],
 
 
 def _admin_view(row) -> dict:
-    """The admin's slice: the listing plus what the editor needs — published
+    """The admin's slice: the listing plus what the editor needs — shelf
     state and the live sellability verdict (so a broken row is visibly broken
     on the shelf, not first discovered at the publish click)."""
     listing = db.store_listing_view(row)
@@ -167,7 +169,8 @@ class ListingBody(BaseModel):
     description: str = ""
     tags: list[str] = []
     animal: str
-    published: bool
+    status: str
+    admin_note: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +178,9 @@ class ListingBody(BaseModel):
 # ---------------------------------------------------------------------------
 @router.get("")
 def list_inventory():
-    """The whole shelf — published AND staging — for the admin table."""
-    listings = db.list_store_pets(published_only=False)
+    """The whole inventory in every state, newest first — which is what makes
+    `intake` an inbox without a queue (§1.4)."""
+    listings = db.list_store_pets(shelf_only=False)
     for item in listings:
         item["preview_url"] = f"/api/store/{item['id']}/preview.png"
     return {"pets": listings}
@@ -222,7 +226,7 @@ def publish_from_pet(body: PublishFromPetBody, request: Request):
         tags=[], created_at=time.time(), preview_png=preview_png,
         sheet_png=pet["sheet_png"], manifest_json=pet["manifest_json"],
         package_json=pet["package_json"], bundle_zip=pet["bundle_zip"],
-        published=False,
+        status=db.STORE_STATUS_INTAKE,
     )
     admin_common.audit(AUDIT_TAG, request, "publish-from-pet",
                        f"{body.pet_id} -> store {store_id}")
@@ -236,21 +240,36 @@ def publish_from_pet(body: PublishFromPetBody, request: Request):
 
 @router.put("/{store_id}")
 def update_listing(store_id: str, body: ListingBody, request: Request):
-    """Edit the authored fields (§1.3) and the published state. Publishing runs
-    the shared sellability validator — refused listings stay unpublished."""
+    """Edit the authored fields (§1.3) and the shelf state (§1.4).
+
+    Field edits apply FIRST, then the status — so one call that fixes `animal`
+    and shelves the row behaves like the two calls in the order an admin would
+    have made them.
+    """
     row = _store_row_or_404(store_id)
+
+    if body.status not in db.STORE_STATUSES:
+        raise HTTPException(422, {
+            "error": "unknown_status",
+            "errors": [f"status must be one of {', '.join(db.STORE_STATUSES)}"]})
 
     display_name = body.display_name.strip()
     animal = body.animal.strip().lower()
     tags = _normalize_tags(body.tags)
 
-    # §1.3 (Rev.3): once published, `animal` is fixed — the filter chips
-    # depend on it, and re-speciating a live listing would strand shoppers'
-    # filters. Unpublish is not an escape hatch worth building until needed.
-    if row["published"] and animal != row["animal"]:
-        raise HTTPException(409, "animal is fixed once published")
+    # §1.3: `animal` freezes on the FIRST shelving and stays frozen — not
+    # merely while the row is on the shelf. Under the old boolean those were
+    # the same condition; under four states they are not, and the weaker rule
+    # would let shelf -> backroom -> re-animal -> shelf change a listing
+    # shoppers had already filtered on.
+    if row["first_shelved_at"] is not None and animal != row["animal"]:
+        raise HTTPException(409, "animal is fixed once a listing has been shelved")
 
-    if body.published:
+    # The gate runs on any write that LEAVES the row shelved, not only on the
+    # transition into it: a re-save of a live listing is the moment to catch a
+    # row whose bytes went bad after shelving. Every other state accepts a
+    # broken bundle — you may keep something you cannot sell.
+    if body.status == db.STORE_STATUS_SHELF:
         errors = store_validation.sellability_errors(
             bundle_zip=row["bundle_zip"], preview_png=row["preview_png"],
             display_name=display_name, animal=animal)
@@ -259,10 +278,10 @@ def update_listing(store_id: str, body: ListingBody, request: Request):
 
     db.update_store_listing(store_id, display_name=display_name,
                             description=body.description.strip(), tags=tags,
-                            animal=animal)
-    db.set_store_published(store_id, body.published)
+                            animal=animal, admin_note=body.admin_note.strip())
+    db.set_store_status(store_id, body.status)
     admin_common.audit(AUDIT_TAG, request, "update",
-                       f"{store_id} published={body.published}")
+                       f"{store_id} status={body.status}")
     return {"listing": _admin_view(db.get_store_pet(store_id))}
 
 
@@ -283,9 +302,11 @@ def ai_tag_listing(store_id: str, request: Request):
     answer.
     """
     row = _store_row_or_404(store_id)
-    if row["published"]:
-        raise HTTPException(409, "a published listing is the admin's text — "
-                                 "unpublish is not a thing; edit it directly")
+    if row["status"] == db.STORE_STATUS_SHELF:
+        raise HTTPException(409, "a shelved listing is the admin's text — "
+                                 "regenerating it would change what shoppers "
+                                 "are reading; edit it directly, or move it "
+                                 "off the shelf first")
     owner = owner_scope.require_owner(request)
     # Poses come through the listing view, not a second manifest read — one
     # definition of "what poses this pet has", shared with what shoppers see.

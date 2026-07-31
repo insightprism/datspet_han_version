@@ -8,7 +8,8 @@ What each case protects:
   invokes the AI — listing text is written only through the ai-tag door (§4);
 - the publish flip runs the shared sellability validator (§5.3), so the admin
   cannot ship a listing the build would reject;
-- tags are normalized on write, and `animal` is fixed once published (§1.3).
+- tags are normalized on write, and `animal` is fixed once a listing has
+  first reached the shelf — not merely while it is on it (§1.3, §1.4).
 """
 import importlib
 import io
@@ -63,7 +64,7 @@ def make_croppable_pet(db_mod, pet_id="adminpet0001", external_user_id=ANON_OWNE
     return pet_id
 
 
-def make_store_row(db_mod, store_id="storerow0001", published=False,
+def make_store_row(db_mod, store_id="storerow0001", shelved=False,
                    animal="cat", animations=None, display_name="Shelf Cat"):
     zip_bytes, manifest_json = make_bundle_zip(
         breed_id="shelfcat",
@@ -72,7 +73,9 @@ def make_store_row(db_mod, store_id="storerow0001", published=False,
         store_id=store_id, display_name=display_name, breed_id="shelfcat",
         animal=animal, description="", tags=[], created_at=1783800000.0,
         preview_png=FAKE_PNG, sheet_png=FAKE_PNG, manifest_json=manifest_json,
-        package_json=None, bundle_zip=zip_bytes, published=published)
+        package_json=None, bundle_zip=zip_bytes,
+        status=db_mod.STORE_STATUS_SHELF if shelved
+        else db_mod.STORE_STATUS_INTAKE)
     return store_id
 
 
@@ -107,7 +110,7 @@ def test_every_route_requires_the_admin_gate(dpp_env):
     assert client.post("/api/admin/store/publish-from-pet",
                        json={"pet_id": "x"}).status_code == 401
     assert client.put("/api/admin/store/x", json={
-        "display_name": "X", "animal": "cat", "published": False,
+        "display_name": "X", "animal": "cat", "status": "intake",
     }).status_code == 401
     assert client.post("/api/admin/store/x/ai-tag").status_code == 401
     assert client.delete("/api/admin/store/x").status_code == 401
@@ -130,7 +133,7 @@ def test_publish_from_pet_copies_and_seeds(admin_client, dpp_env):
     assert listing["animal"] == "leopard"
     # display_name seeded from the house pet; born UNPUBLISHED.
     assert listing["display_name"] == "White Snow Leopard"
-    assert listing["published"] is False
+    assert listing["status"] == "intake"
     assert listing["sellability_errors"] == []
     # No AI key in tests → best-effort draft degrades to empty text (§4).
     assert listing["description"] == ""
@@ -138,7 +141,7 @@ def test_publish_from_pet_copies_and_seeds(admin_client, dpp_env):
     # The house copy remains the admin's — publish COPIES, never moves (§5.1).
     assert dpp_env["db"].get_pet("adminpet0001") is not None
     # And the shopper cannot see it until the admin publishes.
-    assert dpp_env["db"].list_store_pets(published_only=True) == []
+    assert dpp_env["db"].list_store_pets(shelf_only=True) == []
 
 
 def test_publish_from_pet_reads_through_the_callers_own_scope(admin_client,
@@ -186,40 +189,41 @@ def test_put_normalizes_tags_and_publishes(admin_client, dpp_env):
     r = admin_client.put("/api/admin/store/storerow0001", json={
         "display_name": "Shelf Cat", "description": "A good cat.",
         "tags": [" Fluffy ", "fluffy", "", "x" * 40, "Orange Tabby"],
-        "animal": "Cat", "published": True,
+        "animal": "Cat", "status": "shelf",
     })
     assert r.status_code == 200, r.text
     listing = r.json()["listing"]
     assert listing["tags"] == ["fluffy", "orange tabby"]
     assert listing["animal"] == "cat"
-    assert listing["published"] is True
-    assert dpp_env["db"].list_store_pets(published_only=True)[0]["id"] == \
+    assert listing["status"] == "shelf"
+    assert dpp_env["db"].list_store_pets(shelf_only=True)[0]["id"] == \
         "storerow0001"
 
 
 def test_publishing_an_unsellable_bundle_is_refused(admin_client, dpp_env):
-    """§5.3 — the shared validator gates the flip; the row stays unpublished."""
+    """§5.3 — the shared validator gates the move to `shelf`; the row stays
+    where it was."""
     make_store_row(dpp_env["db"], store_id="brokenrow001", animations={})
     r = admin_client.put("/api/admin/store/brokenrow001", json={
-        "display_name": "Broken", "animal": "cat", "published": True,
+        "display_name": "Broken", "animal": "cat", "status": "shelf",
     })
     assert r.status_code == 422, r.text
     assert "animations" in json.dumps(r.json())
     row = dpp_env["db"].get_store_pet("brokenrow001")
-    assert row["published"] == 0
+    assert row["status"] == "intake"
 
 
-def test_animal_is_fixed_once_published(admin_client, dpp_env):
-    make_store_row(dpp_env["db"], published=True)
+def test_animal_is_fixed_once_shelved(admin_client, dpp_env):
+    make_store_row(dpp_env["db"], shelved=True)
     r = admin_client.put("/api/admin/store/storerow0001", json={
-        "display_name": "Shelf Cat", "animal": "dog", "published": True,
+        "display_name": "Shelf Cat", "animal": "dog", "status": "shelf",
     })
     assert r.status_code == 409
 
 
 # --- ai-tag ---------------------------------------------------------------
-def test_ai_tag_is_refused_on_a_published_row(admin_client, dpp_env):
-    make_store_row(dpp_env["db"], published=True)
+def test_ai_tag_is_refused_on_a_shelved_row(admin_client, dpp_env):
+    make_store_row(dpp_env["db"], shelved=True)
     r = admin_client.post("/api/admin/store/storerow0001/ai-tag",
                           cookies=anon_cookies())
     assert r.status_code == 409
@@ -227,7 +231,7 @@ def test_ai_tag_is_refused_on_a_published_row(admin_client, dpp_env):
 
 def test_ai_tag_overwrites_draft_text_and_surfaces_ai_failures(
         admin_client, dpp_env, monkeypatch):
-    make_store_row(dpp_env["db"], published=False)
+    make_store_row(dpp_env["db"], shelved=False)
     sa = admin_client._store_admin
 
     monkeypatch.setattr(
@@ -254,7 +258,7 @@ def test_ai_tag_tells_the_model_which_poses_the_pet_has(admin_client, dpp_env,
     way it can know what the pet DOES. They ride the prompt as a clause, from
     the same listing view shoppers read, so a tag like 'pounces' can only be
     written for a pet that actually has that pose."""
-    make_store_row(dpp_env["db"], published=False,
+    make_store_row(dpp_env["db"], shelved=False,
                    animations={"walk": {"frames": [0]}, "idle": {"frames": [1]},
                                "pounce": {"frames": [2]}})
     sa = admin_client._store_admin
@@ -278,7 +282,7 @@ def test_ai_tag_omits_the_pose_clause_when_there_are_none(admin_client, dpp_env,
                                                           monkeypatch):
     """An empty clause, not the words 'no poses' — an absent fact is silence,
     never a claim the model has to reason about."""
-    make_store_row(dpp_env["db"], published=False, animations={})
+    make_store_row(dpp_env["db"], shelved=False, animations={})
     sa = admin_client._store_admin
     seen = {}
 
@@ -295,7 +299,7 @@ def test_ai_tag_omits_the_pose_clause_when_there_are_none(admin_client, dpp_env,
 
 # --- delete ----------------------------------------------------------------
 def test_delete_removes_inventory_but_not_adopted_copies(admin_client, dpp_env):
-    make_store_row(dpp_env["db"], published=True)
+    make_store_row(dpp_env["db"], shelved=True)
     # An adopted copy in somebody's house, pointing back at the store row.
     zip_bytes, manifest_json = make_bundle_zip(breed_id="shelfcat",
                                                animations=dict(WALK_IDLE))

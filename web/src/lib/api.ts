@@ -805,10 +805,29 @@ export const settingsAdmin = {
 // prod must not require a deploy. The stocking door is publishFromPet — the
 // admin designs a pet in the NORMAL designer, then copies it onto the shelf.
 
-/** The admin's slice of a store pet: the listing plus staging state and the
+/** The shelf lifecycle (SPEC_PET_STORE §1.4). Only `shelf` is visible to
+ *  shoppers; the other three are three different reasons a pet is not for
+ *  sale, which is exactly what the boolean this replaced could not say. */
+export const STORE_STATUSES = ["intake", "shelf", "backroom", "archived"] as const;
+export type StoreStatus = (typeof STORE_STATUSES)[number];
+
+/** How each state reads to an admin. `intake` leads because a newest-first
+ *  table makes it the inbox. */
+export const STORE_STATUS_LABEL: Record<StoreStatus, string> = {
+  intake: "Intake — not looked at yet",
+  shelf: "On the shelf — for sale",
+  backroom: "Backroom — kept, not for sale",
+  archived: "Archived — not for sale, kept as a record",
+};
+
+/** The admin's slice of a store pet: the listing plus shelf state and the
  *  live sellability verdict (§5.3). */
 export interface StoreAdminListing extends StoreListing {
-  published: boolean;
+  status: StoreStatus;
+  admin_note: string;
+  /** Stamped by the server on the FIRST shelving, never cleared. Read-only:
+   *  it is what freezes `animal` for good (§1.3). */
+  first_shelved_at: number | null;
   sellability_errors?: string[];
 }
 
@@ -831,7 +850,7 @@ export const storeAdmin = {
     }),
   update: (id: string, body: {
     display_name: string; description: string; tags: string[];
-    animal: string; published: boolean;
+    animal: string; status: StoreStatus; admin_note: string;
   }): Promise<{ listing: StoreAdminListing }> =>
     storeFetch(`/${encodeURIComponent(id)}`, {
       method: "PUT", body: JSON.stringify(body),

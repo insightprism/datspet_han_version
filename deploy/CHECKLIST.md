@@ -230,6 +230,20 @@ old numbers is actively dangerous**, which is the whole reason for the change.
       docker restart datspet-nginx
       ```
 
+- [ ] **B8b. BACK UP `datspet.db` — required before the Phase 1b status migration.**
+      SPEC_PET_STORE §1.4 drops `store_pets.published`, which makes the PREVIOUS
+      release unable to read the table. That is a deliberate trade — a dual-written
+      column would reintroduce the two-sources-of-truth ambiguity the lifecycle
+      exists to remove — but it means **Phase D rollback for this deploy is a file
+      restore, not a `git revert`**. Take the copy BEFORE restarting the backend,
+      because the migration runs at `init_db` on the first boot of the new code.
+      ```bash
+      source pet_env.sh && cp "$PETMAKER_DB_PATH" "$PETMAKER_DB_PATH.pre-status-$(date +%Y%m%d%H%M)"
+      ```
+      Affordable here and nowhere else: the store holds a handful of rows per
+      environment and `pets` is untouched. Verify after the restart that the
+      shelf still serves what it served before (C5).
+
 - [ ] **B9. Pet Store migration — one-time per environment (SPEC_PET_STORE §8, §13).**
       **Ordering first:** the HOST deploys its store-pricing change *before* this web
       tier (§13) — a host that does not yet know `store_flat` quotes store pets by the

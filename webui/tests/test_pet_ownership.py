@@ -258,7 +258,8 @@ def test_adopting_a_store_pet_stamps_it_public(app_client, dpp_env):
         breed_id="storeleopard", animal="cat", description="", tags=[],
         created_at=1783800000.0, preview_png=b"\x89PNG\r\n\x1a\nDATA",
         sheet_png=b"\x89PNG\r\n\x1a\nDATA", manifest_json=manifest_json,
-        package_json=None, bundle_zip=zip_bytes, published=True)
+        package_json=None, bundle_zip=zip_bytes,
+        status=db.STORE_STATUS_SHELF)
 
     r = app_client.post("/api/store/storepet0001/adopt", cookies=anon_cookies())
     assert r.status_code == 200, r.text
