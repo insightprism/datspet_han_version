@@ -1,6 +1,6 @@
 # SPEC_PET_STORE — The Pet Store: a database-backed shop of ready-made pets
 
-**Status: Rev.6 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASE 2 SPECIFIED,
+**Status: Rev.7 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASE 2 SPECIFIED,
 NOT STARTED.** Phase 1 deployed host-first (§13) to staging and then production
 the same day, C1-verified 14/14 on both tiers, with the §12 store E2E passing on
 staging's real infrastructure (flat 50 quoted + charged; the pose formula would
@@ -45,8 +45,21 @@ pull channel delivers in the background, so an approved reward is *owed* until
 the donor appears; and DatsPet has no draft-purge clock, so a rejected pet comes
 back as a **kept** pet, not a draft that the donor's next Design click would
 destroy (§10.5). Also settled here: no claim handler for the donation ledger
-(the `ai_usage` rule), donations require a DatsMe identity, unstamped legacy
-pets are refused, and the reward knob ships at **0**.
+(the `ai_usage` rule), donations require a DatsMe identity, and unstamped legacy
+pets are refused.
+
+**Rev.7 (2026-07-31)** — the donor reward is **one social point, not credits**
+(owner decision, §0.4). On DatsMe a prosocial act pays social points —
+`award_generosity_reward` already does exactly this for gifting, daily cap and
+all — so donating should too. Mechanically it is a smaller change than it
+sounds: `_record_ledger_transaction` takes `ledger_type` as a parameter, and
+the host's writeback dispatch is the same plugin registry either way. It also
+*shrinks* the design: the capability drops to `low` risk (a social point is not
+money), the knob ships **on** at 1 instead of off at 0 because there is no money
+printer to disarm, and §10.7.5's threat model falls from "drains the platform's
+money supply" to "reputation inflation, capped per donor per day". §10.7.6 is
+new and states plainly what a social point is and is not worth today — including
+that the social→credit conversion endpoint has no frontend caller yet.
 
 </details>
 
@@ -60,7 +73,8 @@ door: **browse a shelf of ready-made pets — with portraits, descriptions, and
 searchable tags — and adopt one instantly, for one flat price** (the owner's
 knob — typically below designing, which burns real GPU, but possibly equal;
 §0.2). Later, a user whose 50-pet house is full can **donate** a pet she
-made to the store; an admin reviews it, and on approval she earns credits.
+made to the store; an admin reviews it, and on approval she earns a social
+point — DatsMe's standard reward for a prosocial act.
 
 The store is not a new idea in this codebase — adopt-a-premade shipped to
 staging as `SPEC_DATSPET_CATALOG_PURCHASE` and was verified with a real
@@ -77,7 +91,7 @@ inputs to this design:
 | 0.1 | Scope of v1 | **Admin-curated only.** Donations are Phase 2, shipped separately. |
 | 0.2 | Pricing | **A flat host-side credit knob** (`credit_pet_store_cost`), set at the host admin credits screen like every other knob. One price for any store pet, regardless of poses. Expected at or below the design formula (a store adopt burns no GPU; designing does) and possibly equal to it — the value is the owner's dial, never this spec's concern. DatsMe remains the only charger. |
 | 0.3 | Descriptions | **AI-drafted from the pet's portrait, admin-edited before publishing.** |
-| 0.4 | Donor reward | **Credits, minted at admin approval** — never at submission. §10.5 carries the anti-farming design this choice requires. |
+| 0.4 | Donor reward | **One social point, awarded at admin approval** — never at submission. Revised 2026-07-31 (Rev.7) from credits: gifting and donating pay *social* points on DatsMe (`award_generosity_reward`), and reputation is the right currency for a prosocial act. It also shrinks the trust surface — see §10.7.5. |
 
 ### §0.5 The posture that must not change
 
@@ -491,14 +505,15 @@ business lever is pulled.
 ## §10 Phase 2 — donations (specified for build, Rev.6)
 
 A user gives a pet she designed back to the store; an admin reviews it; on
-approval she earns credits. It is the supply side of the store: Phase 1 makes
+approval she earns a social point. It is the supply side of the store: Phase 1 makes
 every listing cost the owner admin time and GPU minutes, and this makes the
 users the supply. It is also the pressure valve on the 50-pet house cap —
 donating frees a slot *and* pays, where deleting just frees a slot.
 
 The owner's four Phase 1 decisions (§0) carry over unchanged. Decision 0.4 —
-**credits, minted at admin approval, never at submission** — is the one that
-shapes everything below.
+**the reward is awarded at admin approval, never at submission** — is the one
+that shapes everything below. Rev.7 changed *what* is awarded (a social point,
+not credits); the approval-gated timing it dictates is unchanged.
 
 ### §10.0 Three constraints found in design, before any code
 
@@ -540,13 +555,14 @@ and why it is worth adding.
 - **Donation** — one `store_donations` row: the bundle bytes, the donor, a
   status, and the reward's delivery state. It is a **ledger row**, not a pet.
 - **Owed** — an approved donation whose reward has not yet reached the host.
-- **Delivered** — the host acknowledged the award; the credit exists.
+- **Delivered** — the host acknowledged the award; the social point exists.
 
 **Who may donate.** Three gates, all server-side, in this order:
 
 1. **A DatsMe identity.** `owner_scope.require_owner` plus a non-anonymous
-   `external_user_id`. A standalone/anonymous user has no account for credits to
-   land in, so the door 403s rather than accepting a donation it can never pay.
+   `external_user_id`. A standalone/anonymous user has no account for a reward
+   to land in, so the door 403s rather than accepting a donation it can never
+   pay.
    This is also why §10.2 registers no claim handler (see there).
 2. **The entitlement.** New tier field `can_donate` (`pet_factory/tiers/`),
    resolved exactly like `can_adopt_samples` — `resolve_launch_capabilities` →
@@ -560,7 +576,7 @@ and why it is worth adding.
    **A pet with no owner fields at all is refused**, not assumed: legacy and
    folder-migrated rows read `(None, None, None)`, and `pet_ownership`'s rule is
    that absence is never coerced into a category. A donor with such a pet can
-   rebuild it; a wrong guess here mints credits for provenance nobody knows.
+   rebuild it; a wrong guess here pays out for provenance nobody knows.
 
 **Trigger surfaces** (§10.9): a **Donate** action on house cards, and the
 house-full line extended to "house full — remove one to make room, **or donate
@@ -629,7 +645,7 @@ Order, and it is the adopt order read backwards:
 4. `read_pet_ownership` category must be `factory` → 422 with the reason.
 5. **Pending cap**: a donor with `DONATION_PENDING_CAP` (3, a named constant)
    rows in `pending` gets 409. Queue spam is bounded at the door, and the cap is
-   what makes "a human reviews every credit" survive contact with volume.
+   what makes "a human reviews every award" survive contact with volume.
 6. `sellability_errors` (§5.3, its third caller) → 422 if the bundle could never
    be sold. Refusing here is kinder than accepting a donation the admin must
    reject, and it is the same function the publish gate and the build use.
@@ -683,7 +699,7 @@ kills that: drafts are destroyed by the donor's next Design click. So:
   made room. A rejected donation is never silently destroyed and never forces
   her over the cap.
 - Rejection pays nothing: `reward_state` stays `'none'`. There is no path from
-  `rejected` to a credit.
+  `rejected` to a reward.
 
 ### §10.6 Ownership at approval — still nothing to write
 
@@ -695,7 +711,7 @@ listing. SPEC_PET_OWNER_FIELD §2.4's "DatsPet writes only unsold ownership
 states" stands untouched, and a store pet that arrived by donation remains
 indistinguishable at runtime from one an admin made (§1.2).
 
-### §10.7 The reward — how a credit actually reaches the donor
+### §10.7 The reward — how a social point actually reaches the donor
 
 #### §10.7.1 The shape the constraints force
 
@@ -707,8 +723,8 @@ retry store, no drain tick, and no scheduler.
 
 Consequence to state plainly: **the reward is not instant.** A donor who never
 returns is never paid. That is acceptable — DatsPet has no notification channel
-(§11), the credits are usable only on DatsMe anyway, and the alternative is a
-background push channel the host does not offer.
+(§11), a social point is only meaningful on DatsMe anyway, and the alternative
+is a background push channel the host does not offer.
 
 #### §10.7.2 One writeback per launch, so awards batch
 
@@ -762,52 +778,91 @@ The host's writeback dispatch is a plugin registry, so this is content, not
 engine (`test_dpp_registry_consistency.py` is the guard that fails a half-formed
 entry — it defines the checklist):
 
-1. `_TARGET_HANDLERS["user.credit_award"]` (`service.py:1233`) → a thunk into a
-   new `apps/dpp/credit_award.py`, the way `user.pet` thunks into
+1. `_TARGET_HANDLERS["user.social_award"]` (`service.py:1233`) → a thunk into a
+   new `apps/dpp/social_award.py`, the way `user.pet` thunks into
    `pet_writeback.py` rather than growing `service.py`.
-2. `REQUIRED_CAPABILITY_BY_TARGET["user.credit_award"] = "credits.award"`
+2. `REQUIRED_CAPABILITY_BY_TARGET["user.social_award"] = "social.award"`
    (`service.py:1033`).
 3. `SUPPORTED_SCHEMA_VERSIONS` entry (`manifest.py:57`).
-4. A new `Capability("credits.award", "Award you credits", risk=…)`
+4. A new `Capability("social.award", "Award you social points", risk="low")`
    (`capabilities.py:46`).
-   **Risk must be `medium`, not `low`** — not because the user is endangered
-   (they are not; this only ever adds), but because `should_auto_grant`
-   (`capabilities.py:222`) auto-grants *any* low-risk capability to an official
-   partner without a consent screen, and the platform's money supply is not
-   something to grant silently. Medium forces the screen where the user reads
-   "DatsPet can award you credits."
+   **Low is correct here, and it is the one place the ledger choice changes the
+   security posture.** `should_auto_grant` (`capabilities.py:222`) auto-grants
+   low-risk capabilities to official partners without a consent screen. For a
+   *credit* award that would have been wrong — credits are money and buy GPU
+   work — which is why the credit version of this section required `medium`.
+   Social points are reputation: they buy nothing, gate nothing (§10.7.6), and
+   only ever add. A consent screen reading "DatsPet can award you social points"
+   asks the user to authorise a gift to themselves.
    **Not** added to `PULLABLE_TARGETS` — this target is push-only.
 
 **Idempotency: a new social-DB table with a unique business key.**
-`partner_credit_awards(partner_slug, award_key)` unique — `award_key` is the
+`partner_social_awards(partner_slug, award_key)` unique — `award_key` is the
 donation id — plus `user_id`, `amount`, `created_at`. Modelled on
 `uq_partner_collection_external` (`models.py:242`) for the key shape and on the
-Stripe webhook's **claim-before-mint** ordering (`payment_service.py:396`): insert
-the claim row first, in the same transaction as the ledger row, so a duplicate
-delivery loses the race on the unique index instead of minting twice.
+Stripe webhook's **claim-before-award** ordering (`payment_service.py:396`):
+insert the claim row first, in the same transaction as the ledger row, so a
+duplicate delivery loses the race on the unique index instead of paying twice.
 Deliberately *not* the replay cache (24 h TTL, and a donor who returns on day 3
-would double-mint) and *not* the launch nonce (it bounds a launch, not a
+would be paid twice) and *not* the launch nonce (it bounds a launch, not a
 donation — the exact bug `pet_writeback.py:466` records for pets).
 
-**The mint itself** follows `award_activity_completion_credits`
-(`social_ledger_service.py:471`): a platform-style award from `datsme.1` with no
-debit, one `LedgerTransaction`, and the caller owning the commit.
+**The award itself copies `award_generosity_reward`**
+(`social_ledger_service.py:718`) — the function DatsMe already uses to pay a
+social point for a prosocial act, and the closest thing the ledger has to a
+generic award helper. Its shape is exactly what is needed: keyword-only args, a
+config-read amount whose `<= 0` **is** the kill switch, the
+`_get_or_create_balance_cache(..., "social", lock=True)` lock taken *before* the
+count, a `created_at >= today_start` cap query scoped to its own
+`transaction_type`, one `_record_ledger_transaction` with
+`ledger_type="social"`, no commit (the caller owns it), and a `bool` return.
+`transaction_type` is **`pet_donation_social_reward`** — its own type, not
+`gift_generosity_reward`, because sharing a type would silently share that
+feature's daily cap (`test_pet_gifting.py:463` pins that the credit-gift and
+pet-gift rewards *do* share one, deliberately; donations must not join them).
 
-**Two knobs**, both in `SOCIAL_LEDGER_CONFIG_DEFAULTS` and both in
-`CREDIT_CONFIG_KEYS` — the Phase 1 lesson (a seeded knob missing from that list
-is invisible to the admin screen), now guarded by the subset test:
+Wrap the call the way `maybe_award_completion_credit` does
+(`identity_engine_service.py:711`): local import, `try/except` that logs and
+returns rather than failing the writeback. A reward that cannot be paid leaves
+the donation `owed` on the partner side and retries on the next launch.
 
-- `credit_pet_donation_reward` — **default `"0"`**. The reward ships *off*.
-  Turning it on is a deliberate admin act after the owner has watched the queue.
-  A zero amount short-circuits the mint but still marks the donation delivered,
-  so donors are not paid retroactively when the knob later moves.
-- `credit_pet_donation_daily_cap` — the per-partner ceiling, enforced
-  lock-then-count-then-insert exactly like `award_generosity_reward`
-  (`social_ledger_service.py:739`), which is the house pattern for a daily cap.
-  A partner over its cap gets a refusal the partner records as `owed` and
-  retries tomorrow.
+**Two knobs.** Naming follows the `credit_gift_social_reward_*` precedent —
+prefix by the *triggering* feature, `_social_reward_` marks what is paid out.
+**Not** `point_*`, which is reserved for the five core platform knobs:
 
-**Partner-scoped bookkeeping**: `partner_credit_awards` is partner-scoped, so it
+- `pet_donation_social_reward_amount` — **default `"1"`**, matching
+  `credit_gift_social_reward_amount`. One point per approved donation is the
+  house rate for a prosocial act. Ships *on*, unlike the credit version which
+  had to ship at 0: a social point is not money, so there is no money printer to
+  disarm before the first donation lands. `0` still disables it, and the
+  disable-by-zero is the same kill switch `award_generosity_reward` uses.
+- `pet_donation_social_reward_daily_cap` — **default `"1"`**, per donor per UTC
+  day, on this transaction type alone. A donor who gets three donations approved
+  in one day earns one point that day; the rest are marked delivered without
+  payment (the point was the pet, not the points).
+
+**Registration is FIVE places, not two, and Phase 1 was bitten by missing one.**
+`credit_pet_store_cost` shipped seeded and charged but absent from
+`CREDIT_CONFIG_KEYS`, so no admin screen could see it (§14.2). The full list for
+each new knob:
+
+1. `SOCIAL_LEDGER_CONFIG_DEFAULTS` (`social_ledger_config.py`) — a missing key
+   reads `"0"` and silently *disables* the feature.
+2. `CREDIT_CONFIG_KEYS` (`routes/admin.py`) — the GET filters and the PUT
+   rejects on this list.
+3. The ordered render array (`web/src/app/admin/page.tsx`) — it `.filter`s to
+   keys present in the response, so a key absent here renders nothing even when
+   steps 1–2 are done.
+4. The `isAward` list beside it, so the admin form labels it as a payout.
+5. `TRANSACTION_LABELS` (`web/src/app/[slug]/settings/points/page.tsx`) — the
+   donor's Social Point History humanises transaction types from this map, and
+   an unmapped type renders as `pet donation social reward`. Note
+   `gift_generosity_reward` is *already* missing there; fixing it in the same
+   change is one line.
+
+§10.11's guard test covers all five, not just the subset test Phase 1 added.
+
+**Partner-scoped bookkeeping**: `partner_social_awards` is partner-scoped, so it
 must be added to the eviction/purge delete list (`admin_routes.py:713`), the
 divorce-preview counts (`:497`), and `write_partner_bundle` (`audit_bundle.py:177`)
 — protocol §22a requires every partner-scoped table be expressible as
@@ -815,24 +870,55 @@ divorce-preview counts (`:497`), and `write_partner_bundle` (`audit_bundle.py:17
 
 #### §10.7.5 Why it cannot be farmed
 
-Generating is free in credits (it costs the owner GPU), so generate → donate →
-reward is a money printer unless every step is gated. It is:
+Generating is free (it costs the owner GPU, not the user credits), so generate →
+donate → reward would be a printer if the payout were money. **Choosing social
+points removes most of that pressure rather than mitigating it**: a social point
+buys nothing directly, converts at 10:1 with a 10-point minimum, and the
+conversion has no UI caller today (§10.7.6). The gates that remain are still
+load-bearing, because reputation inflation is a real harm even when the currency
+is not money:
 
-- **A human mints every credit.** The only transition into `owed` is the admin's
-  approve click. No reward at submission, none at publication.
+- **A human approves every award.** The only transition into `owed` is the
+  admin's approve click. No reward at submission, none at publication.
 - **Only your own designed pets** (§10.1 gate 3) — a store-adopted pet is
-  `public` and refused, so credits cannot be laundered through the shelf.
+  `public` and refused, so points cannot be laundered through the shelf.
 - **Three pending per donor** (§10.3 step 5) — the queue stays reviewable, which
   is what makes the human gate real rather than nominal.
-- **The knob ships at 0** and the daily cap bounds the blast radius of a stolen
-  partner secret to one day's worth of credits.
-- **The award is idempotent on donation id**, so replaying a captured writeback
-  mints nothing.
+- **One point per donor per day** (the daily cap), so a bulk-approval session
+  cannot mint a tier.
+- **Idempotent on donation id**, so replaying a captured writeback pays nothing.
 
 The residual risk, stated rather than hidden: a compromised `DATSME_HMAC_SECRET`
-lets an attacker mint up to the daily cap per day until the partner is disabled.
-That is why the cap is not optional and why `credits.award` is a consented
-capability the user can revoke.
+lets an attacker award social points — capped per donor per day, worth 1/10 of a
+credit each at conversion, and revocable by disabling the partner. That is a
+nuisance to clean up, not a loss. Under the credit version of this design the
+same compromise would have been a direct drain on the platform's money supply,
+which is the strongest argument for the social-point choice.
+
+#### §10.7.6 What a social point is actually worth — and what it is not
+
+Stated plainly so nobody assumes more:
+
+- **It converts to credits at `credit_social_conversion_ratio` (10:1)** with a
+  10-point minimum (`convert_social_to_credits`, `social_ledger_service.py:655`)
+  — so one donation reward is nominally 0.1 credit, and ten donations are
+  needed before conversion is even possible.
+- **The conversion endpoint has no frontend caller today.** `POST
+  /api/credits/convert` exists and works, but nothing in `web/src` or
+  `native_mobile` calls it. Until that ships, a social point is not spendable.
+- **Tiers gate nothing.** Bronze/silver/gold/platinum/diamond are computed from
+  the social balance and rendered as a badge and a progress bar; no permission,
+  discount, or capability anywhere is keyed on tier. The one thing social points
+  *do* gate is voting (`balance >= point_vote_cost`).
+- **It is visible.** The donor sees the award in Social Point History and the
+  badge on her profile — which is the actual reward being offered: public
+  credit for contributing to the shelf.
+
+If the owner later wants donations to pay something spendable, the lever is the
+same one either way: raise the amount, or add a second knob that also awards
+credits. Nothing in §10.7's mechanics is specific to which ledger is written —
+`_record_ledger_transaction` takes `ledger_type` as a parameter — so switching
+or adding is a handler change, not a redesign.
 
 ### §10.8 What the donor sees
 
@@ -882,7 +968,7 @@ pet?".
    registry entries, one handler module, one table, two knobs. `user.pet`,
    `identity.activity` and `user.collection` are untouched.
 4. *Bug in one variant → debugging shared code?* Donation bugs live in
-   `donations.py` / `reward_delivery.py` / `credit_award.py`. The shared code
+   `donations.py` / `reward_delivery.py` / `social_award.py`. The shared code
    they touch is the sellability validator — one function, three callers, whose
    whole point is that all three agree.
 
@@ -902,12 +988,17 @@ pet?".
   leaves rows `owed` (retry on the next launch); a 200 marks them `delivered`
   once and a second launch sends nothing; the idempotency key is derived from
   the donation ids, so a retry is byte-identical.
-- Host `api/tests/test_credit_award.py` (in-process, registered in
+- Host `api/tests/test_social_award.py` (in-process, registered in
   `test_all.py` — the §14.2 rule): the four registry entries are consistent;
-  a missing `credits.award` grant 403s; the same donation id delivered twice
-  mints once (the unique key); the daily cap refuses beyond it; a reward of 0
-  is a no-op that still succeeds. Plus the existing
-  `test_dpp_registry_consistency.py`, which must stay green.
+  a missing `social.award` grant 403s; the same donation id delivered twice
+  pays once (the unique key); the daily cap refuses the second award in a UTC
+  day; a reward amount of 0 is a no-op that still succeeds; the award writes
+  `ledger_type="social"` with its OWN transaction_type, so it cannot borrow
+  the gift reward's daily cap. **Plus a five-place registration guard** — every
+  `*_social_reward_*` and `credit_pet_*` knob is in `SOCIAL_LEDGER_CONFIG_DEFAULTS`,
+  in `CREDIT_CONFIG_KEYS`, in the admin render array, and in `TRANSACTION_LABELS`
+  (§10.7.4). Phase 1 shipped a knob that failed step 2 and nothing caught it.
+  Plus the existing `test_dpp_registry_consistency.py`, which must stay green.
 - Frontend: `tsc --noEmit` + vitest; the Donate button renders only for
   `donatable` rows.
 - E2E: extend `scripts/e2e_adopt_store_pet.sh`'s shape with a donation pass —
@@ -918,10 +1009,10 @@ pet?".
 
 | Step | Ships | Why this order |
 |---|---|---|
-| 2a | Host: capability, target, handler, table, knobs (reward knob at **0**) | The partner cannot deliver to a host that has no target; deploying the host first is inert because nothing calls it yet |
-| 2b | DatsPet: donate door, queue, admin review, donor surface — **no reward delivery** | Donations can be collected and reviewed while the reward is still off; the queue fills with real content before any credit moves |
-| 2c | DatsPet: reward delivery on launch | The only step that can move money; ships once 2a is verified live |
-| 2d | The owner raises `credit_pet_donation_reward` off 0 | A deliberate act, after watching the queue |
+| 2a | Host: capability, target, handler, table, knobs | The partner cannot deliver to a host that has no target; deploying the host first is inert because nothing calls it yet |
+| 2b | DatsPet: donate door, queue, admin review, donor surface — **no reward delivery** | Donations can be collected and reviewed before any award moves; the queue fills with real content first |
+| 2c | DatsPet: reward delivery on launch | The only step that pays anything; ships once 2a is verified live |
+| 2d | The owner tunes `pet_donation_social_reward_amount` if 1 is wrong | Optional — unlike the credit design, the reward ships on at the house rate |
 
 Staging before production at every step (Rule 0), and 2c's verification is the
 E2E above run against staging's real host, not a unit test.
@@ -931,8 +1022,8 @@ E2E above run against staging's real host, not a unit test.
 - **No instant reward.** It lands on the donor's next launch (§10.7.1). Revisit
   only if the host grows a real background delivery channel.
 - **No notifications.** DatsPet has no channel; §10.8's list is the surface.
-- **No donor-visible credit amounts** in DatsPet — the host renders numbers
-  (§0.5.1).
+- **No donor-visible point or credit amounts** in DatsPet — the host renders
+  numbers (§0.5.1). The donor's Social Point History is where the award appears.
 - **No editing a donation after submission.** It is a ledger row; a donor who
   wants a different pet donates a different pet.
 - **No partner-side reward for a rejected donation**, and no appeal flow. The
