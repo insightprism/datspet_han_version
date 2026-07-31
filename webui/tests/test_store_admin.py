@@ -239,13 +239,58 @@ def test_ai_tag_overwrites_draft_text_and_surfaces_ai_failures(
     assert r.status_code == 200, r.text
     assert r.json()["listing"]["description"] == "Fresh words."
 
-    # Redraft is an explicit ask — failures SURFACE (unlike publish's degrade).
+    # An explicit ask — failures SURFACE (nothing here degrades silently).
     def _boom(key, **kw):
         raise sa.ai_engine.AIUnavailable("no key")
     monkeypatch.setattr(sa.ai_engine, "call_purpose", _boom)
     r = admin_client.post("/api/admin/store/storerow0001/ai-tag",
                           cookies=anon_cookies())
     assert r.status_code == 503
+
+
+def test_ai_tag_tells_the_model_which_poses_the_pet_has(admin_client, dpp_env,
+                                                        monkeypatch):
+    """§4 — the model is shown ONE still frame, so the pose names are the only
+    way it can know what the pet DOES. They ride the prompt as a clause, from
+    the same listing view shoppers read, so a tag like 'pounces' can only be
+    written for a pet that actually has that pose."""
+    make_store_row(dpp_env["db"], published=False,
+                   animations={"walk": {"frames": [0]}, "idle": {"frames": [1]},
+                               "pounce": {"frames": [2]}})
+    sa = admin_client._store_admin
+    seen = {}
+
+    def _capture(key, **kw):
+        seen.update(kw.get("variables") or {})
+        return ({"description": "d", "tags": ["cat"],
+                 "display_name_suggestion": None}, None)
+
+    monkeypatch.setattr(sa.ai_engine, "call_purpose", _capture)
+    r = admin_client.post("/api/admin/store/storerow0001/ai-tag",
+                          cookies=anon_cookies())
+    assert r.status_code == 200, r.text
+    assert "walk" in seen["poses_clause"]
+    assert "pounce" in seen["poses_clause"]
+    assert seen["animal_clause"].strip() == "The pet is a cat."
+
+
+def test_ai_tag_omits_the_pose_clause_when_there_are_none(admin_client, dpp_env,
+                                                          monkeypatch):
+    """An empty clause, not the words 'no poses' — an absent fact is silence,
+    never a claim the model has to reason about."""
+    make_store_row(dpp_env["db"], published=False, animations={})
+    sa = admin_client._store_admin
+    seen = {}
+
+    def _capture(key, **kw):
+        seen.update(kw.get("variables") or {})
+        return ({"description": "d", "tags": [], "display_name_suggestion": None},
+                None)
+
+    monkeypatch.setattr(sa.ai_engine, "call_purpose", _capture)
+    admin_client.post("/api/admin/store/storerow0001/ai-tag",
+                      cookies=anon_cookies())
+    assert seen["poses_clause"] == ""
 
 
 # --- delete ----------------------------------------------------------------

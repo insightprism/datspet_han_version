@@ -306,10 +306,22 @@ the upload door and changes with it; a store listing changes with
 merchandising. Same registry, different content file — the plugin pattern
 doing its job.
 
-Input: the pet's portrait (the `preview_png` extracted at publish). Output
-contract: `{display_name_suggestion, description, tags}` — a shopper-facing
-paragraph (2–3 sentences, warm, concrete: colors, markings, mood) and 4–8
-lowercase tags.
+Input: the pet's portrait (the `preview_png` extracted at publish) **plus the
+pose names** the bundle declares. Output contract:
+`{display_name_suggestion, description, tags}` — a shopper-facing paragraph
+(2–3 sentences, warm, concrete: colors, markings, mood) and 4–8 lowercase tags.
+
+**Why the poses ride along.** The model is shown exactly ONE still frame — the
+idle frame cropped out of the sheet — so appearance is all it can see. The pose
+names are the only way it can know what the pet *does*, and they are already a
+fact of the bundle (`manifest["animations"]`, the same list the listing serves
+as `poses`), so handing them over costs nothing and no new data has to be
+kept. It is what lets a shopper search "pounces" and find a pet that actually
+has that pose. Two rules the prompt enforces: the model may tag an action
+**only if the pose list names it**, and it must never describe how a pose
+*looks* — it has not seen those frames. When a pet declares no poses the clause
+is empty rather than saying "no poses": an absent fact is silence, not a claim
+the model has to reason about.
 
 **It runs on one trigger only: the admin taps ✨ and confirms.** Nothing else
 in this spec invokes it — not stocking, not donating, not publishing, and never

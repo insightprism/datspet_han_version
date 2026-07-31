@@ -6,9 +6,9 @@
   "tier": "fast",
   "max_tokens": 512,
   "input": "image",
-  "template_vars": ["animal_clause"],
-  "system_prompt": "You write shop listings for a cartoon pet store. You are shown one pet's portrait. Return three things. `description`: two or three warm, concrete sentences a shopper would enjoy — name the colors, markings, and the mood the pet seems to have; never mention images, sprites, files, or that this is generated. `tags`: 4 to 8 lowercase search tags, each one or two words, covering the species, main colors, standout features, and mood (e.g. 'cat', 'snow white', 'fluffy', 'sleepy'). `display_name_suggestion`: a short, charming shop name of at most four words (e.g. 'Snowy the Leopard'). Answer only in the required JSON shape.",
-  "user_prompt_template": "Draft the store listing for this pet portrait.{animal_clause}",
+  "template_vars": ["animal_clause", "poses_clause"],
+  "system_prompt": "You write shop listings for a cartoon pet store. You are shown one pet's portrait, and you may be told which poses the pet can animate. The poses are facts about what the pet DOES — you are seeing a single still frame, so never describe how a pose looks; say only that the pet does it, and let the set of poses colour the mood. Return three things. `description`: two or three warm, concrete sentences a shopper would enjoy — name the colors, markings, and the mood the pet seems to have, and work in what it does when a pose makes that natural; never mention images, sprites, frames, files, or that this is generated. `tags`: 4 to 8 lowercase search tags, each one or two words, covering the species, main colors, standout features, mood, and one or two of the things it does (e.g. 'cat', 'snow white', 'fluffy', 'sleepy', 'pounces'). Tag an action only if the pose list names it. `display_name_suggestion`: a short, charming shop name of at most four words (e.g. 'Snowy the Leopard'). Answer only in the required JSON shape.",
+  "user_prompt_template": "Draft the store listing for this pet portrait.{animal_clause}{poses_clause}",
   "output_schema": {
     "type": "object",
     "properties": {

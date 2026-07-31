@@ -111,15 +111,25 @@ def _portrait_from_bundle(zip_bytes: bytes) -> bytes:
     return buf.getvalue()
 
 
-def _draft_listing(preview_png: bytes, animal: str,
+def _draft_listing(preview_png: bytes, animal: str, poses: list[str],
                    owner: Optional[str]) -> tuple[str, list[str], Optional[str]]:
     """One AI draft: (description, tags, display_name_suggestion). Raises the
     engine's typed errors — the CALLER decides whether to degrade (publish is
-    best-effort) or surface (the ai-tag door is an explicit ask)."""
-    clause = f" The pet is a {animal}." if animal else ""
+    best-effort) or surface (the ai-tag door is an explicit ask).
+
+    The model is shown ONE frame (the portrait), so the pose names are the only
+    way it can know what the pet does. They are already a fact of the bundle —
+    `manifest["animations"]`, the same list the listing serves as `poses` — so
+    handing them over costs nothing and is what lets a shopper search "sleepy"
+    or "pounces" and find a pet that actually has that pose.
+    """
+    animal_clause = f" The pet is a {animal}." if animal else ""
+    poses_clause = (f" It can animate these poses: {', '.join(poses)}."
+                    if poses else "")
     result, _ = ai_engine.call_purpose(
         LISTING_PURPOSE_KEY, image=preview_png, media_type="image/png",
-        variables={"animal_clause": clause}, external_user_id=owner)
+        variables={"animal_clause": animal_clause,
+                   "poses_clause": poses_clause}, external_user_id=owner)
     description = (result.get("description") or "").strip()
     tags = _normalize_tags(result.get("tags") or [])
     suggestion = (result.get("display_name_suggestion") or "").strip() or None
@@ -277,9 +287,12 @@ def ai_tag_listing(store_id: str, request: Request):
         raise HTTPException(409, "a published listing is the admin's text — "
                                  "unpublish is not a thing; edit it directly")
     owner = owner_scope.require_owner(request)
+    # Poses come through the listing view, not a second manifest read — one
+    # definition of "what poses this pet has", shared with what shoppers see.
+    poses = db.store_listing_view(row)["poses"]
     try:
         description, tags, suggestion = _draft_listing(
-            row["preview_png"], row["animal"], owner)
+            row["preview_png"], row["animal"], poses, owner)
     except ai_engine.AIUnavailable as e:
         raise HTTPException(503, f"AI engine unavailable: {e}")
     except ai_engine.AIError as e:
