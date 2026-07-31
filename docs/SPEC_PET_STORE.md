@@ -121,11 +121,25 @@ buyer's house and `delete_pet` is a hard delete, so a user tidying up silently
 decrements a number meant to record history. §1.5.3 specifies the fix as an
 append-only `store_sales` ledger written where the ack already lands — one
 insert, `pet_id` as the primary key so a retried host notification cannot
-double-count, and deliberately **no price column**, because DatsPet is not the
-pricer and a stale copy of the host's knob would be a number two systems
-disagree about. Views stay unbuilt and are a genuinely harder problem (§1.5.4):
-one cached listing payload and a 24-hour preview cache mean there is no request
-to count without a purpose-built beacon.
+double-count.
+
+It records the **amount**, and a first draft of this section wrongly said it
+should not. "DatsPet must never *compute* a price" is a real rule; "therefore do
+not record one" does not follow. The host already has the exact charge —
+`handle_target_user_pet` returns `credits_charged`, the import route sums it —
+and then builds its partner notification from ids alone, dropping the figure one
+line later. So the host sends what it already computed (`items:
+[{id, credits_charged}]`, additive beside `item_ids`, which third-party partners
+read today), and a missing amount is NULL rather than 0, because a free
+re-import delta makes zero a legitimate value. Unlike an AI call's cost, a pet's
+charge is **not** recoverable after the fact — it depends on a knob that moves
+and a per-import delta — so recording it at transaction time is the only way it
+exists at all. Reports are then a `GROUP BY`, with no aggregate columns to
+drift.
+
+Views stay unbuilt and are a genuinely harder problem (§1.5.4): one cached
+listing payload and a 24-hour preview cache mean there is no request to count
+without a purpose-built beacon.
 
 </details>
 
@@ -300,11 +314,13 @@ where `0`, then `DROP COLUMN published` — SQLite on these boxes is 3.37, so
 a compatibility shim: a transition layer here would mean two sources of truth
 for "is this for sale", which is the failure this revision exists to remove.
 
-### §1.5 Sales — known but not kept, and views, which are neither
+### §1.5 The transaction record — who, how much, when, which pet
 
-**The store knows exactly how many times a listing was sold, and to whom. It
-just throws the evidence away when a buyer tidies up.** Rev.9 records the fix
-and does not build it.
+A store keeps transactions. This one does not yet — not because the facts are
+unknown, but because nothing writes them down: the sale is confirmed by the
+host, the buyer is on the row, and the amount is computed by the host and
+discarded in transit. §1.5.3 is the ledger that fixes all three. Rev.9
+specifies it and does not build it.
 
 #### §1.5.1 The sale is already a precise, host-confirmed event
 
@@ -339,45 +355,85 @@ bought". The sale happened; the record of it was collateral damage to an
 unrelated action. That divergence is invisible and permanent, and it gets worse
 the longer the store runs, which is exactly when the number starts mattering.
 
-#### §1.5.3 The fix: an append-only sale ledger, written where the ack lands
+#### §1.5.3 The fix: an append-only transaction ledger
+
+A store is a store: **who bought it, how much they paid, when, and which pet**
+is the basic record, and all four are known at the moment of sale.
 
 ```sql
 CREATE TABLE IF NOT EXISTS store_sales (
     pet_id         TEXT PRIMARY KEY,  -- the adopted copy; UNIQUE, so a retried
                                       -- host notification cannot double-count
-    store_pet_id   TEXT NOT NULL,     -- which listing was sold
-    buyer_user_id  TEXT NOT NULL,     -- external_user_id at the time of sale
-    sold_at        REAL NOT NULL
+    store_pet_id   TEXT NOT NULL,     -- WHAT was sold (the listing)
+    buyer_user_id  TEXT NOT NULL,     -- WHO bought it (external_user_id)
+    credits_paid   INTEGER,           -- HOW MUCH the host actually charged;
+                                      -- NULL = the host did not report it
+    sold_at        REAL NOT NULL      -- WHEN (unix epoch float, matching pets)
 );
 ```
 
 - **One insert, in a handler that already exists.** `partner_imported` already
-  loops the acked pet ids and already has the row in hand; the ledger row goes
-  in beside `stamp_writeback_acked`, guarded so a pet with no
-  `source_store_pet_id` (a designed pet) writes nothing.
+  loops the acked pet ids and already has each row in hand; the ledger row goes
+  in beside `stamp_writeback_acked`, guarded so a designed pet (no
+  `source_store_pet_id`) writes nothing.
 - **`pet_id` is the primary key, and that is the idempotency.** The host may
-  re-notify; the stamp is naturally idempotent because it overwrites, but an
-  INSERT is not — so the key does that job. `INSERT OR IGNORE`, never an
-  UPDATE: **append-only ledgers stay append-only**, the `ai_usage` rule.
-- **No price column, deliberately.** DatsPet does not know what the buyer was
-  charged and must never guess — the host is the only pricer (§0.5.1), the
-  amount is a host knob that changes under us, and a stale copy of it here
-  would be a number two systems disagree about. If revenue reporting is ever
-  wanted, it is a host-side question against the host's own ledger.
-- **Deleting the store listing does not delete its sales.** The ledger outlives
-  the inventory row, like the donation ledger outlives the pet it became
-  (§10.2). History is not tidied.
+  re-notify. The existing stamp survives that naturally because it overwrites;
+  an INSERT does not, so the key does that job. `INSERT OR IGNORE`, never an
+  UPDATE — **append-only ledgers stay append-only**, the `ai_usage` rule.
+- **The ledger outlives everything.** Deleting the listing, archiving it, or the
+  buyer emptying their house all leave the sale intact, the way the donation
+  ledger outlives the pet it became (§10.2). History is not tidied.
 
-Then "how many times was this sold" is a `COUNT` on a table nothing else
-mutates, and it stays true through house cleanups, archiving, and deletion of
-the listing itself.
+##### The amount: reported by the host, never computed here
 
-**Buyer identity is stored but not casually displayed.** `buyer_user_id` is what
-makes the ledger auditable and would answer "did this actually reach a person",
-but the admin shelf does not need names to make merchandising decisions — a
-count does. Default the admin surface to counts, and treat exposing buyer
-identity as its own decision with its own reason, not a free consequence of
-having the column.
+DatsPet must never *derive* a price — the host is the only pricer (§0.5.1), the
+amount is a knob that moves, and a re-import charges a delta rather than the
+full cost. But "do not compute it" and "do not record it" are different rules,
+and only the first one is right. **The host already has the exact figure and
+discards it one line before it tells us:**
+
+- `handle_target_user_pet` returns `credits_charged` per item
+  (`pet_writeback.py:576`) — the real charge, after the delta rule.
+- The import route collects those into `results` and even sums them
+  (`import_routes.py:419`).
+- Then it builds `landed = [r["id"] …]` and calls `notify_partner_imported`
+  with **ids only** (`import_routes.py:428`), dropping the amount it is holding.
+
+So the host-side change is to send what it already computed. `notify_partner_imported`
+gains an `items: [{id, credits_charged}]` array **alongside** the existing
+`item_ids`, with `item_ids` derived from the same list at build time so the two
+can never disagree. Additive rather than a reshape, because `/partner/imported`
+is a documented third-party endpoint and other partners read `item_ids` today.
+
+**A missing amount is NULL, never 0.** If the notification carries no figure —
+an older host, or a partner tier deployed ahead of the host — the sale is
+recorded with `credits_paid` NULL. Zero is a legitimate value (a re-import
+delta can genuinely be free), so collapsing "unknown" into "free" would put a
+lie in the ledger. This is the same trap the pricing path already fell into
+once with an absent `pose_count` (`quote_user_pet_import`'s "missing is not
+zero" note) — the fix there is the rule here.
+
+**Why store the amount when `ai_usage` deliberately does not store cost.** The
+rules only look alike. An AI call's cost is recoverable forever from a stable
+per-model price catalog, so storing it would duplicate a derivable fact. A pet's
+charge depends on a host knob that changes over time and on a per-import delta —
+**it is not recoverable after the fact from anything DatsPet or the host retains
+in a queryable form.** Record it at transaction time or lose it. That is what
+makes this a transaction record rather than a cache.
+
+##### Reporting falls out of the shape
+
+"Revenue by listing", "sales this month", "which animals sell" are all a
+`GROUP BY` over this table. **No aggregate columns, no counters, no running
+totals** — those are the things that drift from the rows they summarise. The
+per-sale row is the fact; every report is a read.
+
+**Buyer identity is stored, and shown only where it earns its place.**
+`buyer_user_id` is what makes the ledger auditable and answers "did this reach a
+real person". Merchandising decisions need counts, not names, so the shelf view
+defaults to counts and a per-listing sales figure; surfacing buyer identity is
+its own decision with its own reason, not a free consequence of having the
+column.
 
 #### §1.5.4 Views are a different problem, and not a cheap one
 
@@ -1354,6 +1410,14 @@ New tests, same culture (shared validators, floor tests, scoping):
   refuses an unsellable bundle (shared validator); **publish-from-pet never
   invokes the AI** (§4 — the guard against the auto-draft coming back); ai-tag
   refuses on a shelved row.
+- `webui/tests/test_store_sales.py` (§1.5.3) — the ack writes exactly one sale
+  row carrying buyer, listing, amount and time; a REPEATED host notification
+  writes no second row (the `pet_id` key); a notification with no amount
+  records `credits_paid` NULL, **not 0** (the "missing is not zero" rule) while
+  a genuinely free re-import records 0; a designed pet's ack writes nothing;
+  deleting the buyer's house pet and deleting the listing both leave the sale
+  row intact. Host side: `notify_partner_imported` sends the per-item amount it
+  already computed, and `item_ids` still matches the enriched `items` exactly.
 - `webui/tests/test_store_status.py` (Rev.9) — a shopper sees `shelf` rows and
   only those: `intake`, `backroom` and `archived` are absent from the listing
   and 404 on BOTH preview and adopt (invisible, not merely unlisted). Every
@@ -1466,10 +1530,13 @@ that called it. Fixed; the ordering rule is now written down.
    written (Rev.6, reshaped by Rev.7 and Rev.8): §10 is build-ready and needs
    the owner's sign-off, not more design. Nothing about it is coded in either
    repo.
-7. **§1.5.3's `store_sales` ledger** — specified, not built. Small (one insert
-   in `partner_imported`), and every day it is not built is sales history that
-   a buyer's house cleanup can still erase. View counting stays unbuilt and
-   unspecified beyond §1.5.4 — it is a beacon, not a counter.
+7. **§1.5.3's `store_sales` transaction ledger** — specified, not built. Two
+   small changes that must ship together: one insert in `partner_imported`
+   (DatsPet) and one enriched field on `notify_partner_imported` (host, which
+   already computes the amount and drops it). Every day it is not built is
+   transaction history that no longer exists — the amount is unrecoverable
+   afterwards, and a buyer's house cleanup erases the rest. View counting stays
+   unbuilt and unspecified beyond §1.5.4 — it is a beacon, not a counter.
 
 ### §14.4 Deployed (Rev.5, 2026-07-31)
 
