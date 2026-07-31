@@ -194,22 +194,35 @@ def _build_manifest_body() -> dict:
             required=True,
         )
         .request_capability(
-            # SPEC_PET_STORE §10.7. Asked for OPTIONALLY: a user who does not
-            # grant it can still design, adopt and donate — she simply cannot
-            # be thanked, and the donate door says so rather than failing. A
-            # required capability here would gate the whole app on a feature
-            # most users never touch.
+            # SPEC_PET_STORE §10.7. REQUIRED, which is what makes it invisible.
             #
-            # Nothing in this request names an amount, and the capability
-            # cannot spend anything: it only lets DatsMe recognise something
-            # the user did here. That is why it is low risk host-side and
-            # auto-granted for an official partner.
+            # A DPP launch is authenticated by DatsMe, minted by DatsMe, for a
+            # DatsMe user. Asking that same user to grant a first-party partner
+            # permission to GIVE THEM POINTS is ceremony: there is no third
+            # party here and nothing to protect them from. Capabilities gate
+            # ACTIONS rather than identity — which is why credits.consume is
+            # high risk however the user signed in — but that reasoning only
+            # bites when an action can cost something, and this one can only
+            # add.
+            #
+            # Required + low risk + an `official` partner means should_auto_grant
+            # returns true and mint_launch_token grants it inline, so no user
+            # ever sees a screen and every existing user picks it up on their
+            # next launch. It has to be REQUIRED to get there: auto-grant only
+            # ever runs over the required set, so an optional capability is
+            # never granted automatically at any tier (measured on staging —
+            # a launch at `official` granted nothing).
+            #
+            # The trade, recorded rather than buried: a required capability is
+            # one the user cannot decline and cannot meaningfully revoke, since
+            # the next launch re-grants it. Accepted because it can only ever
+            # award, never spend.
             "social.award",
             justification=(
                 "Ask DatsMe to thank you with social points when you donate a "
                 "pet you designed to the Pet Store."
             ),
-            required=False,
+            required=True,
         )
         .request_capability(
             "profile.read",

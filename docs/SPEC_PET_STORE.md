@@ -1,6 +1,6 @@
 # SPEC_PET_STORE — The Pet Store: a database-backed shop of ready-made pets
 
-**Status: Rev.12 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASES 1a, 1b AND 2
+**Status: Rev.13 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASES 1a, 1b AND 2
 BUILT AND DEPLOYED NOWHERE.** There is no Phase 3 — §13's table is the whole
 plan, and §14.5 is the build ledger for what has not shipped. Phase 1 deployed host-first (§13) to staging and then production
 the same day, C1-verified 14/14 on both tiers, with the §12 store E2E passing on
@@ -1633,25 +1633,40 @@ only, scoped like every other read): the name, when she gave it, and the
 thank-you. Nothing is actionable — no restore, no appeal, no verdict — which is
 the point of the model.
 
-**The capability has to be asked for, and the donate door is where.** DatsMe
-gates a launch on *required* capabilities only, and `mint_launch_token`
-auto-grants only within that same required set — so an **optional** capability
-is never auto-granted at any partner tier, and a user is never prompted for one
-at launch. `social.award` is optional (§10.1: requiring it would gate the whole
-app on a feature most users never touch), so nobody acquires it by default.
+**The capability is REQUIRED, and no user is ever asked for it (Rev.13).**
 
-That is left as-is rather than "fixed" by making it required, because a
-donation is irreversible and this is the one moment worth interrupting: the
-confirm dialog tells a donor who has not granted it that this pet earns no
-points, and offers the host's consent page to fix it. Declining stays a real
-choice — she can still donate to free a slot, and a revocation stays revoked,
-which a required-and-auto-granted capability could not promise. The session's
-`can_be_thanked` (read from the VERIFIED token, never the cookie) is the hint;
-the host remains the enforcement point.
+DatsMe gates a launch on required capabilities and auto-grants the low-risk
+ones inline for an `official` partner. `social.award` is required, low risk,
+and DatsPet is official — so it is granted silently at launch, every existing
+user picks it up on their next visit, and nobody sees a screen. Measured on
+staging: a user holding only `pets.write` came out of one launch holding
+`social.award` too, and her next donation was thanked.
 
-*(A tier promotion to `official` was tried first and reverted: `should_auto_grant`
-does return true for it, but nothing consults it for optional caps — proven on
-staging, where a launch granted nothing.)*
+**Why not ask.** A DPP launch is authenticated by DatsMe, minted by DatsMe, for
+a DatsMe user. Asking that same user to grant a first-party partner permission
+to *give them points* is ceremony — there is no third party and nothing to
+protect them from. Capabilities gate ACTIONS rather than identity, which is why
+`credits.consume` is high risk however the user signed in; but that reasoning
+only bites when an action can COST something, and this one can only add.
+
+An earlier revision asked at the donate door, reasoning that a donation is
+irreversible and that is the moment worth interrupting. The irreversible thing
+is the *pet*, and the confirm dialog already says so — the extra screen was
+only ever about the points. That code survives as a fallback: if a user somehow
+lacks the grant, the dialog still says this pet earns nothing and offers the
+consent page, rather than taking a pet and silently failing to pay for it.
+
+**The trade, recorded rather than buried:** a required capability is one the
+user cannot decline and cannot meaningfully revoke, because the next launch
+re-grants it. Accepted here because the capability can only ever award, never
+spend. It would NOT be acceptable for one that costs the user anything.
+
+**It has to be `required` to get there.** Auto-grant only ever runs over the
+required set (`mint_launch_token` filters `PartnerCapabilityRequest.required ==
+True`), so an *optional* capability is never granted automatically at any tier
+— and the launch gate never prompts for one either. An earlier attempt promoted
+the partner to `official` while leaving the capability optional; it granted
+nothing, which is how this was found.
 
 **The thank-you names the number, and the number is the host's.** A delivered
 row reads *"Thank you — DatsMe credited you 1 social point."* using
