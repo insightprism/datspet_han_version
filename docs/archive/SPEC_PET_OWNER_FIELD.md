@@ -1,7 +1,27 @@
 # SPEC — The bundle owner fields (one pet, one owner)
 
-**Status:** **Rev.13 (2026-07-30) — Phases 1–3 BUILT and on staging; Phase 4 (the render gate, §10)
-specified and unbuilt.** Three `owner_*` fields in
+> **CLOSED & ARCHIVED — 2026-07-31. Executed to completion across both repos.** All four phases
+> are built and in production: DatsPet prod `3afc2849` (`verify_deployment.sh` 14/14), DatsMe prod
+> `4bbe812c` (64/64 on the prod interpreter). Staging runs `PET_OWNER_ENFORCEMENT=enforce` and the
+> full lifecycle was acceptance-tested there through the real UI (the wu.1 → sara.1 table below);
+> **production still runs `observe`**.
+>
+> **Open at close-out — all three live on the HOST (`datsme_me`), none in this repo:**
+>
+> 1. **Production's `enforce` flip (§9.2)** — a config change, gated on reading prod's
+>    `pet_owner_refused` log (empty at deploy time).
+> 2. **§10.5** — storefront pets (`create_my_pet`) are never stamped, so they render ungated
+>    forever. The spec's instruction stands: decide this, do not discover it.
+> 3. **§10.9** — the pet list does not badge a render-blocked pet (needs an API shape change).
+>
+> **Exception to "do not read": this document is still the authority** for the owner-field
+> vocabulary (§1), the writer/reader contract (§2), the two-door semantics (§4) and the render
+> gate (§10) — code in both repos cites those sections by number. Guarded by
+> `webui/tests/test_pet_ownership.py` (DatsPet) and `api/tests/test_pet_ownership.py` (DatsMe,
+> sha256-pinned shared fixture).
+
+**Status:** **Rev.14 (2026-07-31) — CLOSED & ARCHIVED; Phases 1–4 built and in production
+(see the banner above).** Three `owner_*` fields in
 `manifest.json` recording who may bring a pet to life on DatsMe and since when, plus a reserved
 `fingerprint` mark. **DatsPet stamps the unsold state at mint; DatsMe stamps the owner at every
 transfer.** One field carries the owner, and it is the DatsMe **slug** (or group tag) — the thing a
@@ -36,7 +56,8 @@ the one update function they need (`set_pet_ownership`). §10's render gate — 
 given website and tells the owner who actually holds it — is **also built** (Phase 4), along with the
 group-gift rule (§2.5a).
 
-Remaining work: the `enforce` flip (§9.2), then production.
+Remaining work at close-out: production's `enforce` flip (§9.2) plus the two §10 open items —
+carried in the archive banner at the top.
 
 > ## Rev.12 — the owner is a slug, and the HOST writes it
 >
