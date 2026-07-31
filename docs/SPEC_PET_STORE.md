@@ -7,8 +7,13 @@ staging's real infrastructure (flat 50 quoted + charged; the pose formula would
 have said 110). §14 is the as-built ledger and the only place to read for "what
 is done"; §14.4 records the deploys. **§10 is now a build-ready specification
 rather than a sketch** — it needs owner sign-off before code, and §10.0 records
-the three constraints that moved the design. **Rev.9's shelf lifecycle (§1.4)
-changes a LIVE Phase 1 table** and is specified but not built.
+the constraints that moved the design.
+
+**Three things are specified and built nowhere** (§13, §14.3): the transaction
+ledger (**Phase 1a**, §1.5.3 — the only one losing data while it waits), the
+shelf lifecycle (**Phase 1b**, §1.4 — it changes a live Phase 1 table), and
+donations (**Phase 2**, §10). §1–§13 describe the design in its finished state,
+including those parts; §14 is the ledger of what actually exists.
 
 Supersedes the file-based samples surface of `SPEC_DATSPET_CATALOG_PURCHASE`
 (archived, executed 2026-07-30) — see §8 for exactly what it absorbs and retires.
@@ -145,7 +150,7 @@ without a purpose-built beacon.
 
 ---
 
-## §0 What this is, and the four decisions already made
+## §0 What this is, and the decisions already made
 
 A user today can only bring a pet to life that she designed herself (~3 min of
 GPU, priced by pose count at DatsMe's checkout). The Pet Store adds the other
@@ -164,18 +169,19 @@ does: a **database-backed inventory** (so admins can stock production at
 runtime — prod's content dirs are read-only by design), **listing metadata**
 (descriptions, tags, search), **a store price**, and **donations**.
 
-Four product decisions were made by the owner on 2026-07-30 and are fixed
-inputs to this design:
+Five product decisions are fixed inputs to this design. The first four were
+made by the owner on 2026-07-30; 0.4 was revised and 0.5 added on 2026-07-31
+(Rev.7 and Rev.8):
 
 | # | Decision | Choice |
 |---|---|---|
 | 0.1 | Scope of v1 | **Admin-curated only.** Donations are Phase 2, shipped separately. |
-| 0.5 | What donating means | **A donation is a gift, and it is final** (Rev.8). The pet transfers to store inventory at the click — into `intake` (§1.4) — and the donor cannot get it back. The admin decides only what reaches the shelf, never whether to accept. The model is a charity shop: once it is donated, it is gone. |
 | 0.2 | Pricing | **A flat host-side credit knob** (`credit_pet_store_cost`), set at the host admin credits screen like every other knob. One price for any store pet, regardless of poses. Expected at or below the design formula (a store adopt burns no GPU; designing does) and possibly equal to it — the value is the owner's dial, never this spec's concern. DatsMe remains the only charger. |
-| 0.3 | Descriptions | **AI-drafted from the pet's portrait, admin-edited before publishing.** |
+| 0.3 | Descriptions | **AI-drafted from the pet's portrait, admin-edited before it reaches the shelf.** Revised 2026-07-31: the draft is *invoked* (the ✨, behind a confirm), never produced as a side effect of stocking — §4. |
 | 0.4 | Donor reward | **One social point, awarded at the donate click.** Revised twice on 2026-07-31: from credits to social points (Rev.7 — gifting and donating pay *social* points on DatsMe, `award_generosity_reward`, and reputation is the right currency for a prosocial act), then from award-at-approval to award-at-donation (Rev.8, with §0.5 below). |
+| 0.5 | What donating means | **A donation is a gift, and it is final** (Rev.8). The pet transfers to store inventory at the click — into `intake` (§1.4) — and the donor cannot get it back. The admin decides only what reaches the shelf, never whether to accept. The model is a charity shop: once it is donated, it is gone. |
 
-### §0.5 The posture that must not change
+### §0.6 The posture that must not change
 
 Three rules inherited from prior specs are load-bearing here and repeated
 because the store touches all of them:
@@ -211,7 +217,7 @@ because the store touches all of them:
 
 A **separate table**, not flagged rows in `pets` — and this is a boundary
 decision, not a convenience. The `pets` table is scoped by `_scope_clause`,
-which is exact-match on owner *as a security invariant* (`webui/db.py:341-352`,
+which is exact-match on owner *as a security invariant* (`webui/db.py:401-411`,
 guarded by `test_scoping.py`). A store pet is visible to everyone; no owner
 value can express that, and widening the clause is exactly the bug the
 exact-match fix removed. Separate table, separate read path, zero contact with
@@ -231,6 +237,8 @@ CREATE TABLE IF NOT EXISTS store_pets (
     pose_count      INTEGER NOT NULL,   -- derived from manifest at insert (like bundle_sha256)
     status          TEXT NOT NULL DEFAULT 'intake',  -- §1.4; replaced `published` in Rev.9
     admin_note      TEXT NOT NULL DEFAULT '',        -- why it was archived / held back
+    first_shelved_at REAL,                           -- NULL until first
+    shelved; freezes `animal` (§1.3)
     created_at      REAL NOT NULL,      -- unix epoch float, matching pets
     bundle_sha256   TEXT NOT NULL,      -- derived at insert
     size_bytes      INTEGER NOT NULL,   -- derived at insert
@@ -253,7 +261,35 @@ Deliberately **absent**: any owner column (nobody owns inventory), any
 draft purge sweeps), any source/provenance column (§2 — a store pet that
 arrived by donation is indistinguishable at runtime from one an admin made;
 donor facts live on the Phase 2 donation row, which is audit, not engine
-input), and **any adoption or view counter** (§1.5).
+input — the read-time boundary where comparing sources is allowed is named in
+§7.2), and **any adoption or view counter** (§1.5).
+
+### §1.3 Listing metadata: two kinds of facts, two sources
+
+- **Mechanical facts** are derived from the bundle at insert and are never
+  editable: `breed_id`, `pose_count`, pose names (read from
+  `manifest["animations"]` at read time). Editing these would let a listing
+  lie about its artifact.
+- **`animal` is seeded, then confirmed** (Rev.3). A bundle carries no
+  canonical species key — a typed-animal pet's `breed_id`
+  (`white_snow_leopard`) appears in no `catalog.json`. Stocking seeds it by
+  catalog breed lookup, falling back to the last word of `breed_id`, and the
+  admin may correct it **while the row has never been on the shelf**; the
+  sellability validator refuses to shelve an empty one. **Once a row has been
+  shelved the value is frozen for good** — including if it is later moved to
+  `backroom` or `archived` — because the shop's filter chips and any shopper's
+  memory of the listing depend on it. (Rev.9: under the old boolean "not
+  published" and "never published" were the same thing; under four states they
+  are not, so the rule names the stronger one. It needs a
+  `first_shelved_at REAL` column, §1.2.)
+- **Merchandising facts** are authored: `display_name`, `description`,
+  `tags_json`, `status`, `admin_note`. The AI drafts the first two-and-a-half
+  (§4) when asked; the admin owns the final text.
+
+Tags are plain lowercase strings, not an enum. The design-axes vocabulary
+(`pet_factory/design_axes/`) is a natural *source* of tag suggestions, but the
+store does not enforce it — a closed tag vocabulary is an abstraction with one
+consumer today, and the three-instances rule says wait.
 
 ### §1.4 `status` — the shelf lifecycle (Rev.9)
 
@@ -295,24 +331,75 @@ people toward hard deletes when they change their mind. The one rule that is
 not free is the gate: **moving *to* `shelf` runs the sellability validator**
 (§5.3) and refuses on failure, exactly as the old publish flip did.
 
+The precise write rules, because the boolean's behaviour does not translate
+one-to-one:
+
+- **The validator runs on any write that leaves the row `shelf`**, not only on
+  the transition into it. A re-save of a live listing is the moment to catch a
+  row whose bytes went bad after shelving, and it is what the code does today
+  (`store_admin.py`, on `published=true`) — keeping it means one rule, not two.
+- **`animal` is frozen once `first_shelved_at` is set** (§1.3), not merely while
+  the row is on the shelf. Under the boolean these were the same condition;
+  under four states they are not, and the weaker reading would let a shelf →
+  backroom → re-animal → shelf round trip change a listing shoppers had already
+  filtered on.
+- **`first_shelved_at` is stamped by the store, never by the client** — set on
+  the first write that results in `status='shelf'`, never overwritten, never
+  cleared. It is a derived fact like `bundle_sha256`, not an editable field.
+- **An unknown status is a 422 with the allowed set in the message.** The four
+  values are a named constant (`STORE_STATUSES`) beside `STORE_MAX_TAGS`, and
+  the ai-tag door's gate becomes `status == 'shelf'` → 409, replacing its
+  `published` check.
+- **A PUT carrying both field edits and a status change applies the edits
+  first**, then evaluates the status — so a request that fixes `animal` *and*
+  shelves the row in one call behaves like the two calls in the order the admin
+  would have made them.
+
 **One status for all inventory, not a donation field.** A donated pet and an
 admin-stocked pet have the same four states, so the status lives on the
 inventory row and the engine never asks which one it is looking at (§1.2). A
 useful consequence: an admin's unfinished draft and an untriaged donation are
 both `intake`, and it is the *badge* — a read-time join to the donation ledger
-— that tells them apart. The difference lives where §2's rules say it should.
+— that tells them apart. The difference lives where §1.2 and §7.2 say it should.
 
 **Unsellable is NOT a status.** A row whose bundle fails the validator is
 broken because its *bytes* are, and `_admin_view` recomputes that on every
 read. Storing it would let the row disagree with its own bundle, which is the
 one thing §1.2 exists to prevent.
 
-**Migration (Rev.9), one step, no dual-write.** `published` is live in three
-environments. Add `status`, backfill `shelf` where `published=1` and `intake`
-where `0`, then `DROP COLUMN published` — SQLite on these boxes is 3.37, so
-`ALTER TABLE … DROP COLUMN` is available. The old column does not linger behind
-a compatibility shim: a transition layer here would mean two sources of truth
-for "is this for sale", which is the failure this revision exists to remove.
+**Migration.** Three columns arrive together — `status`, `admin_note` and
+`first_shelved_at` (§1.3) — and `published` leaves in the same step. It runs in
+`init_db`'s established ALTER-if-missing block (`webui/db.py`, the pattern
+`source_store_pet_id` already uses, §7.2), guarded on `PRAGMA table_info` so it
+is a no-op on every boot after the first:
+
+```
+if "status" not in store_cols:                  # one-shot, guarded
+    ALTER TABLE store_pets ADD COLUMN status TEXT NOT NULL DEFAULT 'intake'
+    ALTER TABLE store_pets ADD COLUMN admin_note TEXT NOT NULL DEFAULT ''
+    ALTER TABLE store_pets ADD COLUMN first_shelved_at REAL
+    UPDATE store_pets SET status='shelf', first_shelved_at=created_at
+      WHERE published=1
+    ALTER TABLE store_pets DROP COLUMN published      -- SQLite ≥3.35; boxes are 3.37
+```
+
+`_SCHEMA`'s `CREATE TABLE` is edited in the same change for fresh databases —
+`CREATE TABLE IF NOT EXISTS` never touches an existing one, so both paths are
+required and neither is optional.
+
+The old column does not linger behind a compatibility shim: a transition layer
+would mean two sources of truth for "is this for sale", which is the failure
+this revision exists to remove.
+
+**Rollback is a file restore, not a `git revert`, and that is a deliberate
+trade.** Dropping `published` makes the previous release unable to read the
+table, so Phase D's normal rollback does not work for this deploy. Rather than
+keep a dual-written column to preserve it — which would reintroduce exactly the
+ambiguity being removed — **copy `datspet.db` before running the migration** and
+restore that file if the deploy is rolled back. This is affordable precisely
+here and would not be everywhere: the store holds one row per environment
+today, and the pets table is untouched by this change. The deploy checklist
+gets that copy as a named step beside B9.
 
 ### §1.5 The transaction record — who, how much, when, which pet
 
@@ -386,7 +473,7 @@ CREATE TABLE IF NOT EXISTS store_sales (
 
 ##### The amount: reported by the host, never computed here
 
-DatsPet must never *derive* a price — the host is the only pricer (§0.5.1), the
+DatsPet must never *derive* a price — the host is the only pricer (§0.6.1), the
 amount is a knob that moves, and a re-import charges a delta rather than the
 full cost. But "do not compute it" and "do not record it" are different rules,
 and only the first one is right. **The host already has the exact figure and
@@ -397,13 +484,38 @@ discards it one line before it tells us:**
 - The import route collects those into `results` and even sums them
   (`import_routes.py:419`).
 - Then it builds `landed = [r["id"] …]` and calls `notify_partner_imported`
-  with **ids only** (`import_routes.py:428`), dropping the amount it is holding.
+  with **ids only** (`import_routes.py:429`), dropping the amount it is holding.
 
-So the host-side change is to send what it already computed. `notify_partner_imported`
-gains an `items: [{id, credits_charged}]` array **alongside** the existing
+So the host-side change is to send what it already computed.
+`notify_partner_imported` gains an **`items`** array alongside the existing
 `item_ids`, with `item_ids` derived from the same list at build time so the two
 can never disagree. Additive rather than a reshape, because `/partner/imported`
 is a documented third-party endpoint and other partners read `item_ids` today.
+
+```jsonc
+{
+  "export_type": "datspet_pets.v1",
+  "item_ids": ["a1b2c3", "d4e5f6"],            // unchanged; other partners read this
+  "items": [                                    // new, one entry per id above
+    {"id": "a1b2c3", "store_pet_id": "smpl9303", "credits_charged": 50},
+    {"id": "d4e5f6", "store_pet_id": null,       "credits_charged": 110}
+  ]
+}
+```
+
+Wire rules, so both sides can be built independently:
+
+- `credits_charged` is an **integer ≥ 0**, or absent/`null` when the host cannot
+  state it. Absent means unknown → `credits_paid` NULL (never 0, above).
+- `store_pet_id` is the partner's own listing id, echoed back from the export
+  item, or `null` for a designed pet. It exists so a late retry can record a
+  sale whose pet row is gone.
+- `items` is **advisory and additive**: `item_ids` remains the authoritative
+  list of what landed. A partner that ignores `items` behaves exactly as today.
+- The partner **validates leniently**: an entry whose `id` is not in `item_ids`
+  is ignored; a malformed or negative `credits_charged` is treated as unknown
+  (NULL), not as an error. A notification is never rejected over the enrichment
+  — rejecting it would turn a reporting problem into a lost acknowledgement.
 
 **A missing amount is NULL, never 0.** If the notification carries no figure —
 an older host, or a partner tier deployed ahead of the host — the sale is
@@ -428,6 +540,24 @@ makes this a transaction record rather than a cache.
 totals** — those are the things that drift from the rows they summarise. The
 per-sale row is the fact; every report is a read.
 
+**Revoke (forget-me) anonymises the buyer, it does not delete the sale.**
+`db.revoke_user` touches `pets` only today (`webui/db.py:572-594`); Phase 1a
+extends it to `UPDATE store_sales SET buyer_user_id='' WHERE buyer_user_id=?`.
+The transaction stays — a shop's books are not a personal record and deleting
+them would make revenue depend on who has left — but the person is no longer
+named. That is why the DDL above allows an empty string rather than making
+`buyer_user_id` nullable: NULL would be ambiguous with "we never knew".
+
+**Phase 1a writes; it does not read.** No admin sales screen, no report route,
+no `db.py` aggregate ships with it. The point of 1a is that the rows start
+existing — reporting can be built any time afterwards against a table that is
+already accumulating, and building it now would mean designing a report with no
+data to design against. §13 scopes 1a to exactly three things for this reason.
+
+**Where it lives:** `store_sales` goes in `_SCHEMA` (`webui/db.py`), created by
+`init_db` like every other table, plus an index on `store_pet_id` because every
+report groups by it.
+
 **Buyer identity is stored, and shown only where it earns its place.**
 `buyer_user_id` is what makes the ledger auditable and answers "did this reach a
 real person". Merchandising decisions need counts, not names, so the shelf view
@@ -450,8 +580,8 @@ signed, and already arrives at the right moment:
 
 The two edits are ~3 lines on the host (pass the results it already has instead
 of just their ids) and ~5 on DatsPet (one guarded `INSERT OR IGNORE`). No new
-endpoint, no new auth, no polling, and no outbound call from DatsPet — which
-has no outbound HTTP stack at all (§10.0).
+endpoint, no new auth, no polling, and no outbound call from DatsPet, which has
+never called the host at all (§10.0).
 
 **But that message is fire-and-forget today, and financial records may not
 be.** `notify_partner_imported` is best-effort by design: it sits outside any
@@ -462,13 +592,53 @@ transaction**. A dropped notification would become a silently missing sale, and
 since the amount is unrecoverable afterwards (above), it would be gone for
 good.
 
-So this path must be **at-least-once**: the host retries on failure with
-backoff. That is a change to a deliberately fire-and-forget call, and it is
-safe precisely because of the key already specified above — `pet_id` is the
-primary key and the insert is `INSERT OR IGNORE`, so a redelivery writes
-nothing. **The idempotency that stops double-counting is the same property that
-makes retry possible**; without it, retrying would corrupt the ledger, and
-without retrying, the ledger has holes. They ship together or not at all.
+So this path must be **at-least-once**, and it is safe to make it so precisely
+because of the key already specified above — `pet_id` is the primary key and
+the insert is `INSERT OR IGNORE`, so a redelivery writes nothing. **The
+idempotency that stops double-counting is the same property that makes retry
+possible**; without it, retrying would corrupt the ledger, and without
+retrying, the ledger has holes. They ship together or not at all.
+
+**The mechanism is an outbox on the host, not a retry loop in the request.**
+Retrying in place inside the import handler fails on both counts that matter:
+it adds the whole backoff window to a shopper's checkout response (the call
+sits at `import_routes.py:429`, before the response is returned at `:434`), and
+it is *not* at-least-once anyway — a worker restart mid-backoff loses the sale
+permanently, which is the exact loss this section exists to prevent. So:
+
+1. The import handler **writes a row** to a new `partner_notifications` table
+   (partner slug, user id, export type, the `items` payload, `attempts`,
+   `next_attempt_at`, `delivered_at`) inside the transaction that already
+   commits the pets and the charge. If that transaction commits, the
+   notification is owed; if it rolls back, there was no sale to report.
+2. It then attempts delivery **once, inline, best-effort** — the current
+   behaviour, so the happy path keeps today's latency and today's "a partner
+   outage never fails a checkout" guarantee. Success stamps `delivered_at`.
+3. Anything still undelivered is retried by a **periodic job on the existing
+   APScheduler** (`api/apps/dpp/scheduler.py`, which already runs
+   `partner_health` at 60 s and `nonce_reap` daily), with exponential backoff
+   and a bounded attempt count. Exhausted rows stay in the table, undelivered
+   and visible — a queryable list of sales the partner does not know about is
+   the right failure mode, and far better than a log line.
+
+This is new host infrastructure (there is no outbox or task table today, and
+the SDK's `retry.py` is a *partner*-side queue, not the host's), and it is the
+substantial part of Phase 1a. It is worth it here and was not worth it for a
+badge, which is exactly why the notification was fire-and-forget until now.
+
+**Two rules the retry adds on the partner side.** A late redelivery may arrive
+after the buyer has deleted the pet or been revoked, and
+`partner_imported` skips any id whose pet row is gone
+(`datsme_integration.py:855-857`). That guard must stay for the *stamp* — there
+is nothing to stamp — but the **ledger insert must not depend on it**, or a
+retry that arrives after a house cleanup would record nothing and the sale
+would vanish exactly as §1.5.2 describes. The insert therefore takes its
+`store_pet_id` from the notification payload when the pet row is absent, which
+means the host must send it: `items: [{id, store_pet_id, credits_charged}]`.
+And a row already present is left untouched (`INSERT OR IGNORE`), so a first
+delivery that carried no amount keeps `credits_paid` NULL even if a later retry
+carries one — acceptable, and the reason the host sends the amount from the
+start rather than adding it later.
 
 Two rules that follow, and both belong in the tests:
 
@@ -484,7 +654,8 @@ Two rules that follow, and both belong in the tests:
 
 There is no view counter and adding one is not a WHERE clause. The shop paints
 from **one cacheable listing response** (§6.1), so there is no per-pet request
-to count, and `preview.png` ships a 24-hour cache header (§3.1) precisely so it
+to count, and `preview.png` ships a 24-hour cache header
+(`PREVIEW_CACHE_CONTROL`, §3.1) precisely so it
 is *not* re-fetched — counting image loads would undercount by design and miss
 every repeat viewer entirely. A real view metric needs a deliberate client-side
 beacon: a new surface, a new write path on a public endpoint, and its own
@@ -519,14 +690,20 @@ Per the owner's global preferences, run before any code:
 ## §3 Backend surface
 
 Two new modules, one concern each, both following the established router
-pattern (`webui/app.py:170-208`):
+pattern (`webui/app.py:170-208`).
+
+> **Reading this against the code:** §3 describes the surface **after Phase 1b**
+> (§1.4). What ships today uses the `published` boolean it replaces — so
+> `status`, `admin_note`, the four-state transitions and the renamed `db.py`
+> functions below are the *target*, not the current tree. §14.1 records what is
+> actually built.
 
 ### §3.1 `webui/pet_store.py` — the public shop (read + adopt)
 
 | Route | Auth | Returns |
 |---|---|---|
 | `GET /api/store` | none (anonymous browsing, §0.4 of the catalog spec) | `{pets: [Listing]}` — **`status = 'shelf'` only**, newest first. `Listing = {id, display_name, animal, breed_id, description, tags, pose_count, poses, preview_url}`. Never bytes, never an off-shelf row. |
-| `GET /api/store/{id}/preview.png` | none (an `<img>` has no 401 handler — `owner_scope.py:120-122` precedent) | the `preview_png` blob, long cache headers — safe because a preview is immutable per id (derived once at insert; ai-tag touches only text). 404 for unknown *or off-shelf* ids — intake, backroom and archived must be invisible, not merely unlisted. |
+| `GET /api/store/{id}/preview.png` | none (an `<img>` has no 401 handler — `owner_scope.py:120-122` precedent) | the `preview_png` blob, `Cache-Control: public, max-age=86400` — 24 h, the `PREVIEW_CACHE_CONTROL` constant — safe because a preview is immutable per id (derived once at insert; ai-tag touches only text). 404 for unknown *or off-shelf* ids — intake, backroom and archived must be invisible, not merely unlisted. |
 | `POST /api/store/{id}/adopt` | `require_owner` | `{pet_id, display_name, breed_id}` |
 
 **Adopt** is the existing adopt-a-sample primitive re-pointed at the DB, and
@@ -550,19 +727,28 @@ a deploy.
 
 | Route | Does |
 |---|---|
-| `GET /api/admin/store` | all rows in every state, listing shape + `status` + `admin_note`. Default sort newest-first, so `intake` surfaces without a queue |
+| `GET /api/admin/store` | all rows in every state, listing shape + `status` + `admin_note` + `first_shelved_at` (the editor gates the animal field on it). Default sort newest-first, so `intake` surfaces without a queue |
 | `GET /api/admin/store/{id}` | one row, full metadata |
 | `POST /api/admin/store/publish-from-pet` | body `{pet_id}` — **the stocking door**, §5. The source pet is read through the caller's OWN owner scope (the same scoped access keep/delete use): an admin publishes only a pet she can see in her house, never an arbitrary row by id. |
-| `PUT /api/admin/store/{id}` | edit `display_name`, `description`, `tags`, `animal` (off-shelf rows only, §1.3), `status`, `admin_note`. Tags are normalized on write — lowercased, trimmed, deduplicated, capped by named constants (`STORE_MAX_TAGS = 16`, `STORE_MAX_TAG_LEN = 32`). **Moving to `status: 'shelf'` re-runs the sellability validator** (§5.3) and refuses on failure — the admin cannot shelve a listing the build would reject. Every other transition is free (§1.4). |
+| `PUT /api/admin/store/{id}` | edit `display_name`, `description`, `tags`, `animal` (only while `first_shelved_at` is NULL — §1.3), `status`, `admin_note`. Tags are normalized on write — lowercased, trimmed, deduplicated, capped by named constants (`STORE_MAX_TAGS = 16`, `STORE_MAX_TAG_LEN = 32`). **Moving to `status: 'shelf'` re-runs the sellability validator** (§5.3) and refuses on failure — the admin cannot shelve a listing the build would reject. Every other transition is free (§1.4). |
 | `POST /api/admin/store/{id}/ai-tag` | write description + tags with AI (§4) — the ONE generator of listing text, overwriting both, **only if the row is off the shelf** (a live listing is the admin's text, and regenerating it would change what shoppers are reading) |
 | `DELETE /api/admin/store/{id}` | remove from inventory. Copies already adopted into houses are unaffected (they are copies). |
 
 ### §3.3 `webui/db.py` additions
 
-`db.py` stays the one store module. Additive functions only:
+`db.py` stays the one store module. Six write/read functions plus the shared
+`store_listing_view` projection both routers serve:
 `insert_store_pet` (derives the four derived columns; the only writer),
 `list_store_pets(shelf_only)`, `get_store_pet`, `update_store_listing`,
-`set_store_status`, `delete_store_pet`. The existing `pets` functions are
+`set_store_status`, `delete_store_pet`.
+
+Three of those names change in Phase 1b and the rename is part of that phase's
+work, not a silent drift: `list_store_pets(published_only)` →
+`list_store_pets(shelf_only)`, `set_store_published` → `set_store_status`, and
+`insert_store_pet(published=…)` → `insert_store_pet(status=…)`. Callers to sweep
+are `pet_store.py`, `store_admin.py` **and `scripts/migrate_samples_to_store.py`**,
+which passes `published=True` and would otherwise break at runtime on the next
+sample drop-in. The existing `pets` functions are
 untouched except `insert_pet` learning the nullable `source_store_pet_id`
 passthrough (§7.2).
 
@@ -643,9 +829,11 @@ auto-draft had shipped in Phase 1 and was removed in the same change.)*
    **Publish to store** (`POST /api/admin/store/publish-from-pet`). This
    **copies** the pet's bundle into a new `intake` `store_pets` row
    (her house copy remains hers), extracts the portrait, derives the
-   mechanical facts, seeds `display_name` from the house pet's name, and runs
-   the AI draft (§4) — whose `display_name_suggestion` is shown in the editor
-   as a suggestion, never auto-applied.
+   mechanical facts, and seeds `display_name` from the house pet's name. The
+   description and tags start **empty**: the AI is never run by stocking (§4).
+   She writes them, or taps ✨ and confirms — and that draft's
+   `display_name_suggestion` is offered beside the name field, never
+   auto-applied.
 3. She edits the name, description, and tags in the admin editor, then flips
    the status to **`shelf`**. The row appears in the shop on the next listing
    fetch.
@@ -671,8 +859,8 @@ non-empty display name, and a non-empty `animal` (the shop's filter chips
 depend on it). This is the current guard-test checklist
 (`pet_factory/tests/test_catalog_samples.py`) lifted into a shared function —
 the `validate_design_profile` pattern: **the admin is blocked at publish and
-the build is blocked at test by the same code.** Phase 2's approval door is
-this same function's third caller.
+the build is blocked at test by the same code.** Phase 2's donate door is this
+same function's third caller (§10.1).
 
 ---
 
@@ -694,7 +882,7 @@ The page reads `GET /api/store` (replacing the per-animal samples of
   (never a hardcoded list).
 - **Tag filter** — tap a tag on any card to filter by it.
 - **Cards** — portrait, name, animal, description, tags, pose count. **No
-  price** (§0.5.1): the copy stays "you'll see the exact cost on DatsMe
+  price** (§0.6.1): the copy stays "you'll see the exact cost on DatsMe
   before anything is charged", and makes **no cheaper-than-designing claim**
   — the relation between the two prices is a host knob (§0.2) that can change
   under the page. The host's checkout remains the one place a number appears.
@@ -713,9 +901,40 @@ listing payload itself gets heavy (~200+ rows), filtering moves server-side
 `web/src/app/admin/store/page.tsx`, following the existing admin surfaces:
 inventory table (status visible at a glance, newest first), the publish-from-pet
 picker (reads the admin's own house via the existing `listPets()`), and the
-listing editor (name, description, tags, publish toggle, and the ✨ that writes
-description + tags — §4, behind its confirm).
+listing editor (name, description, tags, the four-state status selector and
+`admin_note` of §1.4, and the ✨ that writes description + tags — §4, behind its
+confirm).
 Linked from the admin nav exactly as motions/design/ai/settings are.
+
+### §6.2b The admin editor after Phase 1b
+
+§13 calls 1b "DatsPet only", which is true of the repos and misleading about the
+work: the admin page is built around a boolean and every part of that has to
+move. What exists today and what replaces it:
+
+| Today | After 1b |
+|---|---|
+| `EditorState.published: boolean` | `status: StoreStatus` (the four-value union) + `admin_note: string` |
+| Two buttons: "Save draft" / "Publish to shop" | **One Save**, plus a four-way status control; the save is what applies the chosen status |
+| Table cell renders `published`/`staging` | Renders the status, with `intake` visually distinct — it is the inbox |
+| AI button, animal field and hint gated on `!published` | Gated on `status !== 'shelf'` (ai-tag) and on `first_shelved_at == null` (animal, §1.3) |
+| `StoreAdminListing.published` in `api.ts`; PUT body `{…, published}` | `status` + `admin_note` + read-only `first_shelved_at`; PUT body matches |
+
+Two behaviours worth stating rather than leaving to taste:
+
+- **The inventory table defaults to newest-first** so `intake` rows surface
+  without a queue. That sort is what makes Phase 2's "one badge and one sort"
+  claim true (§10.4), and it ships here rather than there.
+- **Archiving asks for a note, shelving does not.** `admin_note` is optional in
+  the schema, but the UI prompts for it on the way to `archived` — the one
+  transition whose reason nobody will remember in three months. Nothing enforces
+  it server-side; a required field would just collect the word "no".
+
+The shopper-facing `Listing` shape (§3.1) gains **nothing**: `status` is an
+admin fact, and the public listing is `shelf` rows by definition, so exposing it
+would be a field with one possible value. `db.store_listing_view` keeps emitting
+it for the admin view, and `pet_store.py` keeps popping it — the same shape the
+`published` flag has today.
 
 ### §6.3 `api.ts`
 
@@ -841,13 +1060,14 @@ business lever is pulled.
 
 ## §10 Phase 2 — donations (specified for build, Rev.8)
 
-A user gives a pet she designed back to the store; an admin reviews it; on
-the click she is thanked with a social point. It is the supply side of the store: Phase 1 makes
+A user gives a pet she designed back to the store and is thanked with a social
+point on the spot; the admin decides only whether it reaches the shelf. It is
+the supply side of the store: Phase 1 makes
 every listing cost the owner admin time and GPU minutes, and this makes the
 users the supply. It is also the pressure valve on the 50-pet house cap —
 donating frees a slot *and* pays, where deleting just frees a slot.
 
-The owner's four Phase 1 decisions (§0) carry over unchanged. Decision 0.4 —
+§0's decisions carry over. Decision 0.4 —
 **one social point, at the donate click** — plus §0.5's "a donation is final"
 are what shape everything below. Rev.6 specified the opposite of both (credits,
 at an admin's approval, with a review queue and a return path); the owner
@@ -875,9 +1095,12 @@ draft-purge problem it hit no longer exists). Two remain, and they shape §10.7:
    checkout-shaped (`_IMPORT_ADAPTERS` requires a `quote`). Nothing reaches a
    user who is not clicking, so an undelivered award waits for the donor.
 
-A third, smaller one: **DatsPet has no outbound HTTP stack at all.** The push
-path was deleted, not disabled (`webui/app.py:1876`,
-`datsme_integration.py:9`), and `httpx` there is a dead import. §10.7.3 is
+And one standing fact rather than a constraint: **DatsPet has never called the
+host.** It is a pull-only
+partner: the push path was deleted, not disabled (`webui/app.py:1876`), and the
+`httpx` import left at `datsme_integration.py:40` is its only residue. (`httpx`
+is a pinned dependency used by `ai_engine`, so what is missing is the writeback
+*caller*, not the library.) §10.7.3 is
 explicit that this is new code and why it is worth adding.
 
 ### §10.1 The donate door
@@ -887,8 +1110,9 @@ consignment desk: the donor hands the pet over, is thanked on the spot, and the
 shop decides what goes on the shelf. She does not get it back, and there is no
 verdict she is waiting on.
 
-That one rule is what makes Phase 2 small. It removes a review queue, a
-four-state lifecycle, an approve/reject pair of endpoints, a return path, a
+That one rule is what makes Phase 2 small. It removes a review queue, its
+`pending`/`approved`/`rejected`/`returned` lifecycle, an approve/reject pair of
+endpoints, a return path, a
 restore action, and the entire question of what happens to a returned pet when
 the donor's house is full. What is left is a transfer and a thank-you.
 
@@ -953,7 +1177,7 @@ CREATE TABLE IF NOT EXISTS store_donations (
     store_pet_id        TEXT NOT NULL,     -- what it became
     display_name        TEXT NOT NULL,     -- as donated; the shelf row may be renamed
     donated_at          REAL NOT NULL,
-    reward_state        TEXT NOT NULL,     -- owed | delivered | capped | declined
+    reward_state        TEXT NOT NULL,     -- owed | delivered | capped | disabled | declined
     reward_delivered_at REAL
 );
 ```
@@ -966,8 +1190,9 @@ longer resolves: that is history, and history does not get rewritten.
 
 **No provenance column on `store_pets`, still.** §1.2's rule holds — the engine
 must never be able to ask where a listing came from. Donor attribution is a
-**read-time join** from this ledger, which is exactly the boundary §1.2 permits
-("only read-time views may compare across sources").
+**read-time join** from this ledger, which is exactly the boundary §7.2 names —
+the record of how something came to be is a read-time fact, never an engine
+input.
 
 **No claim handler, and this is the rule not an omission.**
 `owner_scope.py:185` is explicit that `ai_usage` is deliberately unregistered
@@ -1002,7 +1227,7 @@ Order:
 
 The response says what happened in the donor's terms: the pet is donated, and a
 social point is on its way or already there. It quotes no balance and no total
-(§0.5.1).
+(§0.6.1).
 
 ### §10.4 The admin's role — the Phase 1 surface, unchanged
 
@@ -1111,8 +1336,11 @@ endpoint (step 9) and the launch handler.
   `capped` verdict from the host marks that row `capped` — **terminal, never
   retried**; the donor gave several things and was thanked once, which is what
   a daily cap means. A permanent refusal (`capability_not_granted`) marks them
-  `declined`, visible in the admin view and re-armable. Anything else leaves
-  them `owed` for the next launch.
+  `declined` — terminal, because the donor revoked the capability that pays
+  her; a later re-grant does not retroactively re-arm them, and no admin screen
+  exists to (§10.4). A `disabled` verdict (the knob is 0) is recorded as such
+  and is likewise terminal. Anything else leaves them `owed` for the next
+  launch.
 
 **This reverses "DatsPet never pushes" and the reversal is deliberate.** The
 push path was retired because *pet delivery* is better as a pull: bundles are
@@ -1138,7 +1366,7 @@ entry — it defines the checklist):
 4. A new `Capability("social.award", "Award you social points", risk="low")`
    (`capabilities.py:46`).
    **Low is correct here, and it is the one place the ledger choice changes the
-   security posture.** `should_auto_grant` (`capabilities.py:222`) auto-grants
+   security posture.** `should_auto_grant` (`capabilities.py:245`) auto-grants
    low-risk capabilities to official partners without a consent screen. For a
    *credit* award that would have been wrong — credits are money and buy GPU
    work — which is why the credit version of this section required `medium`.
@@ -1147,10 +1375,43 @@ entry — it defines the checklist):
    asks the user to authorise a gift to themselves.
    **Not** added to `PULLABLE_TARGETS` — this target is push-only.
 
+**The wire contract, so either side can be built first.** Target
+`user.social_award`, schema `social_award.v1`. The payload is a batch (§10.7.2 —
+one writeback per launch):
+
+```jsonc
+// POST /api/integrations/result  →  body.payload
+{ "awards": [ { "award_key": "<donation id>", "reason": "pet_donation" } ] }
+```
+
+The **amount is not on the wire**: the host reads its own knob. A partner that
+could name a figure could name a bigger one, and §0.6.1's rule — DatsPet never
+prices anything — applies to what it earns as much as to what it charges.
+
+The response carries a per-entry verdict, because §10.7.3's delivery states
+depend on it:
+
+```jsonc
+{ "results": [ { "award_key": "…", "outcome": "awarded" | "duplicate" | "capped" | "disabled" } ] }
+```
+
+- `awarded` / `duplicate` → the partner marks it `delivered` (a duplicate means
+  a previous delivery already landed; both are terminal successes).
+- `capped` → `capped`, terminal, never retried (§10.7.3).
+- `disabled` → the knob is 0; terminal, and *not* an error — the owner turned it
+  off deliberately.
+- An entry missing from `results` stays `owed` and rides the next launch.
+
+Transport failures map the way §10.7.3 already states: a permanent
+`capability_not_granted` (403) marks the batch `declined`; **any other 4xx is
+also terminal** — a 400 the partner keeps retrying forever is the failure mode
+that turns a bug into a loop — while 5xx, timeouts and network errors leave the
+batch `owed`.
+
 **Idempotency: a new social-DB table with a unique business key.**
 `partner_social_awards(partner_slug, award_key)` unique — `award_key` is the
 donation id — plus `user_id`, `amount`, `created_at`. Modelled on
-`uq_partner_collection_external` (`models.py:242`) for the key shape and on the
+`uq_partner_collection_external` (`models.py:247`) for the key shape and on the
 Stripe webhook's **claim-before-award** ordering (`payment_service.py:396`):
 insert the claim row first, in the same transaction as the ledger row, so a
 duplicate delivery loses the race on the unique index instead of paying twice.
@@ -1195,7 +1456,8 @@ prefix by the *triggering* feature, `_social_reward_` marks what is paid out.
 
 **Registration is FIVE places, not two, and Phase 1 was bitten by missing one.**
 `credit_pet_store_cost` shipped seeded and charged but absent from
-`CREDIT_CONFIG_KEYS`, so no admin screen could see it (§14.2). The full list for
+`CREDIT_CONFIG_KEYS`, so no admin screen could see it — the guard that now
+prevents a repeat lives in `api/tests/test_pet_store_price_basis.py`. The full list for
 each new knob:
 
 1. `SOCIAL_LEDGER_CONFIG_DEFAULTS` (`social_ledger_config.py`) — a missing key
@@ -1285,9 +1547,9 @@ or adding is a handler change, not a redesign.
 
 ### §10.8 What the donor sees
 
-§11's "the house's donation status is visible on next visit" cannot work as
-written — §10.3 deletes the house row, so there is no card left to carry a
-status. And under Rev.8 there is no status to watch either: the donation
+An earlier draft said donation status would be "visible on the house on the
+next visit". It cannot be: §10.3 deletes the house row, so there is no card
+left to carry a status. And under Rev.8 there is no status to watch either: the donation
 completed the moment she clicked. What remains worth showing is the record of
 what she gave.
 
@@ -1295,7 +1557,7 @@ A **Donations** section on the house page, fed by `GET /api/donations` (own rows
 only, scoped like every other read): the name, when she gave it, and whether the
 thank-you has landed. Nothing is actionable — no restore, no appeal, no verdict
 — which is the point of the model. Point totals are never rendered here: DatsPet
-shows no balances (§0.5.1), so a delivered award reads "thanked with a social
+shows no balances (§0.6.1), so a delivered award reads "thanked with a social
 point" and the number lives on DatsMe, in the Social Point History where every
 other award appears.
 
@@ -1319,8 +1581,9 @@ host a workflow.
 - **House-full line** gains ", or donate one".
 - **Admin**: no new section. Donations land as `intake` rows in the inventory
   table that already exists (§10.4); the only change is the "donated by" badge
-  — the status column and the newest-first sort are Rev.9 Phase 1 work, so by
-  the time donations ship the inbox is already there.
+  — the status column and the newest-first sort ship in **Phase 1b**, which
+  Phase 2 depends on (§13), so by the time donations ship the inbox is
+  already there.
 - **`api.ts`** gains `donatePet` and `listMyDonations` in the one adapter. No
   admin donation calls exist, because there are no admin donation routes.
 
@@ -1346,9 +1609,10 @@ host a workflow.
 - `webui/tests/test_donations.py` — each gate refuses for its own reason
   (anonymous 403, entitlement 403, not-yours 404, `public` pet 422, unstamped
   legacy pet 422, unsellable 422). A successful donate **removes the house row,
-  creates exactly one UNPUBLISHED store row, and one ledger row pointing at
+  creates exactly one store row in `intake`, and one ledger row pointing at
   it** — and the new store pet is invisible on the public shelf until an admin
-  publishes it, which is the test that proves donations cannot self-publish.
+  moves it to `shelf`, which is the test that proves donations cannot
+  self-shelve.
   The donor's ledger rows are invisible to another owner.
 - `webui/tests/test_donation_inventory.py` — a donated row is editable,
   ai-taggable and publishable through the **existing Phase 1 admin routes** with
@@ -1371,9 +1635,11 @@ host a workflow.
   amount of 0 is a no-op that still succeeds; the award writes
   `ledger_type="social"` with its OWN transaction_type, so it cannot borrow the
   gift reward's daily cap. **Plus a five-place registration guard** — every
-  `*_social_reward_*` and `credit_pet_*` knob is in
-  `SOCIAL_LEDGER_CONFIG_DEFAULTS`, in `CREDIT_CONFIG_KEYS`, in the admin render
-  array, and in `TRANSACTION_LABELS` (§10.7.4). Phase 1 shipped a knob that
+  `*_social_reward_*` and `credit_pet_*` knob is in all five places of §10.7.4:
+  `SOCIAL_LEDGER_CONFIG_DEFAULTS`, `CREDIT_CONFIG_KEYS`, the admin render array,
+  the `isAward`/`isCost` label list beside it, and `TRANSACTION_LABELS`
+  (§10.7.4 calls the fourth place the `isAward` list; it is the same array).
+  Phase 1 shipped a knob that
   failed step 2 and nothing caught it. Plus the existing
   `test_dpp_registry_consistency.py`, which must stay green.
 - Frontend: `tsc --noEmit` + vitest; the Donate button renders only for
@@ -1414,7 +1680,7 @@ at the donor's click, so door and delivery ship together.)*
   background delivery channel.
 - **No notifications.** DatsPet has no channel; §10.8's list is the surface.
 - **No donor-visible point or credit amounts** in DatsPet — the host renders
-  numbers (§0.5.1). The donor's Social Point History is where the award appears.
+  numbers (§0.6.1). The donor's Social Point History is where the award appears.
 - **No per-donor donation cap** at launch (§10.1), and no reward for quantity:
   the daily cap means the second donation of a day is thanked with nothing.
 
@@ -1423,12 +1689,13 @@ at the donor's click, so door and delivery ship together.)*
 ## §11 Deliberately not done
 
 - **No user-visible prices in DatsPet** — the host quotes, DatsPet doesn't
-  (§0.5.1). Revisit only as its own decision.
+  (§0.6.1). Revisit only as its own decision.
 - **No store pet as a design base** — the archetype rule
   (SPEC_PET_DESIGNER_FLOW §2.1) stands; a store pet is a finished design.
 - **No dedupe of repeat adopts** — a store pet is a template, not a licence.
-- **No closed tag vocabulary / no server-side search** — both have named
-  tripwires (§1.3, §6.1) instead of speculative structure.
+- **No closed tag vocabulary / no server-side search** — the second has a named
+  tripwire (§6.1, ~200+ rows); the first has the three-instances rule (§1.3)
+  instead of speculative structure.
 - **No seller marketplace** (users setting prices, revenue shares): out of
   scope entirely; donations + flat pricing are the whole economy.
 - **No host-side store**: the DatsMe "platform catalog" (SystemConfig JSON +
@@ -1461,19 +1728,29 @@ New tests, same culture (shared validators, floor tests, scoping):
   records `credits_paid` NULL, **not 0** (the "missing is not zero" rule) while
   a genuinely free re-import records 0; a designed pet's ack writes nothing;
   deleting the buyer's house pet and deleting the listing both leave the sale
-  row intact. Host side: `notify_partner_imported` sends the per-item amount it
-  already computed, `item_ids` still matches the enriched `items` exactly, and
-  **a failed notification is retried** — with a test that a retry after a
-  successful delivery still writes no second row, and one that a partner
-  returning 500 forever never fails the checkout that already committed.
-- `webui/tests/test_store_status.py` (Rev.9) — a shopper sees `shelf` rows and
+  row intact; a **revoked** buyer's sale survives with `buyer_user_id` emptied,
+  not deleted. A retry that arrives **after** the buyer deleted the pet still
+  records the sale, from the `store_pet_id` on the notification — the case the
+  pet-row guard would otherwise silently drop. Host side:
+  `notify_partner_imported` sends the per-item amount it already computed,
+  `item_ids` still matches the enriched `items` exactly, a partner returning 500
+  forever never fails the checkout that already committed, and **an undelivered
+  notification is still owed after a process restart** — the test that separates
+  a real outbox from an in-process retry loop. Host tests are in-process and
+  registered in `test_all.py`, per §14.2's rule; `test_dpp_import_pull.py` also
+  asserts the ack body and must be updated with it.
+- `webui/tests/test_store_status.py` (Phase 1b) — a shopper sees `shelf` rows and
   only those: `intake`, `backroom` and `archived` are absent from the listing
   and 404 on BOTH preview and adopt (invisible, not merely unlisted). Every
   transition is allowed except one: moving to `shelf` runs the sellability
   validator and refuses a broken bundle, while `backroom` and `archived`
   accept it — you may keep something you cannot sell. `archived` is reversible.
-  The migration backfills `shelf` from `published=1` and `intake` from `0`, and
-  `published` is gone afterwards (no dual source of truth).
+  The migration backfills `shelf` from `published=1` and `intake` from `0`,
+  stamps `first_shelved_at` on the backfilled rows, adds `admin_note`, and
+  leaves no `published` column (no dual source of truth) — run twice, it is a
+  no-op the second time. `animal` is refused once `first_shelved_at` is set even
+  when the row has since moved to `backroom`, which is the case the old boolean
+  could not express. An unknown status value is a 422 naming the allowed set.
 - **Floor test**: at least one store pet is on the **shelf** after the §8
   migration script runs against a fixture — the store can't silently launch
   empty.
@@ -1546,35 +1823,34 @@ sample grid it replaced.*
 
 ---
 
-## §14 As built (Rev.4) — the ledger
+## §14 As built — the ledger
 
-Phase 1 is **code-complete in both repos and deployed nowhere.** Read this section
-rather than the prose above when the question is "what is done".
-
-Rev.9's status lifecycle (§1.4) and all of §10 are specified and **not built** —
-see §14.3.
+**Phase 1 is live in production** (§14.4 records the deploys). Phases 1a, 1b and
+2 are specified and built nowhere (§14.3). Read this section rather than the
+prose above when the question is "what is done" — §1–§13 describe the design in
+its finished state, including parts that are not built yet.
 
 ### §14.1 Built and green
 
 | Area | Where | Gate |
 |---|---|---|
 | `store_pets` table + `source_store_pet_id` ALTER | `webui/db.py` | — |
-| Six store functions (`insert_store_pet` … `delete_store_pet`) | `webui/db.py` | — |
+| Store functions (`insert_store_pet` … `delete_store_pet`), on the `published` boolean | `webui/db.py` | — |
 | Public shop + adopt | `webui/pet_store.py` | `test_store.py` |
 | Admin CRUD + `_seed_animal` | `webui/store_admin.py` | `test_store_admin.py` |
 | Sellability validator | `webui/store_validation.py` | shared by both callers |
 | AI listing purpose | `pet_factory/ai_purposes/store_listing.json` | registry guard |
-| Migration script | `scripts/migrate_samples_to_store.py` | ran once per environment; its input files are now deleted (§14.4) |
+| Migration script | `scripts/migrate_samples_to_store.py` | ran once per environment; its input files are deleted in the repo (§14.3) |
 | `price_basis` on export items | `webui/datsme_integration.py` | — |
 | Shop page (`/catalog` evolved) + admin page + `api.ts` | `web/src/app/{catalog,admin/store}` | `tsc`, vitest, `storeFilter` test |
 | **Host** `credit_pet_store_cost` knob | `social_ledger_config.py:54` (default 50) | — |
 | **Host** basis at quote **and** charge | `pet_writeback.py:188`, `:404` | `test_pet_store_price_basis.py` |
-| §8 retirement | sample routes/helpers/scripts gone; content files deleted 2026-07-31 (§14.4) | `tsc` clean |
+| §8 retirement | sample routes/helpers/scripts gone; content files deleted **in the repo** 2026-07-31, still on the boxes until the next deploy (§14.3) | `tsc` clean |
 
 **Gates:** DatsPet 593 pass (20 store) · `tsc` clean · vitest 36 · 0 lint errors.
 Host: owner-fields 70/70, price-basis 10/10, app imports clean.
 
-### §14.2 Two defects the readiness pass found
+### §14.2 Three defects found after the build
 
 **The host's price-basis test ran nowhere.** It was written pytest-style; the api
 venv has no pytest and it was never registered in `test_all.py`, so the suite was
@@ -1587,6 +1863,14 @@ interpreter the app itself runs.
 it does not exist. pytest-style is reserved for the `_CAMPAIGN_PYTEST_GATES` list,
 which at least skips **loudly**.
 
+**The store price knob reached no admin screen.** `credit_pet_store_cost`
+shipped seeded, charged, and absent from `CREDIT_CONFIG_KEYS`, so the host's
+credits screen could neither show nor edit it — decision 0.2's "the owner's
+dial" was unreachable except by a direct DB write. Found in the post-deploy
+review, fixed with a subset guard test in
+`api/tests/test_pet_store_price_basis.py`. §10.7.4 generalises it: registration
+is five places, and a knob missing from any one of them is invisible.
+
 **The frontend did not compile.** §8.1 — backend retirement landed before the page
 that called it. Fixed; the ordering rule is now written down.
 
@@ -1597,7 +1881,9 @@ that called it. Fixed; the ordering rule is now written down.
    (*not visibly emptier than the grid it replaced*), but one pet is a thin
    store. Count, captions, and the knob's value are the owner's calls; the §5
    flow is live in both environments.
-3. ~~**Delete the sample content files.**~~ Done — §14.4 (rides the next deploy).
+3. ~~**Delete the sample content files.**~~ Done **in the repo** (`77b955e`); the
+   boxes still carry them until the next deploy rolls, which is the one-cycle
+   rollback buffer §8 asks for.
 4. ~~**The §12 E2E store pass.**~~ Done — dev stack and staging, §14.4.
 5. **The shelf lifecycle — §13's Phase 1b** (§1.4). Specified, NOT built.
    Changes a live Phase 1 table (`store_pets.published` → `status`). DatsPet
@@ -1633,7 +1919,8 @@ Host-first (§13), staging before production, all in one day:
 B9 migration ran once per environment (idempotent re-runs verified no-op). The
 §8 sample content files and their interim guard test
 (`test_sample_migration_input.py`, which asked for deletion alongside them) are
-deleted in dev and ship with the next deploy cycle — the migration script
+deleted in the repo and reach the boxes on the next deploy — the one-cycle
+rollback buffer §8 asks for — the migration script
 remains, now a no-op, for any future `<animal>/samples/` drop-in.
 
 Operational notes from the deploys: the staging vhost served 403/500 for ~3
