@@ -435,6 +435,51 @@ defaults to counts and a per-listing sales figure; surfacing buyer identity is
 its own decision with its own reason, not a free consequence of having the
 column.
 
+##### The capture mechanism, and the delivery guarantee it needs
+
+Nothing new is built to carry this. The message already exists, is already
+signed, and already arrives at the right moment:
+
+1. The buyer hands off. The host quotes, charges (`require_credits`), and
+   creates the pet in her DatsMe house. `credits_charged` is the real figure.
+2. The host POSTs `/partner/imported/{user_id}` on DatsPet, HMAC-signed with
+   the partner secret (`notify_partner_imported`).
+3. `partner_imported` verifies the signature over the exact raw bytes, and
+   already refuses to stamp a pet the named user does not own.
+4. Beside the `stamp_writeback_acked` it already performs, it inserts the sale.
+
+The two edits are ~3 lines on the host (pass the results it already has instead
+of just their ids) and ~5 on DatsPet (one guarded `INSERT OR IGNORE`). No new
+endpoint, no new auth, no polling, and no outbound call from DatsPet — which
+has no outbound HTTP stack at all (§10.0).
+
+**But that message is fire-and-forget today, and financial records may not
+be.** `notify_partner_imported` is best-effort by design: it sits outside any
+try the import depends on, its result is discarded, and it never retries. The
+host's own reasoning — a failed ack "costs a stale chip in the partner's UI,
+never a lost or duplicated pet" — is correct for a badge and **wrong for a
+transaction**. A dropped notification would become a silently missing sale, and
+since the amount is unrecoverable afterwards (above), it would be gone for
+good.
+
+So this path must be **at-least-once**: the host retries on failure with
+backoff. That is a change to a deliberately fire-and-forget call, and it is
+safe precisely because of the key already specified above — `pet_id` is the
+primary key and the insert is `INSERT OR IGNORE`, so a redelivery writes
+nothing. **The idempotency that stops double-counting is the same property that
+makes retry possible**; without it, retrying would corrupt the ledger, and
+without retrying, the ledger has holes. They ship together or not at all.
+
+Two rules that follow, and both belong in the tests:
+
+- **A retry must remain free.** The guard is not "the host promises to send
+  once" — it is the primary key. Anything that later makes the insert
+  conditional on absence-of-row-then-write reintroduces the race the key
+  removes.
+- **A failed ack still must not fail the purchase.** The retry is on the host's
+  side of the wire, after the charge and the pet both committed. Nothing about
+  this may make a partner outage able to break a checkout.
+
 #### §1.5.4 Views are a different problem, and not a cheap one
 
 There is no view counter and adding one is not a WHERE clause. The shop paints
@@ -1417,7 +1462,10 @@ New tests, same culture (shared validators, floor tests, scoping):
   a genuinely free re-import records 0; a designed pet's ack writes nothing;
   deleting the buyer's house pet and deleting the listing both leave the sale
   row intact. Host side: `notify_partner_imported` sends the per-item amount it
-  already computed, and `item_ids` still matches the enriched `items` exactly.
+  already computed, `item_ids` still matches the enriched `items` exactly, and
+  **a failed notification is retried** — with a test that a retry after a
+  successful delivery still writes no second row, and one that a partner
+  returning 500 forever never fails the checkout that already committed.
 - `webui/tests/test_store_status.py` (Rev.9) — a shopper sees `shelf` rows and
   only those: `intake`, `backroom` and `archived` are absent from the listing
   and 404 on BOTH preview and adopt (invisible, not merely unlisted). Every
@@ -1532,8 +1580,10 @@ that called it. Fixed; the ordering rule is now written down.
    repo.
 7. **§1.5.3's `store_sales` transaction ledger** — specified, not built. Two
    small changes that must ship together: one insert in `partner_imported`
-   (DatsPet) and one enriched field on `notify_partner_imported` (host, which
-   already computes the amount and drops it). Every day it is not built is
+   (DatsPet), one enriched field on `notify_partner_imported` (host, which
+   already computes the amount and drops it), and making that notification
+   **at-least-once** — it is fire-and-forget today, which is fine for a badge
+   and not for a transaction (§1.5.3). Every day it is not built is
    transaction history that no longer exists — the amount is unrecoverable
    afterwards, and a buyer's house cleanup erases the rest. View counting stays
    unbuilt and unspecified beyond §1.5.4 — it is a beacon, not a counter.
