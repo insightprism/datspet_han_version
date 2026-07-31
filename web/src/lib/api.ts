@@ -1032,11 +1032,19 @@ export interface DatsmeSession {
   user_id?: string;
   display_name?: string | null;  // the signed-in user's DatsMe name (nm claim), for the nav
   capabilities?: string[];
+  /** Has this user allowed DatsMe to thank her with social points when she
+   *  donates a pet (SPEC_PET_STORE §10.8)? A UI HINT only — the host is the
+   *  enforcement point. When false the donate door asks for the grant instead
+   *  of taking a pet and silently failing to pay for it. */
+  can_be_thanked?: boolean;
   cost?: number | null;
   // Front-door fields (SPEC_DATSPET_FRONT_DOOR §3.2). Present on every response.
   integrated?: boolean;         // wired to a DatsMe host? false = standalone (no DatsMe buttons)
   signin_url?: string | null;   // where "Sign in with DatsMe" points (host login-launch bounce)
   signup_url?: string | null;   // where "Create a DatsMe account" points (host /signup)
+  // Where the donate door sends someone who has not granted `social.award`.
+  // Built server-side like the rest — the browser never assembles a DatsMe origin.
+  consent_url?: string | null;
   // Where "Sign out" NAVIGATES (never fetches — see datsmeSignOut). Built
   // server-side like the others; the browser never assembles a DatsMe origin.
   signout_url?: string | null;

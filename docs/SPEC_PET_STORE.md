@@ -1633,6 +1633,26 @@ only, scoped like every other read): the name, when she gave it, and the
 thank-you. Nothing is actionable — no restore, no appeal, no verdict — which is
 the point of the model.
 
+**The capability has to be asked for, and the donate door is where.** DatsMe
+gates a launch on *required* capabilities only, and `mint_launch_token`
+auto-grants only within that same required set — so an **optional** capability
+is never auto-granted at any partner tier, and a user is never prompted for one
+at launch. `social.award` is optional (§10.1: requiring it would gate the whole
+app on a feature most users never touch), so nobody acquires it by default.
+
+That is left as-is rather than "fixed" by making it required, because a
+donation is irreversible and this is the one moment worth interrupting: the
+confirm dialog tells a donor who has not granted it that this pet earns no
+points, and offers the host's consent page to fix it. Declining stays a real
+choice — she can still donate to free a slot, and a revocation stays revoked,
+which a required-and-auto-granted capability could not promise. The session's
+`can_be_thanked` (read from the VERIFIED token, never the cookie) is the hint;
+the host remains the enforcement point.
+
+*(A tier promotion to `official` was tried first and reverted: `should_auto_grant`
+does return true for it, but nothing consults it for optional caps — proven on
+staging, where a launch granted nothing.)*
+
 **The thank-you names the number, and the number is the host's.** A delivered
 row reads *"Thank you — DatsMe credited you 1 social point."* using
 `points_awarded` exactly as the host reported it (§10.7.4), never a figure

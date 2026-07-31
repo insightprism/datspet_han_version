@@ -162,6 +162,10 @@ export default function HousePage() {
   // reward to land in, which is the door's first gate.
   const canDonate = Boolean(session?.launched)
     && entitlement?.can_donate !== false;
+  // Deliberately NOT part of canDonate: freeing a house slot is a legitimate
+  // reason to give a pet away, so we never block the action — we only make sure
+  // nobody gives one up expecting a thank-you they have turned down.
+  const canBeThanked = session?.can_be_thanked !== false;
 
   const pageSize = Math.max(
     1,
@@ -551,11 +555,17 @@ export default function HousePage() {
       <ConfirmModal
         open={petToDonate !== null}
         title={`Donate ${petToDonate?.display_name ?? "this pet"} to the Pet Store?`}
-        body={"This is permanent. The pet leaves your house for good and you cannot get it back — like giving something to a charity shop. DatsMe thanks you with social points."}
+        body={canBeThanked
+          ? "This is permanent. The pet leaves your house for good and you cannot get it back — like giving something to a charity shop. DatsMe thanks you with social points."
+          : "This is permanent. The pet leaves your house for good and you cannot get it back — like giving something to a charity shop. You have not allowed DatsMe to thank you for donations, so this one earns no social points. You can still donate to free up space."}
         confirmLabel="Donate — permanently"
         pendingLabel="Donating…"
         pending={donating}
         error={donateError}
+        secondaryAction={!canBeThanked && session?.consent_url
+          ? { label: "Allow DatsMe to thank me for donations →",
+              href: session.consent_url }
+          : undefined}
         tone="primary"
         onConfirm={confirmDonate}
         onCancel={() => { setPetToDonate(null); setDonateError(""); }}

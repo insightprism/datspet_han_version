@@ -126,6 +126,13 @@ PARTNER_SLUG = os.environ.get("DATSME_PARTNER_SLUG", "datspet")
 PRICE_BASIS_PER_POSE = "per_pose"
 PRICE_BASIS_STORE_FLAT = "store_flat"
 
+#: The host capability that lets DatsMe thank a donor with social points
+#: (SPEC_PET_STORE §10.7). Requested OPTIONALLY, so a user who never donates is
+#: never asked for it — and optional capabilities are never auto-granted at any
+#: partner tier, so the donate door has to ask for it when it is actually
+#: needed. Named here because both the session hint and the manifest use it.
+CAP_SOCIAL_AWARD = "social.award"
+
 
 # ---------------------------------------------------------------------------
 # Env helpers (mirror the reference partner's naming)
@@ -560,7 +567,7 @@ def datsme_session(request: Request):
     integrated = _is_integrated()
     # The DatsMe web origin the sign-in/up flows live on (front-door §3.2). The
     # frontend never hardcodes a DatsMe origin — it renders what we hand it.
-    signin_url = signup_url = import_url = None
+    signin_url = signup_url = import_url = consent_url = None
     if integrated:
         public = _datsme_public_url()
         signin_url = f"{public}/api/integrations/login-launch?activity={ACTIVITY_DESIGN_A_PET}&return=/design"
@@ -570,12 +577,24 @@ def datsme_session(request: Request):
         # a DatsMe origin, and PARTNER_SLUG is env-overridable, so "/import/datspet"
         # is not a constant the browser may assume.
         import_url = f"{public}/import/{PARTNER_SLUG}"
+        # Where the donate door sends someone who has not allowed DatsMe to
+        # thank them (§10.8). `next` must be SAME-ORIGIN on the host, so it
+        # points at the login-launch bounce, which lands them back in their
+        # house with a fresh token carrying the new grant. Prebuilt here for
+        # the same reason signin_url is: the frontend never hardcodes a DatsMe
+        # origin, and the activity id is not a constant the browser may assume.
+        _back = quote(
+            f"/api/integrations/login-launch?activity={ACTIVITY_DESIGN_A_PET}"
+            f"&return=/house", safe="")
+        consent_url = (f"{public}/integrations/consent"
+                       f"?activity={ACTIVITY_DESIGN_A_PET}&next={_back}")
     ctx = _read_launch_cookie(request)
     base = {
         "integrated": integrated,
         "signin_url": signin_url,
         "signup_url": signup_url,
         "import_url": import_url,
+        "consent_url": consent_url,
         "signout_url": None,
         "admin": integrated and _has_valid_admin_cookie(request),
     }
@@ -605,7 +624,15 @@ def datsme_session(request: Request):
         "stale": False,
         "user_id": ctx.get("user_id"),
         "display_name": verified.raw_claims.get("nm"),
-        "capabilities": ctx.get("capabilities", []),
+        # From the VERIFIED token, not the cookie blob — the same rule every
+        # other claim here follows, and the reason this block exists.
+        "capabilities": list(verified.capabilities),
+        # Has this user allowed DatsMe to thank her for a donation? The donate
+        # door asks for the grant when this is false (§10.8) rather than taking
+        # a pet and silently failing to pay for it. A HINT for the UI only: the
+        # host is the enforcement point and answers capability_not_granted
+        # regardless of what the browser believes.
+        "can_be_thanked": CAP_SOCIAL_AWARD in set(verified.capabilities),
         "cost": pet_design_cost(),
         # Would this user PASS the admin bounce? A display hint, nothing more:
         # `admin` above is the real thing (a verified adm-claim cookie) and is

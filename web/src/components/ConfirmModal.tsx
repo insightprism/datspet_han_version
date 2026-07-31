@@ -30,13 +30,22 @@ interface Props {
   /** Shown inline under the body. The dialog stays OPEN on failure — an error
    *  the user must re-find the trigger to retry is a worse error. Never a toast. */
   error?: string;
+  /**
+   * An optional way to FIX the thing the body just warned about, offered right
+   * where the warning is. A dialog that says "you have not allowed X" and makes
+   * the user go find where to allow it is telling them about a problem while
+   * withholding the solution. Navigates away — only use it where abandoning the
+   * dialog costs nothing.
+   */
+  secondaryAction?: { label: string; href: string };
   onConfirm: () => void;
   onCancel: () => void;
 }
 
 export default function ConfirmModal({
   open, title, body, confirmLabel = "Delete", tone = "danger",
-  pending = false, pendingLabel = "Working…", error = "", onConfirm, onCancel,
+  pending = false, pendingLabel = "Working…", error = "",
+  secondaryAction, onConfirm, onCancel,
 }: Props) {
   const confirmStyle = tone === "primary"
     ? { background: "linear-gradient(135deg, #6366f1, #4f46e5)", color: "var(--heading)", borderColor: "rgba(99,102,241,0.5)" }
@@ -55,6 +64,15 @@ export default function ConfirmModal({
         <p role="alert" className="mb-3 text-xs leading-relaxed" style={{ color: "#f87171" }}>
           {error}
         </p>
+      )}
+      {secondaryAction && !pending && (
+        <a
+          href={secondaryAction.href}
+          className="mono mb-3 inline-block text-xs underline hover:opacity-80"
+          style={{ color: "var(--gold)" }}
+        >
+          {secondaryAction.label}
+        </a>
       )}
         <div className="mt-2 flex gap-3">
           <button

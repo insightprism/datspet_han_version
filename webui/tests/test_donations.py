@@ -460,3 +460,51 @@ def test_a_donated_row_is_handled_by_the_ORDINARY_phase_1_admin_routes(
     assert client.delete(f"/api/admin/store/{store_pet_id}").status_code == 200
     assert db.get_store_pet(store_pet_id) is None
     assert len(db.donations_for_donor(DONOR)) == 1
+
+
+# --- the consent hint (SPEC_PET_STORE §10.8) -------------------------------
+def test_the_session_says_whether_the_donor_can_be_thanked(dpp_env, monkeypatch):
+    """A donation is irreversible, so the donor must know BEFORE giving a pet
+    away whether a thank-you can actually arrive. `social.award` is optional and
+    optional caps are auto-granted at NO partner tier, so a user who has never
+    been asked simply does not have it — and the door has to say so rather than
+    take the pet and quietly fail to pay for it."""
+    import importlib
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    di = dpp_env["di"]
+    importlib.reload(di)
+
+    app = FastAPI()
+    app.include_router(di.router)
+    client = TestClient(app)
+
+    class _Verified:
+        raw_claims = {"nm": "Sara", "sadm": False}
+
+        def __init__(self, caps):
+            self.capabilities = caps
+
+    def _session_with(cookie_caps, verified_caps=None):
+        monkeypatch.setattr(di, "_read_launch_cookie",
+                            lambda request: {"token": "t", "user_id": "u",
+                                             "capabilities": cookie_caps})
+        monkeypatch.setattr(di, "verify_launch_token",
+                            lambda tok, secret: _Verified(
+                                cookie_caps if verified_caps is None
+                                else verified_caps))
+        monkeypatch.setattr(di, "_token_expires_in", lambda v: 3600)
+        return client.get("/api/datsme/session").json()
+
+    without = _session_with(["pets.write"])
+    assert without["can_be_thanked"] is False
+    # ...and the door offers somewhere to FIX it, built server-side so the
+    # browser never assembles a DatsMe origin.
+    assert without["consent_url"] and "/integrations/consent" in without["consent_url"]
+
+    assert _session_with(["pets.write", di.CAP_SOCIAL_AWARD])["can_be_thanked"] is True
+
+    # The hint reads the VERIFIED token, never the cookie blob — a tampered
+    # cookie must not be able to claim a capability the host never granted.
+    spoofed = _session_with([di.CAP_SOCIAL_AWARD], verified_caps=["pets.write"])
+    assert spoofed["can_be_thanked"] is False
