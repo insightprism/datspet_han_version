@@ -38,8 +38,14 @@ export default function RootLayout({
               <Link href="/design" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
                 Design
               </Link>
+              {/* The shop earned its nav entry on 2026-07-31 (owner call),
+                  reversing the old "no new nav item" decision from the archived
+                  catalog spec §3 — it was a placeholder grid then, a store now. */}
+              <Link href="/catalog" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
+                Pet Store
+              </Link>
               <Link href="/house" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
-                Pet house
+                My Pet House
               </Link>
             </nav>
             <NavAuth />
