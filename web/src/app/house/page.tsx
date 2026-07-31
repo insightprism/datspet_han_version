@@ -7,12 +7,14 @@ import {
   deletePet,
   donatePet,
   getDatsmeSession,
+  fetchEntitlement,
   getHouseConfig,
   listMyDonations,
   listPets,
   petZipUrl,
   type DatsmeSession,
   type Donation,
+  type Entitlement,
   type HouseConfig,
   type PetSummary,
 } from "@/lib/api";
@@ -93,7 +95,9 @@ export default function HousePage() {
   // than sharing Remove's — the two dialogs have to say different things.
   const [petToDonate, setPetToDonate] = useState<PetSummary | null>(null);
   const [donating, setDonating] = useState(false);
+  const [donateError, setDonateError] = useState("");
   const [donations, setDonations] = useState<Donation[]>([]);
+  const [entitlement, setEntitlement] = useState<Entitlement | null>(null);
   const [page, setPage] = useState(0);
   const [tab, setTab] = useState<HouseTab>("all");
   const [isNarrow, setIsNarrow] = useState(false);
@@ -108,6 +112,7 @@ export default function HousePage() {
     // Own rows only, and an anonymous caller gets an empty list rather than an
     // error — a house page should not break because nobody has donated.
     listMyDonations().then(setDonations).catch(() => setDonations([]));
+    fetchEntitlement().then(setEntitlement).catch(() => setEntitlement(null));
   }, []);
 
   useEffect(() => { loadHouse(); }, [loadHouse]);
@@ -144,6 +149,12 @@ export default function HousePage() {
   }, []);
 
   const canAdopt = Boolean(session?.launched && session?.import_url);
+  // The tier lever, wired so the day it is pulled the button disappears with
+  // it rather than staying visible and 403-ing (SPEC_PET_STORE §10.1 gate 2).
+  // Launched-ness is required too: an anonymous owner has no account for a
+  // reward to land in, which is the door's first gate.
+  const canDonate = Boolean(session?.launched)
+    && entitlement?.can_donate !== false;
 
   const pageSize = Math.max(
     1,
@@ -214,18 +225,23 @@ export default function HousePage() {
   async function confirmDonate() {
     if (!petToDonate) return;
     const pet = petToDonate;
-    setPetToDonate(null);
+    // The dialog STAYS OPEN across the await — that is what its pending and
+    // error props are for. Closing first made both dead on this path and put
+    // a failure at the top of the page beside a stale success notice, where
+    // the user has to re-find the button to retry.
     setDonating(true);
-    setError("");
+    setDonateError("");
     try {
       const r = await donatePet(pet.id);
       setPets((cur) => (cur ? cur.filter((p) => p.id !== pet.id) : cur));
       // Re-read rather than push a local row: the thank-you's NUMBER comes
       // from DatsMe, and this is the read that picks it up once it answers.
       listMyDonations().then(setDonations).catch(() => {});
+      setError("");
       setNotice(r.thanks);
+      setPetToDonate(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not donate that pet");
+      setDonateError(e instanceof Error ? e.message : "Could not donate that pet");
     } finally {
       setDonating(false);
     }
@@ -468,7 +484,7 @@ export default function HousePage() {
                   >
                     ⬇ DatsMe zip
                   </a>
-                  {p.donatable && canAdopt && (
+                  {p.donatable && canDonate && (
                     <button
                       type="button"
                       onClick={() => setPetToDonate(p)}
@@ -530,9 +546,12 @@ export default function HousePage() {
         title={`Donate ${petToDonate?.display_name ?? "this pet"} to the Pet Store?`}
         body={"This is permanent. The pet leaves your house for good and you cannot get it back — like giving something to a charity shop. DatsMe thanks you with social points."}
         confirmLabel="Donate — permanently"
+        pendingLabel="Donating…"
+        pending={donating}
+        error={donateError}
         tone="primary"
         onConfirm={confirmDonate}
-        onCancel={() => setPetToDonate(null)}
+        onCancel={() => { setPetToDonate(null); setDonateError(""); }}
       />
 
       <ConfirmModal

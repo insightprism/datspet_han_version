@@ -233,22 +233,44 @@ def init_db() -> None:
         # than left behind a shim: two sources of truth for "is this for sale"
         # is the failure this replaces. Rollback for this deploy is a restore
         # of datspet.db, which the deploy checklist takes first.
+        # RE-ENTRANT, not once-only. sqlite3 autocommits each ALTER on its own,
+        # so a crash between adding the columns and running the backfill used to
+        # leave `status` present — which a single `"status" not in store_cols`
+        # guard reads as "already migrated", skipping the backfill FOREVER and
+        # leaving every listing stuck in `intake`: a silently empty shop.
+        #
+        # So the two steps are guarded independently. Adding columns keys on the
+        # columns; the backfill-and-drop keys on `published` still existing.
+        # A partial run completes on the next boot, and a finished one is a
+        # no-op because `published` is gone.
         store_cols = {r["name"]
                       for r in conn.execute("PRAGMA table_info(store_pets)")}
-        if store_cols and "status" not in store_cols:
-            conn.execute(
-                "ALTER TABLE store_pets ADD COLUMN status TEXT NOT NULL "
-                "DEFAULT 'intake'")
-            conn.execute(
-                "ALTER TABLE store_pets ADD COLUMN admin_note TEXT NOT NULL "
-                "DEFAULT ''")
-            conn.execute(
-                "ALTER TABLE store_pets ADD COLUMN first_shelved_at REAL")
+        if store_cols:
+            for col, ddl in (
+                ("status", "ALTER TABLE store_pets ADD COLUMN status TEXT "
+                            "NOT NULL DEFAULT 'intake'"),
+                ("admin_note", "ALTER TABLE store_pets ADD COLUMN admin_note "
+                               "TEXT NOT NULL DEFAULT ''"),
+                ("first_shelved_at", "ALTER TABLE store_pets ADD COLUMN "
+                                     "first_shelved_at REAL"),
+            ):
+                if col not in store_cols:
+                    conn.execute(ddl)
             if "published" in store_cols:
-                conn.execute(
-                    "UPDATE store_pets SET status='shelf', "
-                    "first_shelved_at=created_at WHERE published=1")
-                conn.execute("ALTER TABLE store_pets DROP COLUMN published")
+                # Backfill then drop, in ONE explicit transaction: the drop is
+                # what marks this step done, so it must not land without the
+                # UPDATE that gives the rows their state.
+                conn.execute("BEGIN")
+                try:
+                    conn.execute(
+                        "UPDATE store_pets SET status='shelf', "
+                        "first_shelved_at=created_at WHERE published=1")
+                    conn.execute(
+                        "ALTER TABLE store_pets DROP COLUMN published")
+                    conn.execute("COMMIT")
+                except Exception:
+                    conn.execute("ROLLBACK")
+                    raise
         conn.commit()
     _migrate_legacy_folders()
     _backfill_bundle_digests()
@@ -836,6 +858,34 @@ def settle_donation_reward(donation_id: str, *, state: str,
                   SET reward_state=?, points_awarded=?, reward_delivered_at=?
                 WHERE id=? AND reward_state=?""",
             (state, points_awarded, settled_at, donation_id, REWARD_OWED))
+        conn.commit()
+        return cur.rowcount > 0
+
+
+def donation_for_store_pet(store_pet_id: str) -> Optional[dict]:
+    """Who donated this listing, if anyone — the read-time join §10.4 calls the
+    admin surface's one new thing. A JOIN and not a column on store_pets, on
+    purpose: the engine must never be able to ask where a listing came from
+    (§1.2), and a read-time view is exactly the boundary where comparing
+    sources is allowed."""
+    with _lock:
+        row = _connect().execute(
+            """SELECT external_user_id, donated_at FROM store_donations
+                WHERE store_pet_id=? ORDER BY donated_at LIMIT 1""",
+            (store_pet_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_donation(donation_id: str) -> bool:
+    """Remove a donation row. The ONE legitimate caller is the donate door
+    undoing its own half-finished write when it loses a race — an
+    append-only ledger tolerates a row never being published, not one being
+    rewritten after it has been reported. Do not reach for this anywhere else.
+    """
+    with _lock:
+        conn = _connect()
+        cur = conn.execute("DELETE FROM store_donations WHERE id=?",
+                           (donation_id,))
         conn.commit()
         return cur.rowcount > 0
 

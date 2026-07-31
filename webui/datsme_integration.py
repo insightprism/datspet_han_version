@@ -918,13 +918,19 @@ async def partner_imported(user_id: str, request: Request):
             acked.append(pet_id)
 
         # SPEC_PET_STORE §1.5.3 — the sale is recorded here because this is the
-        # moment the host confirms it charged. Deliberately NOT gated on `owned`:
-        # this notification is at-least-once, so a retry can arrive after the
-        # buyer deleted the pet, and dropping the sale then is exactly the loss
-        # the ledger exists to prevent. The listing id comes from the row when
-        # it is still there and from the notification when it is not.
-        store_pet_id = (row["source_store_pet_id"] if owned else None) \
-            or details.get(pet_id, {}).get("store_pet_id")
+        # moment the host confirms it charged. Not gated on the pet row EXISTING
+        # (a retry can arrive after the buyer deleted it, and dropping the sale
+        # then is the loss the ledger exists to prevent) — but a row belonging
+        # to a DIFFERENT user is not an absent row, it is a contradiction: the
+        # host says user X bought this, our copy says user Y owns it. Writing a
+        # sale then attributes a purchase to the wrong person, permanently,
+        # because the ledger is append-only and INSERT OR IGNORE. So a
+        # wrong-owner row records nothing, exactly as it stamps nothing.
+        mismatched = row is not None and row["external_user_id"] != user_id
+        store_pet_id = None
+        if not mismatched:
+            store_pet_id = (row["source_store_pet_id"] if owned else None) \
+                or details.get(pet_id, {}).get("store_pet_id")
         if store_pet_id:
             db.insert_store_sale(
                 pet_id=pet_id, store_pet_id=store_pet_id,

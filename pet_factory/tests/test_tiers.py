@@ -77,3 +77,31 @@ def test_resolve_entitlement_convenience():
     ent = tiers.resolve_entitlement([])
     assert ent["tier"] == tiers.default_tier_key()
     assert ent["max_poses"] == tiers.entitlement(tiers.default_tier_key())["max_poses"]
+
+
+# Every capability flag a tier grants, and the reason this list is a TEST and
+# not a comment: `entitlement()` reads each with a `.get(key, True)` default,
+# so a tier that simply omits one silently grants it. The Pet Store's
+# `can_donate` shipped that way — present in tiers.json, defaulted True in the
+# builder, and pinned by nothing. That is the §14.2 "registered nowhere"
+# lesson: a value with a permissive default needs a guard or it is not a
+# contract, it is a hope.
+TIER_CAPABILITY_FLAGS = ("can_generate", "can_adopt_samples", "can_donate")
+
+
+def test_every_tier_declares_every_capability_flag_explicitly():
+    data = tiers.load_tiers()
+    for tier_key, tier in data["tiers"].items():
+        for flag in TIER_CAPABILITY_FLAGS:
+            assert flag in tier, (
+                f"tier {tier_key!r} does not declare {flag!r}. The builder's "
+                f"permissive default would grant it silently — declare it, "
+                f"even when the answer is true.")
+
+
+def test_the_entitlement_surfaces_every_capability_flag():
+    """A flag a tier declares but the builder drops is invisible to every
+    caller, which is the same failure wearing a different hat."""
+    ent = tiers.entitlement("base")
+    for flag in TIER_CAPABILITY_FLAGS:
+        assert flag in ent, f"entitlement() does not surface {flag!r}"

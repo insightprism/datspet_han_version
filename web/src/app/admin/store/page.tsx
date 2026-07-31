@@ -350,7 +350,11 @@ export default function StoreAdminPage() {
             <div className="text-xs" style={labelStyle}>
               <div className="flex items-center gap-2">
                 <span>Description</span>
-                {editor.status !== "shelf" && (
+                {/* Keyed on the PERSISTED row, not the editor's unsaved
+                    dropdown: the server refuses ai-tag on a shelved listing, so
+                    a button that appears the moment you pick "backroom" — before
+                    saving — just 409s on click. */}
+                {inventory?.find((l) => l.id === editor.id)?.status !== "shelf" && (
                   <button
                     type="button"
                     onClick={() => { setAiTagError(""); setAiTagOpen(true); }}

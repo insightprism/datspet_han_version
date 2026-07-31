@@ -22,6 +22,7 @@ donation row is the retry queue; there is no drain tick and no scheduler.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 from typing import Optional
@@ -52,15 +53,26 @@ _OUTCOME_STATES = {
 }
 
 
-def _idempotency_key(donation_ids: list[str]) -> str:
-    """Derived from the donation ids, NOT the launch jti.
+def _idempotency_key(donation_ids: list[str], launch_token: str) -> str:
+    """The cache key for ONE attempt: the donations, plus which launch sent them.
 
-    The SDK's builder defaults to the jti, which is wrong here: a retry happens
-    on a LATER launch with a different jti, and the host's replay cache would
-    then see a new key for the same work. Deriving it from the content makes a
-    retry byte-identical to the attempt it repeats.
+    The launch matters, and getting that wrong is subtle. The signed body
+    embeds the current launch JWT, so two attempts from DIFFERENT launches have
+    different bytes. A key derived from the donation ids alone would present
+    the host with same-key/different-digest — which it correctly answers
+    `idempotency_key_reuse` 409, after having already paid. "A retry is
+    byte-identical" is only true WITHIN a launch, so the key says which launch:
+
+      same launch, retried  → same key, same bytes → the cache replays it
+      later launch          → different key, different bytes → no false 409
+
+    Real duplicate protection does not live here at all. It lives in the host's
+    `partner_social_awards` unique business key, which answers a re-delivery
+    with `duplicate` outcomes that settle the rows — the cache is only an
+    optimisation on top of that.
     """
-    return "award-" + "-".join(sorted(donation_ids))
+    digest = hashlib.sha256(launch_token.encode()).hexdigest()[:12]
+    return "award-" + "-".join(sorted(donation_ids)) + "-" + digest
 
 
 def deliver_owed_rewards(owner: Optional[str], launch_token: Optional[str],
@@ -116,7 +128,28 @@ def deliver_owed_rewards(owner: Optional[str], launch_token: Optional[str],
 
 
 class _PermanentRefusal(RuntimeError):
-    """A 4xx. The host will answer the same way next time."""
+    """The host will answer the same way however often we ask."""
+
+
+class _Retriable(RuntimeError):
+    """The host could not answer THIS time. The rows stay owed."""
+
+
+#: 4xx codes that are NOT the partner's fault and WILL succeed later.
+#:
+#: 401 is the one that matters, and treating it as permanent silently killed
+#: the normal case: one launch carries one writeback (the nonce burns), so the
+#: SECOND donation of a session posts with a spent nonce and gets a 401 — as
+#: does any session past the 60-minute token TTL. Marking those `declined`
+#: destroys a reward the donor earned.
+#:
+#: 409 is the idempotency cache refusing a key it has seen with different bytes.
+#: A fresh launch mints a fresh key (see _idempotency_key), so this should not
+#: recur — and if it does, the host's business key still makes a re-delivery
+#: safe, so retrying is right.
+#:
+#: 429 is a rate limit and says so.
+_RETRIABLE_STATUSES = (401, 409, 429)
 
 
 def _post_awards(donation_ids: list[str], launch_token: str,
@@ -135,7 +168,7 @@ def _post_awards(donation_ids: list[str], launch_token: str,
         "target_schema_version": AWARD_SCHEMA_VERSION,
         "payload": {"awards": [{"award_key": i, "reason": AWARD_REASON}
                                for i in donation_ids]},
-        "idempotency_key": _idempotency_key(donation_ids),
+        "idempotency_key": _idempotency_key(donation_ids, launch_token),
     }
     resp = post_writeback(
         datsme_base_url=datsme_integration._datsme_base_url(),
@@ -143,10 +176,15 @@ def _post_awards(donation_ids: list[str], launch_token: str,
         hmac_secret=datsme_integration._hmac_secret(),
         body=body, timeout_seconds=timeout_seconds)
 
+    if resp.status_code in _RETRIABLE_STATUSES:
+        raise _Retriable(f"HTTP {resp.status_code}: {resp.text[:200]}")
     if 400 <= resp.status_code < 500:
+        # A genuine refusal: the capability was revoked, or we sent something
+        # the host will never accept. Enumerated by status rather than "any
+        # 4xx", because the 4xx that matters most here is retriable.
         raise _PermanentRefusal(f"HTTP {resp.status_code}: {resp.text[:200]}")
     if resp.status_code >= 500:
-        raise RuntimeError(f"HTTP {resp.status_code}")
+        raise _Retriable(f"HTTP {resp.status_code}")
     data = resp.json()
     results = data.get("results")
     return results if isinstance(results, list) else []

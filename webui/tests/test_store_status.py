@@ -229,3 +229,63 @@ def test_the_migration_backfills_a_real_pre_1b_database_and_re_runs_clean(
     assert rows["live0001"]["first_shelved_at"] == 1783800000.0
     assert rows["stage001"]["status"] == "intake"
     assert rows["stage001"]["first_shelved_at"] is None
+
+
+def test_a_PARTIAL_migration_completes_on_the_next_boot(monkeypatch):
+    """The crash window B3 names: sqlite autocommits each ALTER, so a crash
+    after the columns are added but before the backfill leaves `status`
+    present. A once-only guard keyed on `status` reads that as "done" and skips
+    the backfill forever — every listing stuck in `intake`, a silently empty
+    shop with no error anywhere."""
+    import importlib
+    tmp = tempfile.mkdtemp()
+    monkeypatch.setenv("PETMAKER_OUTPUT_DIR", tmp)
+    monkeypatch.setenv("PETMAKER_DB_PATH", os.path.join(tmp, "datspet.db"))
+
+    conn = sqlite3.connect(os.path.join(tmp, "datspet.db"))
+    conn.execute("""CREATE TABLE store_pets (
+        id TEXT PRIMARY KEY, display_name TEXT NOT NULL, breed_id TEXT NOT NULL,
+        animal TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+        tags_json TEXT NOT NULL DEFAULT '[]', pose_count INTEGER NOT NULL,
+        published INTEGER NOT NULL DEFAULT 0, created_at REAL NOT NULL,
+        bundle_sha256 TEXT NOT NULL, size_bytes INTEGER NOT NULL,
+        preview_png BLOB NOT NULL, sheet_png BLOB NOT NULL,
+        manifest_json TEXT NOT NULL, package_json TEXT, bundle_zip BLOB NOT NULL)""")
+    manifest = json.dumps({"animations": {"walk": {}, "idle": {}}})
+    conn.execute("INSERT INTO store_pets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                 ("live0001", "N", "b", "cat", "", "[]", 2, 1, 1783800000.0,
+                  "sha", 1, b"p", b"s", manifest, None, b"z"))
+    # THE PARTIAL STATE: columns added, backfill never ran, published still here.
+    conn.execute("ALTER TABLE store_pets ADD COLUMN status TEXT NOT NULL DEFAULT 'intake'")
+    conn.execute("ALTER TABLE store_pets ADD COLUMN admin_note TEXT NOT NULL DEFAULT ''")
+    conn.execute("ALTER TABLE store_pets ADD COLUMN first_shelved_at REAL")
+    conn.commit()
+    conn.close()
+
+    import db as db_mod
+    importlib.reload(db_mod)
+    db_mod.init_db()
+
+    cols = {r["name"] for r in
+            db_mod._connect().execute("PRAGMA table_info(store_pets)")}
+    assert "published" not in cols, "the interrupted step must complete"
+    row = db_mod._connect().execute(
+        "SELECT status, first_shelved_at FROM store_pets").fetchone()
+    assert row["status"] == "shelf", "the shelved listing must not be stranded"
+    assert row["first_shelved_at"] == 1783800000.0
+
+
+def test_a_PUT_without_admin_note_preserves_the_stored_one(admin_client, dpp_env):
+    """Someone wrote why this was archived months ago. A client that simply
+    does not send the field must not erase it."""
+    db = dpp_env["db"]
+    _row(db, "storerow0001")
+    _put(admin_client, "storerow0001", status="archived",
+         admin_note="muddy colours, never sold")
+
+    body = {"display_name": "Shelf Cat", "description": "", "tags": [],
+            "animal": "cat", "status": "archived"}          # no admin_note
+    assert admin_client.put("/api/admin/store/storerow0001",
+                            json=body).status_code == 200
+    assert db.get_store_pet("storerow0001")["admin_note"] == \
+        "muddy colours, never sold"

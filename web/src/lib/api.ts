@@ -312,6 +312,9 @@ export interface Entitlement {
   price_per_extra_pose: number;
   can_generate: boolean;
   can_adopt_samples: boolean;
+  /** May this user give a pet to the store (SPEC_PET_STORE §10.1 gate 2)?
+   *  True on every tier today — it exists so the lever is a data edit. */
+  can_donate: boolean;
   upsell: string;
   base_design_cost: number | null;   // host base charge; null if unknown
 }

@@ -1,6 +1,6 @@
 # SPEC_PET_STORE — The Pet Store: a database-backed shop of ready-made pets
 
-**Status: Rev.10 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASES 1a, 1b AND 2
+**Status: Rev.11 (2026-07-31) — PHASE 1 LIVE IN PRODUCTION; PHASES 1a, 1b AND 2
 BUILT AND DEPLOYED NOWHERE.** There is no Phase 3 — §13's table is the whole
 plan, and §14.5 is the build ledger for what has not shipped. Phase 1 deployed host-first (§13) to staging and then production
 the same day, C1-verified 14/14 on both tiers, with the §12 store E2E passing on
@@ -10,11 +10,13 @@ is done"; §14.4 records the deploys. **§10 is now a build-ready specification
 rather than a sketch** — it needs owner sign-off before code, and §10.0 records
 the constraints that moved the design.
 
-**Three things are specified and built nowhere** (§13, §14.3): the transaction
+**Three things are built and deployed nowhere** (§13, §14.5): the transaction
 ledger (**Phase 1a**, §1.5.3 — the only one losing data while it waits), the
 shelf lifecycle (**Phase 1b**, §1.4 — it changes a live Phase 1 table), and
-donations (**Phase 2**, §10). §1–§13 describe the design in its finished state,
-including those parts; §14 is the ledger of what actually exists.
+donations (**Phase 2**, §10). All three have since been hardened by an
+independent review pass (Rev.11) whose findings all sat in paths no test
+exercised. §1–§13 describe the design in its finished state; §14 is the ledger
+of what actually exists.
 
 Supersedes the file-based samples surface of `SPEC_DATSPET_CATALOG_PURCHASE`
 (archived, executed 2026-07-30) — see §8 for exactly what it absorbs and retires.
@@ -146,6 +148,31 @@ drift.
 Views stay unbuilt and are a genuinely harder problem (§1.5.4): one cached
 listing payload and a 24-hour preview cache mean there is no request to count
 without a purpose-built beacon.
+
+**Rev.11 (2026-07-31)** — an independent review of the 1a/1b/2 build found a
+set of defects **every one of which lived in a path no test exercised**, while
+all gates were green. The headline: **the reward loop was dead end to end.**
+Three breaks interlocked — the host rebuilt its writeback response from three
+fixed keys and discarded the handler's per-award `results`; the partner treated
+every 4xx as permanent, so the 401 a burnt nonce produces (i.e. the SECOND
+donation of any session — the case §10.0 constraint 1 names) marked rewards
+`declined` forever; and the idempotency key ignored the launch, so a retry
+presented same-key/different-bytes and earned a 409 after the host had already
+paid. Fixed together, with the tests §10.11 named and nobody wrote.
+
+Also corrected: a batch handler that raised mid-loop and rolled back the whole
+session, un-paying awards the same response reported as `awarded` (now a
+SAVEPOINT per entry, validation before any award); a sale recorded against the
+wrong buyer when the acked pet belonged to someone else (append-only, so
+permanent); a migration that could strand every listing in `intake` forever if
+it crashed between the ALTERs and the backfill (now re-entrant); an outbox that
+a single malformed URL could stall for every partner behind it; two
+partner-scoped tables missing from all four §22a surfaces, now with a *derived*
+guard so the next one cannot ship unlisted; and a `PUT` that erased an archive
+reason whenever a client omitted the field.
+
+§10.7.3's "a retry is byte-identical" was **false as built** and is rewritten
+rather than quietly dropped — the way it was wrong is the useful part.
 
 </details>
 
@@ -1351,14 +1378,29 @@ endpoint (step 9) and the launch handler.
   rows `owed`.
 - **Signing**: the SDK's `sign_writeback` + `post_writeback`
   (`datsme_me/api/sdk/datsme_partner_sdk/writeback.py`) — already installed,
-  never yet imported here. `WritebackBuilder` is *not* used: it defaults the
-  idempotency key to the launch `jti`, which is wrong for us (a retry on a later
-  launch must reuse the same key). **The idempotency key is derived from the
-  donation ids in the batch**, so a retry is byte-identical and both the host's
-  replay cache and its business key recognise it.
+  never yet imported here. `WritebackBuilder` is *not* used: it builds the body
+  from a `LaunchContext` and defaults the idempotency key to the launch `jti`.
+  **The key is derived from the donation ids AND the launch that is sending
+  them** (Rev.11). An earlier draft said "the donation ids, so a retry is
+  byte-identical"; that was wrong as built, and the way it was wrong is worth
+  keeping: the signed body embeds the current launch JWT, so a retry from a
+  LATER launch has the same key and different bytes — which the host correctly
+  answers `idempotency_key_reuse` 409, *after having already paid*. Including
+  the launch makes a retry byte-identical **within** a launch (the cache
+  replays it) and a fresh key **across** launches (no false conflict). Real
+  duplicate protection was never the cache's job anyway: it is the host's
+  `partner_social_awards` unique key, which answers a re-delivery with
+  `duplicate` outcomes that settle the rows.
 - **Outcomes**: HTTP 200 marks every id in the batch `delivered` and stores
   the `points_awarded` the host reported, so the thank-you survives a reload
-  and never has to be recomputed. A per-entry
+  and never has to be recomputed.
+- **A 4xx is not automatically permanent, and getting that wrong killed the
+  normal case** (Rev.11). One launch carries one writeback because the nonce
+  burns, so the SECOND donation of a session posts with a spent nonce and gets
+  a **401** — as does any session past the 60-minute token TTL. Treating "any
+  4xx" as terminal marked those `declined` and destroyed a reward the donor had
+  earned. **401, 409 and 429 leave the rows `owed`**; other 4xx are the genuine
+  refusals (`capability_not_granted`) and are terminal. A per-entry
   `capped` verdict from the host marks that row `capped` — **terminal, never
   retried**; the donor gave several things and was thanked once, which is what
   a daily cap means. A permanent refusal (`capability_not_granted`) marks them
@@ -1674,9 +1716,12 @@ host a workflow.
   next launch delivers it; owed rows batch into ONE writeback; the body carries
   the raw launch token from the cookie; a 200 marks them `delivered` once and a
   second launch sends nothing; a `capped` verdict is terminal and never
-  retried; the idempotency key is derived from the donation ids, so a retry is
-  byte-identical.
-- `webui/tests/test_donation_thanks.py` — a delivered award stores the host's
+  retried; a **401/409/429 leaves the rows owed** and a later launch settles
+  them; a lost response settles on the retry via `duplicate` rather than being
+  declined; the idempotency key is stable within a launch and differs across
+  launches.
+- The donor-facing cases live in `test_donations.py` beside the rest rather
+  than a separate `test_donation_thanks.py` — a delivered award stores the host's
   `points_awarded` and the donor's row renders that number, not a constant; a
   `capped` or `disabled` outcome says the pet was accepted and claims no
   points; a `duplicate` reports the FIRST award's figure rather than a fresh
@@ -1830,9 +1875,9 @@ owner has always been told it is.
 |---|---|---|---|---|
 | 0 | this spec, reviewed | — | — | done |
 | 1 | the store | DatsPet + host | — | **live in production** (§14.4) |
-| 1a | **the transaction ledger** (§1.5.3) — `store_sales`, the amount on the imported notification, and making that notification at-least-once | DatsPet + host | Phase 1 | **built, not deployed** (§14.5) |
-| 1b | **the shelf lifecycle** (§1.4) — `published` → four-state `status`, with the migration | DatsPet only | Phase 1 | **built, not deployed** (§14.5) |
-| 2 | **donations** (§10) | DatsPet + host | Phase 1 **and 1b** | **built, not deployed** (§14.5) |
+| 1a | **the transaction ledger** (§1.5.3) — `store_sales`, the amount on the imported notification, and making that notification at-least-once | DatsPet + host | Phase 1 | **built + review-hardened, not deployed** (§14.5) |
+| 1b | **the shelf lifecycle** (§1.4) — `published` → four-state `status`, with the migration | DatsPet only | Phase 1 | **built + review-hardened, not deployed** (§14.5) |
+| 2 | **donations** (§10) | DatsPet + host | Phase 1 **and 1b** | **built + review-hardened, not deployed** (§14.5) |
 
 **There is no Phase 3.** Phase 2 is the last one this spec defines; everything
 beyond it is either the deploy of what exists, an owner's merchandising call,
@@ -1885,9 +1930,9 @@ sample grid it replaced.*
 ## §14 As built — the ledger
 
 **Phase 1 is live in production** (§14.4 records the deploys). Phases 1a, 1b and
-2 are specified and built nowhere (§14.3). Read this section rather than the
+2 are BUILT and deployed nowhere (§14.5). Read this section rather than the
 prose above when the question is "what is done" — §1–§13 describe the design in
-its finished state, including parts that are not built yet.
+its finished state, and a design being described here is not evidence it runs.
 
 ### §14.1 Built and green
 
@@ -1963,26 +2008,51 @@ deliberately not done.
 
 ### §14.5 Built after the Phase 1 deploy, shipped nowhere
 
-| Phase | DatsPet | Host | Gates at the commit |
+| Phase | DatsPet | Host | Gates |
 |---|---|---|---|
-| 1a | `b4d35d0` | `485b2e86` | 602 pytest · outbox 11/11 |
-| 1b | `2256ed3` | — | 614 pytest · tsc · vitest 36 |
-| 2 | `99bf84d` | `a1b0bef1` | 631 pytest · social award 21/21 · registry 5/5 |
+| 1a | `b4d35d0` | `485b2e86` | — |
+| 1b | `2256ed3` | — | — |
+| 2 | `99bf84d` | `a1b0bef1` | — |
+| **review hardening (Rev.11)** | this commit | this commit | 641 pytest · tsc · vitest 36 · host 28/28 + 14/14 + 16/16 + registry 5/5 |
 
 `pre-phase-2` is tagged in both repos as the rewind point before Phase 2
 (DatsPet `4f8c31c`, host `485b2e86` — the host tag deliberately points at the
 store commit, not its HEAD, because unrelated work landed there since).
 
-Two defects the build caught that are worth remembering, both found by tests
-within seconds:
+**What the review pass changed, and why it matters more than the count.** Every
+critical finding sat in a path no test touched, and the suite was green
+throughout. The reward loop had never actually run end to end: the partner's
+tests stubbed the host's response and handed themselves a `results` array the
+real route does not send. A stub that answers the way you hope is not a test of
+the thing you built.
+
+Defects worth remembering rather than just recording:
+
+- **The response shape was the whole break.** A handler can return anything it
+  likes; if the route lifts two keys and drops the rest, a target that answers
+  per item cannot work. Fixed generically (`build_writeback_response`) so the
+  next target needs no route change — which was supposed to be the point of
+  dispatching on a registry.
+- **"Any 4xx is permanent" killed the normal case.** One launch carries one
+  writeback, so the second donation of a session ALWAYS 401s. The spec named
+  that constraint in §10.0 and the code contradicted it anyway.
+- **A mid-loop raise un-paid its neighbours.** Validating the whole batch before
+  awarding anything, and a SAVEPOINT per entry, are what make one bad entry cost
+  only itself.
+- **A once-only migration guard can strand a partial run forever.** Keying the
+  backfill on `published` still existing, rather than on `status` being absent,
+  makes it re-entrant.
+- **A wrong-owner row is not an absent row.** §1.5.3's "do not depend on the pet
+  row existing" is about ABSENCE; a row belonging to someone else is a
+  contradiction, and writing a sale from it mis-attributes a purchase
+  permanently.
+
+Two earlier build defects, both caught by tests within seconds:
 
 - **A helper inserted between `@router.post` and its handler silently rebound
-  the route to the helper.** Every ledger test failed at once with a validation
-  error on a body it had never been sent. A decorator attaches to whatever
-  follows it.
+  the route to the helper.** A decorator attaches to whatever follows it.
 - **A test fixture built a bundle with no animations**, so the sellability gate
-  refused the donation. The gate was right; the fixture was lying about what a
-  real pet looks like.
+  refused the donation. The gate was right; the fixture was lying.
 
 ### §14.4 Deployed (Rev.5, 2026-07-31)
 

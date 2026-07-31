@@ -197,3 +197,19 @@ def test_the_sale_outlives_the_buyer_the_listing_and_being_forgotten(
     assert row is not None
     assert row["credits_paid"] == 50             # the revenue survives
     assert row["buyer_user_id"] == ""            # the person does not
+
+
+def test_a_pet_owned_by_someone_ELSE_records_no_sale(client, dpp_env):
+    """The host says user X bought it; our copy says user Y owns it. That is a
+    contradiction, not an absent row — and the ledger is append-only with
+    INSERT OR IGNORE, so a sale written to the wrong buyer is permanent."""
+    db = dpp_env["db"]
+    _store_adopted_pet(db, owner="user-B")          # someone else's pet
+
+    r = _imported(client, "user-A", {
+        "export_type": "datspet_pets.v1", "item_ids": ["soldpet00001"],
+        "items": [{"id": "soldpet00001", "store_pet_id": "smpl93036181",
+                   "credits_charged": 50}]})
+    assert r.status_code == 200
+    assert r.json()["acked"] == []                  # the stamp already refused
+    assert _sale(db, "soldpet00001") is None, "and the SALE must refuse too"

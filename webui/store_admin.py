@@ -144,6 +144,11 @@ def _admin_view(row) -> dict:
     on the shelf, not first discovered at the publish click)."""
     listing = db.store_listing_view(row)
     listing["preview_url"] = f"/api/store/{row['id']}/preview.png"
+    # §10.4 — the admin's one new thing: a read-time badge saying this arrived
+    # as a gift. Never a column on store_pets, and never on the shopper's
+    # listing: who gave it is the shop's business, not the buyer's.
+    donation = db.donation_for_store_pet(row["id"])
+    listing["donated_by"] = donation["external_user_id"] if donation else None
     listing["sellability_errors"] = store_validation.sellability_errors(
         bundle_zip=row["bundle_zip"], preview_png=row["preview_png"],
         display_name=row["display_name"], animal=row["animal"])
@@ -170,7 +175,10 @@ class ListingBody(BaseModel):
     tags: list[str] = []
     animal: str
     status: str
-    admin_note: str = ""
+    # None = KEEP what is stored. A client that omits the field must not erase
+    # the reason someone wrote for archiving a listing months ago; only an
+    # explicit value overwrites it.
+    admin_note: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +286,9 @@ def update_listing(store_id: str, body: ListingBody, request: Request):
 
     db.update_store_listing(store_id, display_name=display_name,
                             description=body.description.strip(), tags=tags,
-                            animal=animal, admin_note=body.admin_note.strip())
+                            animal=animal,
+                            admin_note=(body.admin_note.strip()
+                                        if body.admin_note is not None else None))
     db.set_store_status(store_id, body.status)
     admin_common.audit(AUDIT_TAG, request, "update",
                        f"{store_id} status={body.status}")

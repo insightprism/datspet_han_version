@@ -51,6 +51,13 @@ def _require_can_donate(request: Request) -> None:
     """§10.1 gate 2 — the entitlement, resolved exactly like can_adopt_samples."""
     caps = datsme_integration.resolve_launch_capabilities(request)
     entitlement = tiers_mod.resolve_entitlement(caps)
+    # Fails OPEN on a missing key, deliberately and consistently with
+    # pet_store.py's can_adopt_samples. The default is now unreachable —
+    # test_tiers pins that every tier declares the flag and that entitlement()
+    # surfaces it — so this only fires if the tier table is malformed, and in
+    # that case a silent platform-wide donation outage is a worse failure than
+    # a donation. The gates that actually protect anything (a DatsMe identity,
+    # her own designed pet, and the host's own cap) are all still in front.
     if not entitlement.get("can_donate", True):
         raise HTTPException(403, "Your plan does not include donating pets.")
 
@@ -70,6 +77,15 @@ def donate_pet(pet_id: str, request: Request,
     pet = db.get_pet_for_owner(pet_id, external_user_id=owner)
     if pet is None:
         raise HTTPException(404, "pet not found")
+    # Unreachable from the house (which lists kept pets only), but a direct
+    # POST could otherwise give away a build the user never decided to keep —
+    # and drafts are swept, so she would lose it either way without ever
+    # choosing to.
+    if pet["draft"]:
+        raise HTTPException(422, {
+            "error": "not_donatable",
+            "errors": ["Keep this pet first — an unsaved build cannot be "
+                       "donated."]})
 
     # §10.1 gate 3 — her OWN designed pet. A store-adopted pet carries `public`
     # and is refused, which closes the laundering loop (adopt cheap, donate
@@ -124,8 +140,20 @@ def donate_pet(pet_id: str, request: Request,
         donation_id=donation_id, external_user_id=owner,
         store_pet_id=store_pet_id, display_name=display_name, donated_at=now)
 
-    # 3. The slot frees at once — that is the product point.
-    db.delete_pet(pet_id, external_user_id=owner)
+    # 3. The slot frees at once — that is the product point. The in-memory
+    #    JOBS entry goes with it, exactly as the Remove route does: a leaked
+    #    entry keeps an unauthenticated GET /api/job/{id} serving a result
+    #    panel whose links now 404, and leaks the object besides.
+    if not db.delete_pet(pet_id, external_user_id=owner):
+        # Lost the race: a concurrent POST for this same pet already donated
+        # it and removed the row. Undo ours rather than leaving a second
+        # listing and a second reward claim for one pet. The ledger row is
+        # removed here and ONLY here — before it has been reported to anyone,
+        # so nothing has been told a donation happened.
+        db.delete_store_pet(store_pet_id)
+        db.delete_donation(donation_id)
+        raise HTTPException(409, "That pet has already been donated.")
+    _drop_job_entry(pet_id)
 
     # She is right here, in a launched session, so the token needed to speak to
     # the host exists NOW — the common case is that the point lands before she
@@ -135,7 +163,6 @@ def donate_pet(pet_id: str, request: Request,
     launch = datsme_integration._read_launch_cookie(request) or {}
     token = launch.get("token")
     if token:
-        import reward_delivery
         background.add_task(_deliver_quietly, owner, token)
 
     return {
@@ -160,6 +187,18 @@ def list_my_donations(request: Request):
     if owner_scope.is_anon_owner(owner):
         return {"donations": []}
     return {"donations": db.donations_for_donor(owner)}
+
+
+def _drop_job_entry(pet_id: str) -> None:
+    """Mirror app.py's delete route. Imported at call time because `app`
+    imports THIS module to mount its router — a module-level import would be a
+    cycle."""
+    try:
+        import app as app_mod
+        with app_mod.JOBS_LOCK:
+            app_mod.JOBS.pop(pet_id, None)
+    except Exception:                            # noqa: BLE001
+        pass
 
 
 def _deliver_quietly(owner: str, launch_token: str) -> None:

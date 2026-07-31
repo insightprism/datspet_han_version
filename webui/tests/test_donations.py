@@ -325,15 +325,70 @@ def test_owed_rewards_batch_into_one_request(dpp_env, monkeypatch):
     assert len(calls[0]["body"]["payload"]["awards"]) == 3
 
 
-def test_the_idempotency_key_is_derived_from_the_donations_not_the_launch(
-        dpp_env, monkeypatch):
-    """A retry happens on a LATER launch with a different jti, so keying on the
-    jti would make the host see new work for the same donations."""
+def test_the_idempotency_key_is_stable_per_launch_and_differs_across_them():
+    """The signed body embeds the CURRENT launch JWT, so two attempts from
+    different launches have different bytes. A key derived from the donation
+    ids alone would present the host with same-key/different-digest — which it
+    answers `idempotency_key_reuse` 409, AFTER having already paid."""
     import reward_delivery
     importlib.reload(reward_delivery)
-    assert reward_delivery._idempotency_key(["b", "a"]) == \
-        reward_delivery._idempotency_key(["a", "b"])
-    assert "a" in reward_delivery._idempotency_key(["a"])
+    k = reward_delivery._idempotency_key
+    # Within one launch: order-independent and identical, so a retry replays.
+    assert k(["b", "a"], "tok-1") == k(["a", "b"], "tok-1")
+    # Across launches: different, so the cache never sees a false conflict.
+    assert k(["a"], "tok-1") != k(["a"], "tok-2")
+
+
+@pytest.mark.parametrize("status", [401, 409, 429])
+def test_a_retriable_refusal_leaves_the_reward_OWED(dpp_env, monkeypatch, status):
+    """§10.0 constraint 1 made this the NORMAL case, not an edge one: a launch
+    carries ONE writeback because the nonce burns, so the second donation of a
+    session posts with a spent nonce and gets a 401 — as does any session past
+    the 60-minute token TTL. Treating that as permanent destroys a reward the
+    donor earned."""
+    import reward_delivery
+    importlib.reload(reward_delivery)
+    db = dpp_env["db"]
+    db.insert_donation(donation_id="don1", external_user_id=DONOR,
+                       store_pet_id="sp1", display_name="P", donated_at=1.0)
+    monkeypatch.setattr("datsme_partner_sdk.writeback.post_writeback",
+                        _fake_post(status_code=status))
+    assert reward_delivery.deliver_owed_rewards(DONOR, "spent-token") == 0
+    assert db.donations_for_donor(DONOR)[0]["reward_state"] == "owed"
+
+    # ...and a later launch with a fresh token settles it.
+    monkeypatch.setattr("datsme_partner_sdk.writeback.post_writeback",
+                        _fake_post(results=[{"award_key": "don1",
+                                             "outcome": "awarded",
+                                             "points_awarded": 1}]))
+    assert reward_delivery.deliver_owed_rewards(DONOR, "fresh-token") == 1
+    assert db.donations_for_donor(DONOR)[0]["reward_state"] == "delivered"
+
+
+def test_a_lost_response_settles_on_the_retry_via_duplicate(dpp_env, monkeypatch):
+    """The host paid, the answer never arrived. The retry must settle the rows
+    off the `duplicate` verdict its business key produces — never mark them
+    declined, which would strand a reward the donor was already given."""
+    import reward_delivery
+    importlib.reload(reward_delivery)
+    db = dpp_env["db"]
+    db.insert_donation(donation_id="don1", external_user_id=DONOR,
+                       store_pet_id="sp1", display_name="P", donated_at=1.0)
+
+    def _timeout(**kwargs):
+        raise RuntimeError("read timeout")
+    monkeypatch.setattr("datsme_partner_sdk.writeback.post_writeback", _timeout)
+    assert reward_delivery.deliver_owed_rewards(DONOR, "tok-1") == 0
+    assert db.donations_for_donor(DONOR)[0]["reward_state"] == "owed"
+
+    monkeypatch.setattr("datsme_partner_sdk.writeback.post_writeback",
+                        _fake_post(results=[{"award_key": "don1",
+                                             "outcome": "duplicate",
+                                             "points_awarded": 1}]))
+    assert reward_delivery.deliver_owed_rewards(DONOR, "tok-2") == 1
+    row = db.donations_for_donor(DONOR)[0]
+    assert row["reward_state"] == "delivered"
+    assert row["points_awarded"] == 1, "the ORIGINAL figure, reported back"
 
 
 def test_delivery_without_a_launch_token_is_a_no_op(dpp_env):
@@ -346,3 +401,62 @@ def test_delivery_without_a_launch_token_is_a_no_op(dpp_env):
     assert reward_delivery.deliver_owed_rewards(DONOR, None) == 0
     assert reward_delivery.deliver_owed_rewards(None, "tok") == 0
     assert len(db.owed_donations(DONOR)) == 1
+
+
+def test_donating_the_same_pet_twice_leaves_exactly_one_donation(
+        donate_client, dpp_env):
+    """Two POSTs for one pet. The second must not create a second listing and a
+    second reward claim for a pet that only ever existed once — `delete_pet`
+    returning False is how the loser finds out."""
+    db = dpp_env["db"]
+    _designed_pet(db)
+    assert donate_client.post("/api/pets/mypet0000001/donate").status_code == 200
+    r = donate_client.post("/api/pets/mypet0000001/donate")
+    assert r.status_code in (404, 409), r.text
+    assert len(db.donations_for_donor(DONOR)) == 1
+    assert len(db.list_store_pets(shelf_only=False)) == 1
+
+
+# --- M3: a donated row is an ordinary listing from here on -----------------
+def test_a_donated_row_is_handled_by_the_ORDINARY_phase_1_admin_routes(
+        donate_client, dpp_env, monkeypatch):
+    """§10.4's claim, pinned: donations add no admin workflow. The row an
+    ordinary donation produces must be editable and shelvable through the
+    routes that already existed — and deleting the listing must leave the
+    donation ledger alone, because that is audit."""
+    import importlib
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    import store_admin
+    importlib.reload(store_admin)
+
+    db = dpp_env["db"]
+    _designed_pet(db)
+    donate_client.post("/api/pets/mypet0000001/donate")
+    store_pet_id = db.list_store_pets(shelf_only=False)[0]["id"]
+
+    admin = FastAPI()
+    admin.include_router(store_admin.router)
+    admin.dependency_overrides[
+        store_admin.datsme_integration.require_admin_launch] = lambda: None
+    monkeypatch.setattr(store_admin.datsme_integration, "admin_user_id",
+                        lambda request: "admin-1")
+    monkeypatch.setattr(store_admin.owner_scope, "require_owner",
+                        lambda request: DONOR)
+    client = TestClient(admin)
+
+    # The read-time "donated by" badge — a JOIN, never a column (§1.2).
+    got = client.get(f"/api/admin/store/{store_pet_id}").json()
+    assert got["donated_by"] == DONOR
+
+    # Editable and shelvable through the ordinary PUT.
+    r = client.put(f"/api/admin/store/{store_pet_id}", json={
+        "display_name": "Rescued Panda", "description": "A gift.",
+        "tags": ["red panda"], "animal": "panda", "status": "shelf"})
+    assert r.status_code == 200, r.text
+    assert db.get_store_pet(store_pet_id)["status"] == "shelf"
+
+    # Deleting the listing leaves the ledger — history is not tidied.
+    assert client.delete(f"/api/admin/store/{store_pet_id}").status_code == 200
+    assert db.get_store_pet(store_pet_id) is None
+    assert len(db.donations_for_donor(DONOR)) == 1
