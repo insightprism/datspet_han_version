@@ -25,6 +25,18 @@ describe("composePetName", () => {
     expect(composePetName({ pet_name: "Milo", display_name: "Hedgehog" }))
       .toBe("Milo Hedgehog");
   });
+
+  it("the surname is the ANIMAL, skipping trailing colors and fillers", () => {
+    // The owner's rule: the last name identifies the animal — even when the
+    // breed name ends in a color ("Golden A Phoenix Red").
+    expect(composePetName({ pet_name: "Jazz", display_name: "Golden A Phoenix Red" }))
+      .toBe("Jazz Phoenix");
+    expect(composePetName({ pet_name: "Kiwi", display_name: "Blue Emerald A Baby Dragon" }))
+      .toBe("Kiwi Dragon");
+    // An all-color name falls back to its literal last word.
+    expect(composePetName({ pet_name: "Sunny", display_name: "Golden Red" }))
+      .toBe("Sunny Red");
+  });
 });
 
 describe("the id-derived default name (owner ask)", () => {
