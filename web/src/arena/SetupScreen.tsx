@@ -167,9 +167,35 @@ export default function SetupScreen({ onStart }: Props) {
         </div>
       </section>
 
-      {/* 2 — the runner. Unqualified pets greyed with the reason named. */}
+      {/* 2 — the challenge (§8.1: any challenge drives any event). */}
       <section>
-        <h3 className="mb-2 text-sm font-semibold">2 · Your runner</h3>
+        <h3 className="mb-2 text-sm font-semibold">2 · Pick the challenge</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          {listChallenges().map((c) => (
+            <button key={c.key} type="button" className="btn-ghost"
+              style={challengeKey === c.key ? { outline: "2px solid var(--green)" } : undefined}
+              onClick={() => {
+                setChallengeKey(c.key);
+                setDifficulty(c.ladder[0].key);
+              }}>
+              {c.emoji} {c.label}
+            </button>
+          ))}
+          {challenge.ladder.length > 1 && (
+            <select className="rounded border bg-transparent px-2 py-1 text-sm"
+              value={difficulty}
+              onChange={(e) => setDifficulty(e.target.value)}>
+              {challenge.ladder.map((rung) => (
+                <option key={rung.key} value={rung.key}>{rung.label}</option>
+              ))}
+            </select>
+          )}
+        </div>
+      </section>
+
+      {/* 3 — the athlete. Unqualified pets greyed with the reason named. */}
+      <section>
+        <h3 className="mb-2 text-sm font-semibold">3 · Pick your athlete</h3>
         <div className="flex flex-wrap gap-2">
           {pets.map((p) => {
             const ok = qualifies(p.poses, event.requires);
@@ -198,9 +224,9 @@ export default function SetupScreen({ onStart }: Props) {
         </div>
       </section>
 
-      {/* 3 — the opponent. */}
+      {/* 4 — the race type: solo vs the bot, or two players hot-seat. */}
       <section>
-        <h3 className="mb-2 text-sm font-semibold">3 · The opponent</h3>
+        <h3 className="mb-2 text-sm font-semibold">4 · Pick your race type</h3>
         <div className="mb-2 flex gap-2">
           <button type="button" className="btn-ghost"
             style={mode === "bot" ? { outline: "2px solid var(--green)" } : undefined}
@@ -246,32 +272,6 @@ export default function SetupScreen({ onStart }: Props) {
             </span>
           </div>
         )}
-      </section>
-
-      {/* 4 — the challenge (§8.1: any challenge drives any event). */}
-      <section>
-        <h3 className="mb-2 text-sm font-semibold">4 · The challenge</h3>
-        <div className="flex flex-wrap items-center gap-2">
-          {listChallenges().map((c) => (
-            <button key={c.key} type="button" className="btn-ghost"
-              style={challengeKey === c.key ? { outline: "2px solid var(--green)" } : undefined}
-              onClick={() => {
-                setChallengeKey(c.key);
-                setDifficulty(c.ladder[0].key);
-              }}>
-              {c.emoji} {c.label}
-            </button>
-          ))}
-          {challenge.ladder.length > 1 && (
-            <select className="rounded border bg-transparent px-2 py-1 text-sm"
-              value={difficulty}
-              onChange={(e) => setDifficulty(e.target.value)}>
-              {challenge.ladder.map((rung) => (
-                <option key={rung.key} value={rung.key}>{rung.label}</option>
-              ))}
-            </select>
-          )}
-        </div>
       </section>
 
       {/* 5 — handicaps: explicit and visible, never secretly easier sums (§8.3.1). */}
