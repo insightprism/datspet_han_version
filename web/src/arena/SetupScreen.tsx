@@ -12,7 +12,7 @@
  * and a hidden stat is indistinguishable from a random one.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { listPets, petManifestUrl } from "@/lib/api";
 import { composePetName } from "@/lib/petName";
@@ -53,6 +53,38 @@ function clauseText(clause: string[]): string {
 
 function requiresText(requires: string[][]): string {
   return requires.map(clauseText).join(" and ");
+}
+
+/** Owner ask (2026-08-02): the five setup steps looked identical, so each
+ *  wears its own hue — tinted panel, accent edge, numbered chip — making
+ *  "which step am I on" a glance, not a read. Hues follow the app palette
+ *  (indigo/green/orange/purple from globals.css); pink extends it for the
+ *  fifth step. */
+const SETUP_STEP_HUES = [
+  { accent: "#6366f1", tint: "rgba(99,102,241,0.08)" },   // 1 · event — indigo
+  { accent: "#34d399", tint: "rgba(52,211,153,0.08)" },   // 2 · challenge — green
+  { accent: "#fb923c", tint: "rgba(251,146,60,0.08)" },   // 3 · athlete — orange
+  { accent: "#a78bfa", tint: "rgba(167,139,250,0.08)" },  // 4 · race type — purple
+  { accent: "#f472b6", tint: "rgba(244,114,182,0.08)" },  // 5 · head start — pink
+];
+
+function SetupSection({ step, title, children }: {
+  step: number; title: string; children: ReactNode;
+}) {
+  const hue = SETUP_STEP_HUES[step - 1];
+  return (
+    <section className="rounded-xl p-3"
+      style={{ background: hue.tint, borderLeft: `3px solid ${hue.accent}` }}>
+      <h3 className="mb-2 flex items-center gap-2 text-sm font-semibold">
+        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+          style={{ background: hue.accent, color: "var(--bg)" }}>
+          {step}
+        </span>
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
 }
 
 
@@ -159,8 +191,7 @@ export default function SetupScreen({ onStart }: Props) {
   return (
     <div className="flex flex-col gap-5">
       {/* 1 — the event. Locked ones shown, never hidden (§6.3.3). */}
-      <section>
-        <h3 className="mb-2 text-sm font-semibold">1 · Pick the event</h3>
+      <SetupSection step={1} title="Pick the event">
         <div className="flex flex-wrap gap-2">
           {ARENA_EVENTS.map((e) => {
             const count = (pets ?? []).filter((p) => qualifies(p.poses, e.requires)).length;
@@ -188,11 +219,10 @@ export default function SetupScreen({ onStart }: Props) {
             );
           })}
         </div>
-      </section>
+      </SetupSection>
 
       {/* 2 — the challenge (§8.1: any challenge drives any event). */}
-      <section>
-        <h3 className="mb-2 text-sm font-semibold">2 · Pick the challenge</h3>
+      <SetupSection step={2} title="Pick the challenge">
         <div className="flex flex-wrap items-center gap-2">
           {listChallenges().map((c) => (
             <button key={c.key} type="button" className="btn-ghost"
@@ -214,11 +244,10 @@ export default function SetupScreen({ onStart }: Props) {
             </select>
           )}
         </div>
-      </section>
+      </SetupSection>
 
       {/* 3 — the athlete. Unqualified pets greyed with the reason named. */}
-      <section>
-        <h3 className="mb-1 text-sm font-semibold">3 · Pick your athlete</h3>
+      <SetupSection step={3} title="Pick your athlete">
         <div className="mb-1 text-[11px]" style={{ color: "var(--muted)" }}>
           Click your athlete again to watch them move.
         </div>
@@ -256,11 +285,10 @@ export default function SetupScreen({ onStart }: Props) {
             );
           })}
         </div>
-      </section>
+      </SetupSection>
 
       {/* 4 — the race type: solo vs the bot, or two players hot-seat. */}
-      <section>
-        <h3 className="mb-2 text-sm font-semibold">4 · Pick your race type</h3>
+      <SetupSection step={4} title="Pick your race type">
         <div className="mb-2 flex gap-2">
           <button type="button" className="btn-ghost"
             style={mode === "bot" ? { outline: "2px solid var(--green)" } : undefined}
@@ -306,11 +334,10 @@ export default function SetupScreen({ onStart }: Props) {
             </span>
           </div>
         )}
-      </section>
+      </SetupSection>
 
       {/* 5 — handicaps: explicit and visible, never secretly easier sums (§8.3.1). */}
-      <section>
-        <h3 className="mb-2 text-sm font-semibold">5 · Head start? (everyone can see it)</h3>
+      <SetupSection step={5} title="Head start? (everyone can see it)">
         <div className="flex flex-wrap items-center gap-3 text-sm">
           <span style={{ color: "var(--muted)" }}>
             {mode === "hotseat" ? "Player 1:" : "You:"}
@@ -335,7 +362,7 @@ export default function SetupScreen({ onStart }: Props) {
             </>
           )}
         </div>
-      </section>
+      </SetupSection>
 
       <PetProfileModal pet={profilePet} onClose={() => setProfilePetId(null)}
         onRenamed={applyRename} />
