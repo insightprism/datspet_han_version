@@ -14,12 +14,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { botImpulseLog } from "./bot";
-import type { ArenaChallenge } from "./challenges/registry";
-import { COUNTDOWN_SECONDS, WRONG_ANSWER_LOCKOUT_MS } from "./constants";
+import {
+  harderRung, questionAt, type ArenaChallenge,
+} from "./challenges/registry";
+import {
+  COUNTDOWN_SECONDS, HURDLE_JUMP_ACCENT, HURDLE_JUMP_ACCENT_BG,
+  WRONG_ANSWER_LOCKOUT_MS,
+} from "./constants";
 import type { ArenaEventDecl } from "./declarations";
 import type { LoadedRacer } from "./gameTypes";
 import { LaneIntegrator, type Impulse } from "./raceEngine";
-import { mulberry32 } from "./rng";
 import ArenaTrack, { type TrackLane } from "./ArenaTrack";
 
 interface Props {
@@ -47,16 +51,18 @@ export default function RaceScreen({
 }: Props) {
   const [phase, setPhase] = useState<RunPhase>("countdown");
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
-  const [question, setQuestion] = useState<{ prompt: string; answer: string } | null>(null);
+  const [qIndex, setQIndex] = useState(0);
   const [givenAnswer, setGivenAnswer] = useState("");
   const [lockedOut, setLockedOut] = useState(false);
   const [answeredCount, setAnsweredCount] = useState(0);
   const [clockDisplay, setClockDisplay] = useState(0);
   const [finishedLanes, setFinishedLanes] = useState<Set<number>>(new Set());
+  // Rev.9 — parked at a hurdle: the question is one rung harder, in the jump
+  // color. Polled off the human lane's integrator.
+  const [atHurdle, setAtHurdle] = useState(false);
 
   const gunPerfRef = useRef<number | null>(null);
   const humanLogRef = useRef<Impulse[]>([]);
-  const rngRef = useRef(mulberry32(raceSeed));
   const doneRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -92,18 +98,24 @@ export default function RaceScreen({
     gunPerfRef.current === null ? null : performance.now() - gunPerfRef.current,
   []);
 
+  // Rev.9 — questions are index-seeded: #i at rung d is identical for every
+  // player, even when hurdle gates make their difficulty paths diverge (§8.3).
+  const activeDifficulty = atHurdle ? harderRung(challenge, difficulty) : difficulty;
+  const question = phase === "countdown"
+    ? null
+    : questionAt(challenge, raceSeed, qIndex, activeDifficulty);
+
   // Countdown → gun.
   useEffect(() => {
     if (phase !== "countdown") return;
     if (countdown <= 0) {
       gunPerfRef.current = performance.now();
-      setQuestion(challenge.generate(rngRef.current, difficulty));
       setPhase("racing");
       return;
     }
     const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(t);
-  }, [phase, countdown, challenge, difficulty]);
+  }, [phase, countdown]);
 
   // The wall clock display + the event's time limit (§2.3 rooms-parity: a
   // wandered-off child must not hold the race open forever).
@@ -113,12 +125,14 @@ export default function RaceScreen({
       const t = raceClock();
       if (t === null) return;
       setClockDisplay(t / 1000);
+      setAtHurdle(trackLanes[humanLaneIndex]?.integrator.atHurdle ?? false);
       if (t >= event.time_limit_s * 1000 && !doneRef.current) {
         doneRef.current = true;
         onDone(humanLogRef.current);
       }
     }, 100);
     return () => clearInterval(interval);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, raceClock, event.time_limit_s, onDone]);
 
   const finish = useCallback(() => {
@@ -152,7 +166,7 @@ export default function RaceScreen({
     if (challenge.check(given, question.answer)) {
       humanLogRef.current.push({ at: t, quality: 1 });
       setAnsweredCount((n) => n + 1);
-      setQuestion(challenge.generate(rngRef.current, difficulty));
+      setQIndex((i) => i + 1);
       setGivenAnswer("");
     } else {
       // §7.2 — time cost, never distance: no impulse, brief lockout.
@@ -200,14 +214,28 @@ export default function RaceScreen({
       )}
 
       {phase === "racing" && question && (
-        <div className="card p-4 text-center">
+        <div className="card p-4 text-center"
+          style={atHurdle
+            ? { borderColor: HURDLE_JUMP_ACCENT, background: HURDLE_JUMP_ACCENT_BG }
+            : undefined}>
+          {/* Rev.9 — the jump moment announces itself: color + banner. */}
+          {atHurdle && (
+            <div className="mb-2 text-sm font-bold"
+              style={{ color: HURDLE_JUMP_ACCENT }}>
+              🚧 JUMP! {challenge.ladder.length > 1 ? "A harder one clears the hurdle:" : "Clear the hurdle!"}
+            </div>
+          )}
           {challenge.inputKind === "tap" ? (
             <button
               type="button"
               className="btn w-full py-8 text-3xl"
+              style={atHurdle
+                ? { background: HURDLE_JUMP_ACCENT_BG, color: HURDLE_JUMP_ACCENT,
+                    borderColor: HURDLE_JUMP_ACCENT }
+                : undefined}
               onPointerDown={() => submitAnswer("")}
             >
-              {question.prompt}
+              {atHurdle ? "TAP to JUMP!" : question.prompt}
             </button>
           ) : (
             <form

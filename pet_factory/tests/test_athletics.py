@@ -405,6 +405,37 @@ def test_alternatives_within_a_clause_are_honoured():
     assert athletics.unsatisfied_clauses(["run"], hurdles) == [["jump", "play"]]
 
 
+def test_the_hurdle_gate_is_pure():
+    # Rev.9 (§6.6) — the run clamps at each hurdle line; the next impulse is
+    # the leap. The gate's arithmetic cost is only the TRUNCATED partial
+    # stride (the gameplay cost — the harder question — is time, §7.2);
+    # race_roll 0 makes it exact. stride = STRIDE_BASE_M = 2.0 at score 0.5.
+    stats = _flat_stats(0.5)
+    def log(n):
+        return [{"at": 1000.0 * (i + 1), "quality": 1.0} for i in range(n)]
+
+    # Even division (hurdles at 4 and 8, stride 2): the clamping answer lands
+    # exactly ON the line, the leap advances fully — no extra answers needed.
+    even = {"medium": "land", "distance_m": 10.0, "decay": 0.0,
+            "race_roll": 0.0, "hurdles_every_m": 4.0,
+            "weights": {"speed": 0.5, "power": 0.3, "endurance": 0.2}}
+    result = athletics.simulate_entrant(even, stats, 1.0, log(5), 1, 0)
+    assert result["finished"] and result["finish_ms"] == 5000.0
+    # Mid-race the pet parks exactly ON the line, never past it.
+    assert athletics.simulate_entrant(even, stats, 1.0, log(2), 1, 0)["distance_m"] == 4.0
+
+    # Truncation (hurdle at 5, stride 2): the approach answer is cut at the
+    # line (4 → 5, one metre lost), so the finish costs one extra answer.
+    cut = dict(even, hurdles_every_m=5.0)
+    assert athletics.simulate_entrant(cut, stats, 1.0, log(6), 1, 0)["finish_ms"] == 6000.0
+    assert not athletics.simulate_entrant(cut, stats, 1.0, log(5), 1, 0)["finished"]
+    assert athletics.simulate_entrant(cut, stats, 1.0, log(3), 1, 0)["distance_m"] == 5.0
+
+    # Replay: same log, same result, exactly.
+    assert athletics.simulate_entrant(cut, stats, 1.0, log(6), 1, 0) == \
+        athletics.simulate_entrant(cut, stats, 1.0, log(6), 1, 0)
+
+
 def test_the_shared_race_vector_fixture():
     # §6.1a — the fixture both integrators run. The TS side asserts the same
     # numbers (web/src/arena/raceEngine.test.ts); drift on either side fails.

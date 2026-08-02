@@ -293,6 +293,16 @@ def simulate_entrant(event: dict, stats: dict, handicap: float,
     distance = float(event["distance_m"])
     endurance = _clamp01(float(stats.get("endurance", 0.0)))
 
+    # Hurdle gate (Rev.9, §6.6): the run clamps at each hurdle line; the NEXT
+    # impulse is the leap — it clears the hurdle and advances a full stride.
+    # Which impulse cleared is derivable from distance alone, so the log stays
+    # untagged and replay exact. Mirrored operation-for-operation in
+    # web/src/arena/raceEngine.ts.
+    hurdle_every = event.get("hurdles_every_m")
+    hurdle_every = float(hurdle_every) if hurdle_every else None
+    next_hurdle = hurdle_every
+    waiting_at_hurdle = False
+
     covered = 0.0
     finish_ms: Optional[float] = None
     for idx, impulse in enumerate(sorted(impulses, key=lambda i: float(i["at"]))):
@@ -300,8 +310,23 @@ def simulate_entrant(event: dict, stats: dict, handicap: float,
         jitter = 1.0 + race_roll * (
             2.0 * _unit_interval(_mix32(race_seed, lane, idx)) - 1.0)
         fatigue = 1.0 - decay * min(covered / distance, 1.0) * (1.0 - endurance)
-        effective = base * fatigue * jitter
-        covered += max(effective, 0.0) * quality
+        step = max(base * fatigue * jitter, 0.0) * quality
+
+        if waiting_at_hurdle:
+            # The leap: clear this hurdle, full stride over it.
+            waiting_at_hurdle = False
+            covered += step
+            next_hurdle += hurdle_every  # type: ignore[operator]
+            if next_hurdle < distance and covered >= next_hurdle:
+                covered = next_hurdle
+                waiting_at_hurdle = True
+        elif (next_hurdle is not None and next_hurdle < distance
+                and covered + step >= next_hurdle):
+            covered = next_hurdle
+            waiting_at_hurdle = True
+        else:
+            covered += step
+
         if covered >= distance:
             finish_ms = float(impulse["at"])
             break

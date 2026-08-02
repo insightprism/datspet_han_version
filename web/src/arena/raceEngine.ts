@@ -48,6 +48,8 @@ interface LaneParams {
   raceRoll: number;
   distance: number;
   endurance: number;
+  /** Hurdle spacing, or null for an open track (Rev.9, §6.6). */
+  hurdleEvery: number | null;
 }
 
 function laneParams(
@@ -60,7 +62,45 @@ function laneParams(
     raceRoll: event.race_roll ?? 0,
     distance: event.distance_m,
     endurance: clamp01(stats.endurance),
+    hurdleEvery: event.hurdles_every_m && event.hurdles_every_m > 0
+      ? event.hurdles_every_m : null,
   };
+}
+
+/** Hurdle-gate state (Rev.9): the run clamps at each hurdle line; the NEXT
+ *  impulse is the leap. Which impulse cleared is derivable from distance
+ *  alone — the log stays untagged and replay exact. Mirrors the Python
+ *  reference operation-for-operation. */
+interface HurdleState {
+  nextHurdle: number | null;
+  waiting: boolean;
+}
+
+function freshHurdleState(p: LaneParams): HurdleState {
+  return { nextHurdle: p.hurdleEvery, waiting: false };
+}
+
+/** Apply one impulse's step under the hurdle gate; returns the new distance. */
+function applyStep(
+  p: LaneParams, covered: number, h: HurdleState, step: number,
+): number {
+  if (h.waiting) {
+    // The leap: clear this hurdle, full stride over it.
+    h.waiting = false;
+    covered += step;
+    h.nextHurdle = (h.nextHurdle ?? 0) + (p.hurdleEvery ?? 0);
+    if (p.hurdleEvery && h.nextHurdle < p.distance && covered >= h.nextHurdle) {
+      covered = h.nextHurdle;
+      h.waiting = true;
+    }
+  } else if (h.nextHurdle !== null && h.nextHurdle < p.distance
+      && covered + step >= h.nextHurdle) {
+    covered = h.nextHurdle;
+    h.waiting = true;
+  } else {
+    covered += step;
+  }
+  return covered;
 }
 
 /** One impulse's advance — THE shared arithmetic. §2.4: fatigue tracks
@@ -82,11 +122,13 @@ export function simulateEntrant(
   tuningOverride?: ArenaTuning,
 ): Omit<EntrantResult, "place"> {
   const p = laneParams(event, stats, handicap, tuningOverride);
+  const hurdles = freshHurdleState(p);
   const ordered = [...impulses].sort((a, b) => a.at - b.at);
   let covered = 0;
   let finishMs: number | null = null;
   for (let idx = 0; idx < ordered.length; idx++) {
-    covered += advance(p, covered, ordered[idx].quality ?? 1, raceSeed, lane, idx);
+    const step = advance(p, covered, ordered[idx].quality ?? 1, raceSeed, lane, idx);
+    covered = applyStep(p, covered, hurdles, step);
     if (covered >= p.distance) {
       finishMs = ordered[idx].at;
       break;
@@ -136,6 +178,7 @@ export class LaneIntegrator {
   finishMs: number | null = null;
   private nextIdx = 0;
   private readonly p: LaneParams;
+  private readonly hurdles: HurdleState;
 
   constructor(
     event: ArenaEventDecl, stats: AthleticsStats, handicap: number,
@@ -143,6 +186,13 @@ export class LaneIntegrator {
     tuningOverride?: ArenaTuning,
   ) {
     this.p = laneParams(event, stats, handicap, tuningOverride);
+    this.hurdles = freshHurdleState(this.p);
+  }
+
+  /** Parked at a hurdle line, waiting for the leap (Rev.9) — the screen
+   *  shows the harder question in the jump color while this is true. */
+  get atHurdle(): boolean {
+    return this.hurdles.waiting;
   }
 
   /** Consume every impulse with `at <= uptoMs` that has not been consumed. */
@@ -151,9 +201,10 @@ export class LaneIntegrator {
       && this.nextIdx < log.length
       && log[this.nextIdx].at <= uptoMs) {
       const impulse = log[this.nextIdx];
-      this.distanceM += advance(
+      const step = advance(
         this.p, this.distanceM, impulse.quality ?? 1,
         this.raceSeed, this.lane, this.nextIdx);
+      this.distanceM = applyStep(this.p, this.distanceM, this.hurdles, step);
       if (this.distanceM >= this.p.distance) {
         this.distanceM = this.p.distance;
         this.finished = true;

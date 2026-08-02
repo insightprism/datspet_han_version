@@ -9,6 +9,7 @@
  * know what 7 × 8 is (§9.1).
  */
 
+import { mix32, mulberry32 } from "../rng";
 import { arithmetic } from "./arithmetic";
 import { tap } from "./tap";
 import { typing } from "./typing";
@@ -49,4 +50,28 @@ export const CHALLENGES: Record<string, ArenaChallenge> = {
 
 export function listChallenges(): ArenaChallenge[] {
   return Object.values(CHALLENGES);
+}
+
+/** Salt for the per-question rng stream — distinct from the race-roll and bot
+ *  streams that share mix32. */
+const QUESTION_STREAM_SALT = 0x517e57;
+
+/**
+ * Question `i` at difficulty `d` as a pure function of `(raceSeed, i, d)` —
+ * Rev.9's fairness rule (§8.3): every player's question #i at a given rung is
+ * identical, even when hurdle gates make their difficulty PATHS diverge.
+ */
+export function questionAt(
+  challenge: ArenaChallenge, raceSeed: number, index: number, difficulty: string,
+): ChallengeQuestion {
+  return challenge.generate(
+    mulberry32(mix32(raceSeed, QUESTION_STREAM_SALT, index)), difficulty);
+}
+
+/** One ladder-rung harder — the hurdle-gate question (Rev.9). A single-rung
+ *  challenge (tap) stays itself; only its color flips. */
+export function harderRung(challenge: ArenaChallenge, difficulty: string): string {
+  const idx = challenge.ladder.findIndex((rung) => rung.key === difficulty);
+  return challenge.ladder[Math.min(idx + 1, challenge.ladder.length - 1)]?.key
+    ?? difficulty;
 }

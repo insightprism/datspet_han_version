@@ -16,7 +16,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { applyTransform, getDisplayFrame, getPet, setAnim, setBgPos } from "@/pet";
 import { botImpulseLog } from "./bot";
-import type { ArenaChallenge } from "./challenges/registry";
+import { questionAt, type ArenaChallenge } from "./challenges/registry";
 import {
   ARENA_PET_DISPLAY_SIZE_PX, COUNTDOWN_SECONDS, JUMP_PIT_DISPLAY_MAX_M,
   LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN, SPRITE_RATE_WINDOW_MS,
@@ -26,7 +26,6 @@ import type { ArenaEventDecl } from "./declarations";
 import { jumpEventDurationMs, scoreJumpEntrant } from "./fieldJump";
 import type { LoadedRacer } from "./gameTypes";
 import { recentAnswerRate, type Impulse } from "./raceEngine";
-import { mulberry32 } from "./rng";
 
 interface Props {
   event: ArenaEventDecl;
@@ -54,7 +53,7 @@ export default function JumpScreen({
 }: Props) {
   const [phase, setPhase] = useState<JumpPhase>("countdown");
   const [countdown, setCountdown] = useState(COUNTDOWN_SECONDS);
-  const [question, setQuestion] = useState<{ prompt: string; answer: string } | null>(null);
+  const [qIndex, setQIndex] = useState(0);
   const [givenAnswer, setGivenAnswer] = useState("");
   const [lockedOut, setLockedOut] = useState(false);
   const [attemptNow, setAttemptNow] = useState(0);
@@ -67,7 +66,6 @@ export default function JumpScreen({
 
   const gunPerfRef = useRef<number | null>(null);
   const humanLogRef = useRef<Impulse[]>([]);
-  const rngRef = useRef(mulberry32(raceSeed));
   const doneRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const laneElsRef = useRef<(HTMLDivElement | null)[]>([]);
@@ -89,18 +87,23 @@ export default function JumpScreen({
     gunPerfRef.current === null ? null : performance.now() - gunPerfRef.current,
   []);
 
+  // Index-seeded questions (Rev.9, §8.3) — #i at rung d is identical for
+  // every player and every run of this seed.
+  const question = phase === "countdown"
+    ? null
+    : questionAt(challenge, raceSeed, qIndex, difficulty);
+
   // Countdown → gun.
   useEffect(() => {
     if (phase !== "countdown") return;
     if (countdown <= 0) {
       gunPerfRef.current = performance.now();
-      setQuestion(challenge.generate(rngRef.current, difficulty));
       setPhase("running");
       return;
     }
     const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
     return () => clearTimeout(t);
-  }, [phase, countdown, challenge, difficulty]);
+  }, [phase, countdown]);
 
   const finish = useCallback(() => {
     if (!doneRef.current) {
@@ -234,7 +237,7 @@ export default function JumpScreen({
     if (t === null) return;
     if (challenge.check(given, question.answer)) {
       humanLogRef.current.push({ at: t, quality: 1 });
-      setQuestion(challenge.generate(rngRef.current, difficulty));
+      setQIndex((i) => i + 1);
       setGivenAnswer("");
     } else {
       setGivenAnswer("");

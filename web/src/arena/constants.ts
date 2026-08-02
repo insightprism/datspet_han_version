@@ -53,3 +53,9 @@ export const ATTEMPT_REST_S = 6;
  *  how long the leap moment lingers before the next run-up. */
 export const JUMP_PIT_DISPLAY_MAX_M = 16;
 export const HURDLE_HOP_WINDOW_M = 2.5;
+
+/** Rev.9 — the JUMP color: what the challenge panel wears while the lane is
+ *  parked at a hurdle and the question is one rung harder. Amber, distinct
+ *  from the running green, readable on the dark card. */
+export const HURDLE_JUMP_ACCENT = "#f59e0b";
+export const HURDLE_JUMP_ACCENT_BG = "rgba(245,158,11,0.12)";

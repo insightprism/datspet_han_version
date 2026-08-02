@@ -15,7 +15,38 @@ clock attempt) and hurdles (Tier 1, jump-decorated). **Remaining:** high jump + 
 unscramble), and rooms (`SPEC_PET_ARENA_ROOMS.md`, unbuilt). §16.1's spread number is live-tunable
 on the sofa.
 
-> ### Rev.8 — the jumps, specified: an attempt is a run-up on a fixed clock
+> ### Rev.9 — hurdles gate: the jump is a harder question, in the jump color
+>
+> The owner, refining Rev.8's presentational hurdles: *"the hurdles requires 2 different taps — one
+> tap for running and the other for jumping, that is why you need run + jump to do hurdles… maybe
+> two buttons is too difficult to play on the phone. for the jump you will have one level harder
+> question, and the tap color should change to reflect a color for running and a color for
+> jumping."*
+>
+> The second thought is the design: ONE input, always (a phone thumb has no second lane), but the
+> hurdle is now a real GATE rather than decoration:
+>
+> - **A hurdle is a checkpoint** (§6.6): the run clamps at each hurdle line; the NEXT impulse is
+>   the leap — it clears the hurdle and advances its full stride. Still a pure function of the
+>   impulse log (§7.4: no tags, no second impulse kind — which impulse cleared is derivable from
+>   distance alone), and §7.2 holds: the price of a hurdle is TIME on a harder question, never
+>   distance lost.
+> - **At a hurdle the question is one ladder-rung harder** and the challenge panel shifts to the
+>   JUMP color with a 🚧 banner. The challenge stays event-ignorant (§7.1): the SCREEN asks it for
+>   a different rung; no challenge ever learns what a hurdle is. Tap has one rung, so only its
+>   color and label flip — the moment still reads.
+> - **Questions are seeded per index** now, not drawn from one consumed stream: question *i* at
+>   difficulty *d* is identical for every player (§8.3 across branching difficulty — two players
+>   who hit hurdle 3 at different question counts still face identical hard questions when they
+>   get there).
+> - **The bot pays no hurdle surcharge in v1** — its log is event-blind; its pace rung is the
+>   difficulty knob. Recorded as accepted, not overlooked.
+>
+> This is why hurdles honestly needs run + jump: the run answers move you, the jump answers clear
+> the gates. §6.6's hurdles paragraph is rewritten; the missed-hurdle-penalty tripwire is retired —
+> the harder question IS the cost.
+
+<details><summary>Rev.8 — the jumps, specified: an attempt is a run-up on a fixed clock</summary>
 >
 > The owner: *"let's do the jump as that will unlock hurdles, long jump and triple jump."* Exactly
 > right, and the unlock splits by tier:
@@ -38,6 +69,8 @@ on the sofa.
 > contest the way a race is a sustained-rate contest. The bot jumps by the identical formula.
 > High jump and pole vault stay deferred: elimination-at-rising-heights is a genuinely different
 > result shape and earns its own revision when wanted.
+
+</details>
 
 <details><summary>Rev.7 — the identity IS the pet id, decoded: per-stat nudges replace the roll</summary>
 >
@@ -905,10 +938,14 @@ pure function of the impulse log (§7.4: the log IS the event; replay needs no U
   same seed, so both players face identical questions (§8.3).
 
 **Hurdles is deliberately NOT this** — it is a Tier-1 race that jump *qualifies*
-(`[["run"], ["jump", "play"]]`) and decorates: `hurdles_every_m` marks on the lane, the runner
-playing its jump pose as it crosses each mark. Purely presentational in v1; a missed-hurdle
-penalty is a **tripwire** (it would need a rule for what a "miss" even is in an answer-driven
-race), not a launch feature.
+(`[["run"], ["jump", "play"]]`) and GATES (Rev.9): the run clamps at each `hurdles_every_m` line,
+and the next impulse is the leap — it clears the hurdle and advances its full stride. Which
+impulse cleared is derivable from distance alone, so the log stays untagged and replay exact
+(§7.4); §7.2 holds because a hurdle costs time on a harder question, never distance. The screen
+presents the gate: one ladder-rung harder question in the JUMP color with a 🚧 banner (the
+challenge itself stays event-ignorant — the screen picks the rung); the lane shows the runner
+hopping the mark in its jump/play pose. The bot pays no hurdle surcharge in v1 — its pace rung is
+the knob, accepted and recorded.
 
 **Triple jump is data, not code**: the same `"jump"` procedure with its own conversion and
 qualification (`[["run"], ["jump"]]`) — the pet visibly bounds three times, but hop-step-jump is
@@ -1444,6 +1481,12 @@ pets is a lot to burn through.
 - **The jump scorer is pure and windowed** (§6.6): only impulses inside an attempt's declared
   window count; the same log scores identically twice; the bot's log and a human-shaped copy score
   identically; ranking is best-descending with ties to the earlier best.
+- **The hurdle gate is pure** (Rev.9): the run clamps exactly at each hurdle line; the next
+  impulse clears it and advances a full stride; total answers to finish = the un-hurdled count
+  plus one per hurdle crossed; the same log replays to the same finish; the two integrators agree
+  on a hurdled vector in the shared fixture.
+- **Questions are index-seeded** (Rev.9): question *i* at difficulty *d* is a pure function of
+  `(race_seed, i, d)` — identical for every player regardless of the path that got them there.
 - **Both registries enforced:** every event declares every required field, weights sum to 1.0,
   `medium` is in the vocabulary, `preferredPoses` are canonical pose names; every challenge declares
   `generate`, `check`, `inputKind` and a difficulty ladder.

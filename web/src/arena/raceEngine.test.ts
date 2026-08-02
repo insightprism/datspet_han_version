@@ -150,6 +150,52 @@ describe("the handicap is honest (§8.3.1)", () => {
   });
 });
 
+describe("the hurdle gate (Rev.9, §6.6)", () => {
+  // race_roll 0 → exact arithmetic; flatStats(0.5) → stride 2.0 exactly.
+  const HURDLED: ArenaEventDecl = {
+    ...EVEN_EVENT, key: "hurdled", distance_m: 10, hurdles_every_m: 5,
+  };
+
+  it("clamps at the line, the next impulse leaps, replay exact", () => {
+    // Stride 2, hurdle at 5: a3 truncates 4→5, a4 leaps → 7, a6 → 11 ≥ 10.
+    const results = simulateRace(HURDLED,
+      [{ stats: flatStats(0.5), handicap: 1, impulses: steady(6, 1000) }], 1);
+    expect(results[0].finished).toBe(true);
+    expect(results[0].finish_ms).toBe(6000);
+    const short = simulateRace(HURDLED,
+      [{ stats: flatStats(0.5), handicap: 1, impulses: steady(3, 1000) }], 1)[0];
+    expect(short.distance_m).toBe(5);   // parked exactly ON the line
+  });
+
+  it("the live integrator agrees with the referee, and exposes atHurdle", () => {
+    const log = steady(6, 1000);
+    const live = new LaneIntegrator(HURDLED, flatStats(0.5), 1, 1, 0);
+    live.consume(log, 3000);
+    expect(live.distanceM).toBe(5);
+    expect(live.atHurdle).toBe(true);   // the screen's jump-color signal
+    live.consume(log, 4000);
+    expect(live.atHurdle).toBe(false);  // the leap cleared it
+    live.consume(log, 6000);
+    expect(live.finished).toBe(true);
+    expect(live.finishMs).toBe(6000);
+  });
+});
+
+describe("questions are index-seeded (Rev.9, §8.3)", () => {
+  it("question i at rung d is a pure function of (seed, i, d)", async () => {
+    const { CHALLENGES, questionAt, harderRung } = await import("./challenges/registry");
+    const arithmetic = CHALLENGES.arithmetic;
+    expect(questionAt(arithmetic, 42, 7, "sums_10"))
+      .toEqual(questionAt(arithmetic, 42, 7, "sums_10"));
+    // The hurdle variant of the SAME index is its own deterministic question.
+    expect(questionAt(arithmetic, 42, 7, harderRung(arithmetic, "sums_10")))
+      .toEqual(questionAt(arithmetic, 42, 7, "sums_100"));
+    // Ladder top clamps; single-rung tap stays itself.
+    expect(harderRung(arithmetic, "big_times")).toBe("big_times");
+    expect(harderRung(CHALLENGES.tap, "steady")).toBe("steady");
+  });
+});
+
 describe("the bot is indistinguishable (§7.3)", () => {
   it("a bot log and an identical human-shaped log produce identical results", async () => {
     const { botImpulseLog } = await import("./bot");
