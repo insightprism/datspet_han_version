@@ -24,6 +24,7 @@ import { CHALLENGES, listChallenges } from "./challenges/registry";
 import {
   ARENA_EVENTS, BOT_RUNGS, HANDICAP_LADDER, type ArenaEventDecl,
 } from "./declarations";
+import { PoseBadges, PoseLegend } from "./PoseBadges";
 import StatBars from "./StatBars";
 import type { ArenaPetInfo } from "./gameTypes";
 
@@ -195,7 +196,8 @@ export default function SetupScreen({ onStart }: Props) {
 
       {/* 3 — the athlete. Unqualified pets greyed with the reason named. */}
       <section>
-        <h3 className="mb-2 text-sm font-semibold">3 · Pick your athlete</h3>
+        <h3 className="mb-1 text-sm font-semibold">3 · Pick your athlete</h3>
+        <PoseLegend />
         <div className="flex flex-wrap gap-2">
           {pets.map((p) => {
             const ok = qualifies(p.poses, event.requires);
@@ -218,6 +220,7 @@ export default function SetupScreen({ onStart }: Props) {
                   : <div className="mt-1 text-[11px]" style={{ color: "#f87171" }}>
                       needs {missing.map(clauseText).join(" and ")}
                     </div>}
+                <PoseBadges poses={p.poses} />
               </button>
             );
           })}
