@@ -32,3 +32,7 @@ export const RECAP_PLAYBACK_SPEED = 2;
 
 /** localStorage namespace for device-local personal bests (§8.8). */
 export const PERSONAL_BEST_KEY_PREFIX = "datspet.arena.pb.v1";
+
+/** Stats are 0..1 floats in the engine (§2.5); children read them as 0..100.
+ *  A display scale, never a game value — the stride formula sees the floats. */
+export const STAT_DISPLAY_MAX = 100;

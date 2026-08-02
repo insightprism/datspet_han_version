@@ -22,6 +22,7 @@ import {
   type AthleticsManifest,
 } from "./athletics";
 import { CHALLENGES, listChallenges } from "./challenges/registry";
+import { STAT_DISPLAY_MAX } from "./constants";
 import {
   ARENA_EVENTS, BOT_RUNGS, HANDICAP_LADDER, type ArenaEventDecl,
 } from "./declarations";
@@ -55,18 +56,23 @@ function requiresText(requires: string[][]): string {
 function StatBars({ pet }: { pet: ArenaPetInfo }) {
   return (
     <div className="mt-1 flex flex-col gap-0.5">
-      {ATTRIBUTES.map((attr) => (
-        <div key={attr} className="flex items-center gap-1 text-[10px]">
-          <span className="w-14 capitalize" style={{ color: "var(--muted)" }}>{attr}</span>
-          <div className="h-1.5 flex-1 rounded bg-white/10">
-            <div className="h-1.5 rounded"
-              style={{
-                width: `${Math.round(pet.previewStats[attr] * 100)}%`,
-                background: "var(--green)",
-              }} />
+      {ATTRIBUTES.map((attr) => {
+        const displayValue = Math.round(pet.previewStats[attr] * STAT_DISPLAY_MAX);
+        return (
+          <div key={attr} className="flex items-center gap-1 text-[10px]">
+            <span className="w-14 capitalize" style={{ color: "var(--muted)" }}>{attr}</span>
+            <div className="h-1.5 flex-1 rounded bg-white/10">
+              <div className="h-1.5 rounded"
+                style={{
+                  // Bar geometry: the 0..1 stat as a CSS percentage.
+                  width: `${pet.previewStats[attr] * 100}%`,
+                  background: "var(--green)",
+                }} />
+            </div>
+            <span className="mono w-6 text-right tabular-nums">{displayValue}</span>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
