@@ -24,6 +24,7 @@ import {
   bestKey, recordResultSeconds, type BestOutcome,
 } from "./personalBests";
 import ArenaTrack, { type TrackLane } from "./ArenaTrack";
+import StatBars from "./StatBars";
 
 const MEDALS = ["🥇", "🥈", "🥉"];
 
@@ -115,15 +116,20 @@ export default function ResultsScreen({
           return (
             <div key={lane.storeId}
               className="flex flex-wrap items-baseline justify-between gap-2 border-b border-white/5 pb-2 last:border-b-0">
-              <div className="flex items-baseline gap-2">
-                <span className="text-2xl">{MEDALS[r.place - 1] ?? `#${r.place}`}</span>
-                <span className="font-semibold">{lane.label}</span>
-                {lane.handicapName !== "none" && (
-                  <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
-                    style={{ background: "rgba(52,211,153,0.15)", color: "var(--green)" }}>
-                    🚀 {lane.handicapName.replace(/_/g, " ")} ×{lane.handicap}
-                  </span>
-                )}
+              <div className="flex flex-col">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-2xl">{MEDALS[r.place - 1] ?? `#${r.place}`}</span>
+                  <span className="font-semibold">{lane.label}</span>
+                  {lane.handicapName !== "none" && (
+                    <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
+                      style={{ background: "rgba(52,211,153,0.15)", color: "var(--green)" }}>
+                      🚀 {lane.handicapName.replace(/_/g, " ")} ×{lane.handicap}
+                    </span>
+                  )}
+                </div>
+                {/* The numbers the race actually used (§16.6) — so a child can
+                    reason about WHY they lost, not just that they did. */}
+                <StatBars stats={lane.stats} className="ml-9 w-44" />
               </div>
               <div className="text-right">
                 <span className="mono">
