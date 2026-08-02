@@ -141,3 +141,35 @@ def test_unknown_vocabulary_is_rejected(admin_client, dpp_env):
 def test_unknown_pet_404s(admin_client):
     r = admin_client.post("/api/admin/pets/nosuchpet000/facing", json=REPAIRED)
     assert r.status_code == 404
+
+
+def test_per_animation_override(admin_client, dpp_env):
+    """Facing is per animation — each pose is its own I2V loop and can come
+    out facing its own way (the real repair: run left, everything else
+    right). The base view lands everywhere EXCEPT the overridden pose."""
+    db = dpp_env["db"]
+    make_misfaced_pet(db)
+    base = {"view_kind": "side", "native_facing": "right",
+            "mirroring_policy": "flip"}
+    run_view = {"view_kind": "side", "native_facing": "left",
+                "mirroring_policy": "flip-from-left"}
+
+    r = admin_client.post(
+        "/api/admin/pets/moonwalk0001/facing",
+        json={**base, "animations": {"run": run_view}})
+    assert r.status_code == 200
+
+    m = json.loads(db.get_pet("moonwalk0001")["manifest_json"])
+    assert {k: m[k] for k in base} == base
+    assert m["animations"]["run"]["view"] == run_view
+    assert m["animations"]["walk"]["view"] == {**base,
+                                               "description": "side walk"}
+
+
+def test_override_for_unknown_pose_is_rejected(admin_client, dpp_env):
+    make_misfaced_pet(dpp_env["db"])
+    r = admin_client.post(
+        "/api/admin/pets/moonwalk0001/facing",
+        json={**REPAIRED, "animations": {"moonwalk": REPAIRED}})
+    assert r.status_code == 422
+    assert "no such pose" in r.json()["detail"]
