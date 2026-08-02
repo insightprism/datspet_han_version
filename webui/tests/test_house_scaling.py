@@ -46,18 +46,46 @@ def app_client(dpp_env):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.parametrize("suffix", ["sheet.png", "manifest.json"])
-def test_pet_assets_are_immutably_cacheable(app_client, dpp_env, suffix):
-    """A pet's sheet/manifest never change under its (uuid) id, so the browser
-    must be told it may cache them hard — otherwise the house re-downloads ~1 MB
-    per pet on every reload and page-flip, which is what blanks cards behind 429s
-    on a phone. `private`, never `public`: access is ownership-scoped."""
+def test_pet_assets_cache_with_revalidation(app_client, dpp_env, suffix):
+    """Pet bytes are no longer immutable — the facing repair door rewrites a
+    stored pet in place — so assets cache with REVALIDATION: ETag = the bundle
+    digest, an unchanged pet answers 304 with no body (the ~1 MB sheet stays
+    cached; the house still reloads instantly), and a repaired pet is fresh on
+    the next fetch. `private`, never `public`: access is ownership-scoped."""
     make_pet(dpp_env["db"], pet_id="assetpet0001", external_user_id=ANON_OWNER, draft=False)
     r = app_client.get(f"/api/pets/assetpet0001/{suffix}")
     assert r.status_code == 200
     cc = r.headers.get("cache-control", "")
-    assert "immutable" in cc and "max-age=" in cc
+    assert "no-cache" in cc and "immutable" not in cc
     # Ownership-scoped content must never land in a shared proxy cache.
     assert "private" in cc and "public" not in cc
+
+    etag = r.headers["etag"]
+    row = dpp_env["db"].get_pet("assetpet0001")
+    assert etag == f'"{row["bundle_sha256"]}"'
+    r304 = app_client.get(f"/api/pets/assetpet0001/{suffix}",
+                          headers={"If-None-Match": etag})
+    assert r304.status_code == 304
+    assert not r304.content
+
+
+def test_repaired_pet_serves_fresh_past_old_etag(app_client, dpp_env):
+    """The cache scar behind the header change (2026-08-02): after a facing
+    repair, a browser revalidating with its OLD etag must get the new manifest,
+    not a 304 that keeps it moonwalking."""
+    db = dpp_env["db"]
+    make_pet(db, pet_id="assetpet0002", external_user_id=ANON_OWNER, draft=False)
+    old_etag = app_client.get(
+        "/api/pets/assetpet0002/manifest.json").headers["etag"]
+
+    row = db.get_pet("assetpet0002")
+    db.repair_pet_bundle("assetpet0002",
+                         manifest_json=row["manifest_json"],
+                         bundle_zip=row["bundle_zip"] + b"repaired")
+    r = app_client.get("/api/pets/assetpet0002/manifest.json",
+                       headers={"If-None-Match": old_etag})
+    assert r.status_code == 200
+    assert r.headers["etag"] != old_etag
 
 
 # ---------------------------------------------------------------------------

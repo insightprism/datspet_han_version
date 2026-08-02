@@ -1798,16 +1798,29 @@ def _require_pet(pet_id: str, owner: Optional[str]):
     return row
 
 
-# A pet's sprite sheet and manifest are IMMUTABLE per pet id: the id is a uuid4
-# minted once at generation and the bytes never change under it. So the browser
-# may cache them hard — every house reload, page-flip, and PetStage re-mount then
-# hits cache instead of re-fetching ~1 MB per pet. On mobile that is the whole
-# difference between a house that reloads instantly and one that re-downloads
-# megabytes over cellular, and it retires the 429 blanks caused by the house
-# firing ~4 asset requests per pet at once (SPEC per house-scaling work).
-# `private`, not `public`: access is ownership-scoped (_require_pet), so only the
-# owning browser may cache — never a shared proxy that could serve another user.
-_IMMUTABLE_ASSET_CACHE = "private, max-age=604800, immutable"  # 1 week
+# A pet's id is minted once — but its BYTES are no longer immutable: the facing
+# repair door (pet_facing_admin) rewrites manifest + bundle in place, and a
+# browser that had cached "immutable" assets kept racing the PRE-repair pet for
+# up to the week-long max-age (2026-08-02: the repaired bot still moonwalked
+# from cache). So pet assets use the strategy C1 already verifies for HTML:
+# cache freely but REVALIDATE. The ETag is the bundle digest — an unchanged pet
+# costs one conditional request answered 304 with no body (the ~1 MB sheet
+# stays cached; mobile still reloads instantly), and a repaired pet is fresh on
+# the very next fetch. `private`, not `public`: access is ownership-scoped
+# (_require_pet), so only the owning browser may cache — never a shared proxy
+# that could serve another user.
+_REVALIDATE_ASSET_CACHE = "private, no-cache"
+
+
+def _pet_asset_response(request: Request, row, *, content,
+                        media_type: str) -> Response:
+    headers = {"Cache-Control": _REVALIDATE_ASSET_CACHE}
+    if row["bundle_sha256"]:
+        etag = f'"{row["bundle_sha256"]}"'
+        headers["ETag"] = etag
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=headers)
+    return Response(content=content, media_type=media_type, headers=headers)
 
 
 # Both pet-asset endpoints use resolve_owner_scope, NOT require_owner: they are
@@ -1818,15 +1831,15 @@ _IMMUTABLE_ASSET_CACHE = "private, max-age=604800, immutable"  # 1 week
 @app.get("/api/pets/{pet_id}/sheet.png")
 def pet_sheet(pet_id: str, request: Request):
     row = _require_pet(pet_id, owner_scope.resolve_owner_scope(request).owner_id)
-    return Response(content=row["sheet_png"], media_type="image/png",
-                    headers={"Cache-Control": _IMMUTABLE_ASSET_CACHE})
+    return _pet_asset_response(request, row, content=row["sheet_png"],
+                               media_type="image/png")
 
 
 @app.get("/api/pets/{pet_id}/manifest.json")
 def pet_manifest(pet_id: str, request: Request):
     row = _require_pet(pet_id, owner_scope.resolve_owner_scope(request).owner_id)
-    return Response(content=row["manifest_json"], media_type="application/json",
-                    headers={"Cache-Control": _IMMUTABLE_ASSET_CACHE})
+    return _pet_asset_response(request, row, content=row["manifest_json"],
+                               media_type="application/json")
 
 
 # Owner ask (2026-08-02): children name their pets. The stored value is the
