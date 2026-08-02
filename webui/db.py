@@ -397,6 +397,28 @@ def insert_pet(*, pet_id: str, breed_id: str, display_name: str,
         conn.commit()
 
 
+def repair_pet_bundle(pet_id: str, *, manifest_json: str,
+                      bundle_zip: bytes) -> bool:
+    """Admin data repair (pet_facing_admin): replace a stored pet's manifest —
+    both copies travel together, the column and the zip the caller rebuilt
+    from it — and rederive bundle_sha256/size_bytes, which are a pure function
+    of the zip (insert_pet's rule; the DPP transfer pointer publishes them).
+    This is the deliberate exception to "nothing restamps a stored row"
+    (SPEC_PET_OWNER_FIELD §2.4): a repair of metadata the build stamped wrong,
+    through an admin door, never an ordinary flow."""
+    with _lock:
+        conn = _connect()
+        cur = conn.execute(
+            """UPDATE pets SET manifest_json=?, bundle_zip=?,
+                              bundle_sha256=?, size_bytes=?
+               WHERE id=?""",
+            (manifest_json, bundle_zip,
+             hashlib.sha256(bundle_zip).hexdigest(), len(bundle_zip), pet_id),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+
+
 def pose_count(manifest_json: Optional[str]) -> Optional[int]:
     """`len(manifest["animations"])` — the pet's pose count, and the pricing basis
     the DPP export declares (SPEC_DPP_DATA_TRANSFER_CHANNEL §0.6).

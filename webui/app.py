@@ -210,6 +210,13 @@ app.include_router(pet_store.router)
 import store_admin
 app.include_router(store_admin.router)
 
+# Facing repair (admin data-repair door): when the generator disobeys the
+# "facing right" prompt, the manifest's view metadata lies and the pet runs
+# backwards — a human corrects it here; the runtimes just keep reading the
+# manifest.
+import pet_facing_admin  # noqa: E402
+app.include_router(pet_facing_admin.router)
+
 # Donations (SPEC_PET_STORE §10) — the donate door and the donor's own record.
 # Not admin-gated: this is a user surface, scoped by owner like the house.
 import donations  # noqa: E402
