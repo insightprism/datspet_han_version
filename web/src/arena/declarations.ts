@@ -11,7 +11,7 @@
 
 import movementClassesJson from "../../../pet_factory/athletics/movement_classes.json";
 import modifiersJson from "../../../pet_factory/athletics/modifiers.json";
-import rollJson from "../../../pet_factory/athletics/roll.json";
+import identityJson from "../../../pet_factory/athletics/identity.json";
 import tuningJson from "../../../pet_factory/athletics/tuning.json";
 import botsJson from "../../../pet_factory/athletics/bots.json";
 import handicapsJson from "../../../pet_factory/athletics/handicaps.json";
@@ -55,7 +55,8 @@ export const MOVEMENT_CLASS_DEFAULT: string = movementClassesJson.default;
 export const MODIFIERS: Record<string, Record<string, Record<string, number>>> =
   modifiersJson.modifiers;
 
-export const PET_ROLL_RANGE: number = rollJson.pet_roll_range;
+/** §3.4 (Rev.7) — the bound on each per-attribute identity nudge. */
+export const IDENTITY_NUDGE_RANGE: number = identityJson.identity_nudge_range;
 
 export interface ArenaTuning { stride_base_m: number; athletic_stride_spread: number; }
 export const TUNING: ArenaTuning = tuningJson;

@@ -6,9 +6,9 @@
 
 import type { AthleticsManifest, AthleticsStats } from "./athletics";
 
-/** A pet as the setup screen knows it: manifest fetched, stats previewed
- *  WITHOUT the sheet roll (±0.08 — invisible on a stat bar; the race itself
- *  uses the full sheet-rolled stats from loadRacer). */
+/** A pet as the setup screen knows it: manifest fetched, stats resolved with
+ *  the id-decoded identity nudges (§3.4 Rev.7) — the bars on the pick cards
+ *  are the REAL numbers the race will use. */
 export interface ArenaPetInfo {
   id: string;
   label: string;

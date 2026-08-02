@@ -10,7 +10,7 @@ declaration, four readers (§6.1a). Never import ML deps here.
 What lives where:
   - movement_classes.json  base six-tuple per movement_class (§3.1)
   - modifiers.json         design-axis pick → attribute deltas (§3.2)
-  - roll.json              the pet-roll range (§3.4)
+  - identity.json          the identity-nudge range (§3.4, Rev.7)
   - tuning.json            stride_base_m + athletic_stride_spread (§2.3/§8.4)
   - bots.json              the bot answer-rate ladder (§7.3, Rev.6)
   - handicaps.json         the handicap ladder (§8.3.1, Rev.6)
@@ -18,9 +18,9 @@ What lives where:
 
 The resolver (`resolve_athletics`) never raises (§5.1): a manifest with a valid
 stamped block returns it verbatim; a stale `table_version` recomputes reusing
-the stored roll so identity survives a rebalance (§5.3); an absent block
-derives from `movement_class` + `animations`, which every manifest ever written
-by this repo carries (§5).
+the stored identity nudges so identity survives a rebalance (§5.3); an absent
+block derives from `movement_class` + `animations` + the pet id, which every
+context that races a pet already has (§5).
 
 The integrator (`simulate_race`) is the REFERENCE implementation of the §6.1a
 procedure — "integrate stride until the distance is covered", parameterised by
@@ -79,8 +79,8 @@ def modifiers() -> dict:
     return _data("modifiers.json")["modifiers"]
 
 
-def pet_roll_range() -> float:
-    return float(_data("roll.json")["pet_roll_range"])
+def identity_nudge_range() -> float:
+    return float(_data("identity.json")["identity_nudge_range"])
 
 
 def bot_rungs() -> dict:
@@ -134,17 +134,25 @@ def _clamp01(v: float) -> float:
     return 0.0 if v < 0.0 else 1.0 if v > 1.0 else v
 
 
-def derive_roll_from_sheet(sheet_bytes: bytes) -> float:
-    """§5.2 — a stable roll for a pet that never got one, derived from the
-    sprite sheet bytes the arena has already fetched. Same pet → same bytes →
-    same roll, on any device, forever. NOT stable across a rebuild of the same
-    design — which is correct, because that is a different pet.
+def identity_nudges_from_pet_id(pet_id: str) -> dict:
+    """§3.4 (Rev.7) — the identity profile: decode the pet id into one bounded
+    nudge PER ATTRIBUTE. The owner's design, hardened: "put values to the
+    letters and convert it into base 10" is exactly what the hash fold does,
+    with uniform spread. Same id → same athlete, forever, with nothing stored
+    and no asset fetch; a rebuild (new id) is a different pet, which is
+    correct; an adopted copy of a store pet (new id) is a distinct athlete,
+    which is the uniqueness goal working.
 
     Algorithm (mirrored exactly in web/src/arena/athletics.ts): sha256 of the
-    bytes, first 8 hex chars as an unsigned int, mapped onto ±pet_roll_range."""
-    digest = hashlib.sha256(sheet_bytes).hexdigest()
-    unit = int(digest[:8], 16) / 0xFFFFFFFF
-    return (2.0 * unit - 1.0) * pet_roll_range()
+    UTF-8 id; attribute i takes hex chars [8i, 8i+8) as an unsigned int,
+    mapped onto ±identity_nudge_range."""
+    digest = hashlib.sha256(pet_id.encode("utf-8")).hexdigest()
+    limit = identity_nudge_range()
+    nudges = {}
+    for i, attr in enumerate(ATTRIBUTES):
+        unit = int(digest[i * 8:(i + 1) * 8], 16) / 0xFFFFFFFF
+        nudges[attr] = (2.0 * unit - 1.0) * limit
+    return nudges
 
 
 def _block_is_valid(block) -> bool:
@@ -166,36 +174,42 @@ def block_is_current(block) -> bool:
     return _block_is_valid(block)
 
 
+def _nudges_are_valid(nudges) -> bool:
+    if not isinstance(nudges, dict):
+        return False
+    return all(isinstance(nudges.get(a), (int, float))
+               and not isinstance(nudges.get(a), bool) for a in ATTRIBUTES)
+
+
 def resolve_athletics(manifest: Optional[dict],
-                      sheet_bytes: Optional[bytes] = None) -> dict:
+                      pet_id: Optional[str] = None) -> dict:
     """§5.1 precedence, strictly: a present, valid block is used VERBATIM; a
-    stale or malformed block is re-derived reusing its stored `roll` (§5.3 —
-    identity survives a rebalance); an absent block derives from facts every
-    manifest already carries. Nothing downstream may branch on which path ran —
-    that would be a provenance branch, which §0.14 forbids."""
+    stale or malformed block is re-derived reusing its stored `identity_nudges`
+    (§5.3 — identity survives a rebalance, and survives even a nudge-algorithm
+    change); an absent block derives from the manifest plus the pet id (§3.4).
+    Nothing downstream may branch on which path ran — that would be a
+    provenance branch, which §0.14 forbids."""
     manifest = manifest if isinstance(manifest, dict) else {}
     block = manifest.get("athletics")
     if _block_is_valid(block):
         return block
-    stored_roll = block.get("roll") if isinstance(block, dict) else None
-    if isinstance(stored_roll, bool) or not isinstance(stored_roll, (int, float)):
-        stored_roll = None
-    return _derive(manifest, sheet_bytes, stored_roll)
+    stored = block.get("identity_nudges") if isinstance(block, dict) else None
+    return _derive(manifest, pet_id, stored if _nudges_are_valid(stored) else None)
 
 
-def _derive(manifest: dict, sheet_bytes: Optional[bytes],
-            stored_roll: Optional[float]) -> dict:
+def _derive(manifest: dict, pet_id: Optional[str],
+            stored_nudges: Optional[dict]) -> dict:
     row = base_row(manifest.get("movement_class")
                    if isinstance(manifest.get("movement_class"), str) else None)
     animations = manifest.get("animations")
     poses = list(animations.keys()) if isinstance(animations, dict) else []
 
-    if stored_roll is not None:
-        roll = float(stored_roll)
-    elif sheet_bytes:
-        roll = derive_roll_from_sheet(sheet_bytes)
+    if stored_nudges is not None:
+        nudges = {a: float(stored_nudges[a]) for a in ATTRIBUTES}
+    elif pet_id:
+        nudges = identity_nudges_from_pet_id(pet_id)
     else:
-        roll = 0.0
+        nudges = {a: 0.0 for a in ATTRIBUTES}
 
     design = manifest.get("design")
     picks = design.get("picks") if isinstance(design, dict) else None
@@ -204,7 +218,7 @@ def _derive(manifest: dict, sheet_bytes: Optional[bytes],
 
     stats: dict = {}
     for attr in ATTRIBUTES:
-        value = float(row[attr]) + roll
+        value = float(row[attr]) + nudges[attr]
         for axis, option in picks.items():
             delta = mods.get(axis, {}).get(option, {}).get(attr)
             if isinstance(delta, (int, float)):
@@ -217,7 +231,7 @@ def _derive(manifest: dict, sheet_bytes: Optional[bytes],
         "schema_version": SCHEMA_VERSION,
         "table_version": TABLE_VERSION,
         **stats,
-        "roll": roll,
+        "identity_nudges": nudges,
         "poses": poses,
     }
 

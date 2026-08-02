@@ -15,7 +15,9 @@ function flatStats(value: number, land = 1.0): AthleticsStats {
   return {
     schema_version: "pet_athletics.v1", table_version: "athletics.v1",
     speed: value, power: value, endurance: value,
-    land, water: 0, air: 0, roll: 0, poses: ["walk", "idle", "run"],
+    land, water: 0, air: 0,
+    identity_nudges: { speed: 0, power: 0, endurance: 0 },
+    poses: ["walk", "idle", "run"],
   };
 }
 
@@ -165,10 +167,11 @@ describe("the bot is indistinguishable (§7.3)", () => {
   });
 });
 
-describe("the legacy pet (§5.2)", () => {
+describe("the legacy pet (§5)", () => {
   it("a manifest with no athletics block still yields a complete entrant", () => {
     const stats = resolveAthletics(
-      { movement_class: "aquatic_swimmer", animations: { walk: {}, idle: {} } }, 0.03);
+      { movement_class: "aquatic_swimmer", animations: { walk: {}, idle: {} } },
+      { speed: 0.03, power: -0.01, endurance: 0.02 });
     const event = loadEvent("racewalk")!;
     const result = simulateRace(event,
       [{ stats, handicap: 1, impulses: steady(60, 1000) }], 3)[0];

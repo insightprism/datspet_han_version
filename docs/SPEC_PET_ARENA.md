@@ -1,11 +1,11 @@
 # SPEC_PET_ARENA — the Pet Games: a track-and-field meet for pets you built
 
-**Status: Rev.6 (2026-08-02) — PHASES 1–4 IMPLEMENTED + the Tier-1 catalogue; no deploy.** The
+**Status: Rev.7 (2026-08-02) — PHASES 1–4 IMPLEMENTED + the Tier-1 catalogue; no deploy.** The
 content package (`pet_factory/athletics/`), the playable arena (`web/src/arena/`, `/arena`), the
 bot, hot-seat with ghost replay, the handicap, medals/personal-bests/recap, and the guard tests on
 both sides are built and green; verified end-to-end in the browser against the live dev stack.
 Phase 4's stamp (`webui/pet_athletics.py`, the fourth patch at `_finalize_pet_from_zip`) mints the
-block from the sheet-bytes roll — §3.2's design modifiers activate automatically when
+block from the pet id (Rev.7) — §3.2's design modifiers activate automatically when
 SPEC_PET_DESIGN_PROVENANCE Phase 2 stamps the design block, and are inert until then. The Tier-1
 catalogue is six events (racewalk, 100 m, 200 m, freestyle, air race, downhill ski — the last
 three one JSON file each, the §6.4 depth claim made real) and three challenges (tap, arithmetic,
@@ -13,7 +13,34 @@ typing). **Remaining:** the jump events + pole vault (Tier-2 — their attempt/e
 needs an owner call, §16), the spelling challenge (mechanic needs a call: audio vs unscramble),
 and rooms (`SPEC_PET_ARENA_ROOMS.md`, unbuilt). §16.1's spread number is live-tunable on the sofa.
 
-> ### Rev.6 — the pre-build review: losing is designed for; the handicap and the bot get definitions
+> ### Rev.7 — the identity IS the pet id, decoded: per-stat nudges replace the roll
+>
+> The owner: *"since those stats are per pet identity, i was going to use the pet identity key, and
+> decode it to convert it into speed power endurance or other stats. use the letters and number of
+> the reference, and put values to the letters. can then convert it into a base 10."*
+>
+> A better identity source than Rev.1–6's sheet-bytes roll, adopted whole. The hash fold IS the
+> letters-to-values scheme, hardened: sha256 of the pet id, one 4-byte segment per attribute,
+> folded onto ±`identity_nudge_range` (`identity.json`, was `roll.json`). Three things improve:
+>
+> **1. Identity has shape, not just level.** The old roll nudged all three attributes by the SAME
+> amount. Each attribute now takes its own segment — two identically designed leopards differ as
+> athletes (this one the sprinter, that one the stayer), which is what "decode it into speed,
+> power, endurance" asked for.
+>
+> **2. Adopted twins are distinct.** Two copies of one store pet share byte-identical sheets —
+> under the old scheme, identical athletes. Each copy has its own id, so "your leopard" and "my
+> leopard" now really differ. The uniqueness goal, working better.
+>
+> **3. No asset fetch to know the athlete.** The id is available everywhere the arena runs — the
+> browser, the build stamp, a future room server — without touching the 3.5 MB sheet.
+>
+> Body type and design picks remain the base (§3.1/§3.2 — the fish still swims, the chubby corgi
+> is still slower); the id decides only the bounded per-pet uniqueness term. §3.4, §4.1, §5.2 and
+> §7.5 are rewritten; the block's `roll` field becomes `identity_nudges`; swapped pre-launch with
+> nothing durable stamped, so no compatibility surface existed.
+
+<details><summary>Rev.6 — the pre-build review: losing is designed for; the handicap and the bot get definitions</summary>
 >
 > A full review of Rev.5 against the codebase (2026-08-02) confirmed the feasibility claims —
 > `PetStage`'s pet list, the seven profiles, `CANONICAL_POSES`/`MAX_POSES`, the `JOBS` pattern and
@@ -39,6 +66,8 @@ and rooms (`SPEC_PET_ARENA_ROOMS.md`, unbuilt). §16.1's spread number is live-t
 > **4. The race recap ships with the results screen** (§7.4, §12 Phase 3). The impulse log already
 > *is* the replay; the "watch how you won" screen is nearly free, and it is the thing children show
 > each other.
+
+</details>
 
 <details><summary>Rev.5 — coordination is an existing pose; the relay swaps pets under a continuous player</summary>
 
@@ -216,7 +245,7 @@ wants is sitting in data that shipped months ago.
 | 0.1 | Format | **Olympic-style meet: many small events, not one game.** Ship one event, then add events one file at a time (§6). |
 | 0.2 | First events | **100 m sprint**, then **200 m**, then **long jump**, then **high jump**. Skiing / pole vault / swimming follow the same registry (§6.4). |
 | 0.3 | Where stats come from | **Minted at BUILD TIME and written into `manifest.json`** as an `athletics` block (owner's instruction, §4). |
-| 0.4 | Uniqueness | **Two different randomnesses, deliberately separated** (§7.5): a per-pet roll minted once and permanent, and a per-race roll that makes each running of an event different. |
+| 0.4 | Uniqueness | **Two sources, deliberately separated** (§7.5): permanent per-attribute identity nudges decoded from the pet id (Rev.7 — deterministic), and a small per-race roll that makes each running of an event different. |
 | 0.5 | Who may enter what | **Each event configures its own qualification** (§6.3): a list of clauses, each a list of acceptable poses — `run` AND (`jump` OR `play`). Per pet, read off `manifest.animations`. A fish that owns `run` may enter the 100 m, and being terrible at it is the joke. |
 | 0.5a | How many pets is an entrant | **`teamSize`, declared per event** (§6.5). Singles are a team of one, so nothing branches on solo-vs-team. |
 | 0.5b | The pose vocabulary | **Expected to grow.** Events name poses as strings and the guard test reads the live list, so a new pose needs no arena change (§6.3.2). |
@@ -454,12 +483,15 @@ table. Putting eligibility in the stat table is what Rev.2 did, and it made a si
 `animations` also names the sprite the arena plays back (§7.6) — the same field, a third use, and
 the reason it is the one input this design leans on hardest.
 
-### 3.4 The per-pet roll — uniqueness
+### 3.4 The identity nudges — uniqueness decoded from the pet id
 
-A bounded random modifier, **minted once at build and never re-rolled** (§7.5). Its range lives in
-`athletics/roll.json` as a named constant (default `±0.08`) — wide enough that two identical designs
-are distinguishable, narrow enough that design still dominates. This is the owner's *"certain things
-can be random to provide uniqueness to the animal."*
+**The pet id is the athlete** (Rev.7, the owner's design). Three bounded modifiers — one per
+attribute — decoded from the id: sha256 of the UTF-8 id, one 4-byte segment per attribute, folded
+onto ±`identity_nudge_range` (`athletics/identity.json`, default `±0.08`). Wide enough that two
+identical designs are distinguishable, narrow enough that design still dominates — and each
+attribute takes its own segment, so identity has *shape*, not just level. This is the owner's
+*"certain things can be random to provide uniqueness to the animal"* made deterministic: same id →
+same athlete, forever, on any device, with nothing stored and no asset fetched.
 
 ---
 
@@ -473,15 +505,16 @@ can be random to provide uniqueness to the animal."*
   "table_version": "athletics.v1",
   "speed": 0.71, "power": 0.42, "endurance": 0.63,
   "land": 0.95, "water": 0.30, "air": 0.05,
-  "roll": 0.031,
+  "identity_nudges": { "speed": 0.031, "power": -0.052, "endurance": 0.012 },
   "poses": ["walk", "idle", "run", "jump"],
   "minted_at": "2026-08-02T11:04:19Z"
 }
 ```
 
-`roll` is stored **as its own field as well as being folded into the attributes**, so a re-mint under
-a new balance table (§5.3) can reproduce the pet's identity instead of re-rolling it. Losing that
-would mean every balance patch silently gives every pet a new personality.
+`identity_nudges` are stored **as their own field as well as being folded into the attributes** —
+belt and braces: they are always re-derivable from the pet id (§3.4), and storing them *also*
+survives a future change to the nudge algorithm itself (§5.3). Losing that would mean a balance
+patch or an algorithm tweak silently gives every pet a new personality.
 
 `table_version` is what makes a re-mint detectable and a mixed field diagnosable.
 
@@ -519,30 +552,33 @@ written by this repo already carries `movement_class` and `animations`
 One function, in the shared content package, with a strict precedence:
 
 1. `manifest["athletics"]` present and `schema_version` known → **use it verbatim.**
-2. Absent → **derive** from `movement_class` + `animations`, with modifiers skipped (no design block)
-   and the roll derived per §5.2.
+2. Absent → **derive** from `movement_class` + `animations` + the pet id, with modifiers skipped
+   when there is no design block, and the identity nudges decoded per §3.4/§5.2.
 
 The arena calls only the resolver. **Nothing in the game ever branches on whether a pet was minted
 with a block** — that would be a provenance branch, which §0.14 forbids.
 
-### 5.2 A stable roll for a pet that never got one
+### 5.2 A stable identity for a pet that never got a block
 
-The roll must be *stable* (the same pet is the same athlete every time) without being *stored*.
-Derive it from a hash of the pet's own sprite sheet bytes, which the arena has already fetched to
-render it, folded into the roll range. Same pet → same bytes → same roll, forever, with nothing
-persisted.
+Nothing extra is needed: the nudges derive from the pet id (§3.4), which every context that races
+a pet already has — the browser fetched the pet *by* id. Same id → same athlete, forever, with
+nothing persisted and no asset fetched. (Rev.1–6 derived this from a hash of the sheet bytes; the
+id is the identity itself rather than a proxy for it, and Rev.7 swapped to it.)
 
-Two properties worth stating: it is stable across devices and reloads, and it is **not** stable
-across a rebuild of the same design — which is correct, because that is a different pet.
+Three properties worth stating: it is stable across devices and reloads; it is **not** stable
+across a rebuild of the same design — a rebuild mints a new id, which is correct, because that is
+a different pet; and an adopted copy of a store pet carries its own id, so two children adopting
+the same listing get **different athletes** — the uniqueness goal working.
 
 ### 5.3 Re-minting when the balance table changes
 
 Balance will be wrong at first. A `table_version` bump means stored blocks are stale, and the rule
 is: **the resolver recomputes from `table_version` mismatch rather than trusting a stale block**,
-reusing the stored `roll` so identity survives (§4.1). No migration, no GPU, no re-download — the
-inputs are all still in the manifest.
+reusing the stored `identity_nudges` so identity survives (§4.1) — even across a change to the
+nudge algorithm itself. No migration, no GPU, no re-download — the inputs are all still in the
+manifest.
 
-This is why §4.1 stores the raw inputs and the roll rather than only the final six numbers.
+This is why §4.1 stores the raw inputs and the nudges rather than only the final six numbers.
 
 ---
 
@@ -901,13 +937,13 @@ timestamps, so a child on an old tablet is not penalised by a low frame rate.
 The owner asked for randomness "to provide uniqueness to the animal." There are two, they serve
 different purposes, and conflating them is the classic way this kind of game goes wrong:
 
-| | the pet roll | the race roll |
+| | the identity nudges | the race roll |
 |---|---|---|
-| minted | once, at build | per running of an event |
+| minted | decoded from the pet id (§3.4, Rev.7) — deterministic | per running of an event |
 | lifetime | permanent, part of the pet | discarded when the race ends |
-| stored | in the manifest (§4.1) | nowhere |
-| purpose | **identity** — two identical designs are different athletes | **texture** — a stride varies slightly, so a race is not a metronome |
-| range | `±0.08` (named constant) | per-event, declared by the event, and **small** |
+| stored | in the stamped block (§4.1), and always re-derivable | nowhere |
+| purpose | **identity** — two identical designs are different athletes, in shape not just level | **texture** — a stride varies slightly, so a race is not a metronome |
+| range | `±0.08` per attribute (named constant) | per-event, declared by the event, and **small** |
 
 **The race roll shrinks in Rev.2, and that is deliberate.** In Rev.1 it carried the entire drama,
 because two fixed stat-sets always produced the same winner. Now the player carries the drama, and
@@ -1078,7 +1114,7 @@ these are enough.
 
 | layer | new | why here |
 |---|---|---|
-| content | `pet_factory/athletics/` — vocabulary, `movement_classes.json`, `modifiers.json`, `roll.json`, `bots.json` (§7.3), `handicaps.json` (§8.3.1), **`events/*.json` + `registry.json`** (§6.1a), the stat resolver, and the reference integrator | pure data on the GPU-less tier, beside `tiers/` and `design_axes/`; read by the build, the room server, the browser and the tests — **one declaration, four readers** |
+| content | `pet_factory/athletics/` — vocabulary, `movement_classes.json`, `modifiers.json`, `identity.json` (§3.4), `bots.json` (§7.3), `handicaps.json` (§8.3.1), **`events/*.json` + `registry.json`** (§6.1a), the stat resolver, and the reference integrator | pure data on the GPU-less tier, beside `tiers/` and `design_axes/`; read by the build, the room server, the browser and the tests — **one declaration, four readers** |
 | backend | `webui/pet_athletics.py` — compute the block, stamp it at `_finalize_pet_from_zip` | the `pet_ownership.py` precedent: not `db.py` (record view), not `app.py` (HTTP surface) |
 | frontend game | `web/src/arena/` — `challenges/`, the race loop, the Tier-2 event procedures, the arena page. **Tier-1 events are JSON in `pet_factory/athletics/events/`, not here** (§6.1a) | **the new module the owner asked for** |
 | frontend runtime | `web/src/pet/` — **unchanged except `index.ts` re-exports** | §9.2 |
@@ -1327,8 +1363,8 @@ pets is a lot to burn through.
   `movement_class` and pose set.
 - The block survives the ownership stamps and the design stamp in any order (patch-never-rebuild).
 - Every other manifest key is byte-identical to the packer's output.
-- Re-minting under a bumped `table_version` **preserves `roll`** — the identity-survives-rebalance
-  rule (§4.1). This is the one that will actually catch a regression.
+- Re-minting under a bumped `table_version` **preserves `identity_nudges`** — the
+  identity-survives-rebalance rule (§4.1). This is the one that will actually catch a regression.
 
 **`web/src/arena/*.test.ts`** — the game
 
@@ -1359,8 +1395,10 @@ pets is a lot to burn through.
 - **Team qualification is per member:** a 4-pet relay team with three qualifying pets and one that
   lacks the coordination pose is **refused as a team**, and the UI names which pet is the problem
   (§6.5). Carrying a member is the obvious bug here and it must fail loudly.
-- **The legacy test:** a manifest with **no** `athletics` block still yields a complete entrant, and
-  the same sheet bytes yield the same roll across runs (§5.2).
+- **The legacy test:** a manifest with **no** `athletics` block still yields a complete entrant;
+  the same pet id yields the same nudges across runs (§5.2); and the TypeScript and Python
+  derivations agree **bit for bit** on a pinned id — the §6.1a two-implementations rule applied to
+  identity.
 - **The skill-beats-stats test — the headline one:** the worst-stat pet driven at 2× the answer rate
   beats the best-stat pet. If this fails, `ATHLETIC_STRIDE_SPREAD` is too wide and the parents'
   reason for allowing the game is gone (§8.4).

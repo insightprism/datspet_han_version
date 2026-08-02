@@ -206,27 +206,31 @@ def test_precedence_valid_block_verbatim():
              "table_version": athletics.TABLE_VERSION,
              "speed": 0.71, "power": 0.42, "endurance": 0.63,
              "land": 0.95, "water": 0.30, "air": 0.05,
-             "roll": 0.031, "poses": ["walk", "idle", "run"]}
+             "identity_nudges": {"speed": 0.031, "power": -0.02, "endurance": 0.0},
+             "poses": ["walk", "idle", "run"]}
     resolved = athletics.resolve_athletics({"athletics": block,
                                             "movement_class": "aquatic_swimmer"})
     assert resolved is block, "a valid block must be used verbatim (§5.1)"
 
 
-def test_precedence_stale_table_version_recomputes_reusing_roll():
-    # §5.3/§4.1 — identity survives a rebalance: the re-mint keeps the roll.
-    # This is the one that will actually catch a regression.
+def test_precedence_stale_table_version_recomputes_reusing_nudges():
+    # §5.3/§4.1 — identity survives a rebalance (and even a nudge-algorithm
+    # change): the re-mint keeps the stored nudges. This is the one that will
+    # actually catch a regression.
     stale = {"schema_version": athletics.SCHEMA_VERSION,
              "table_version": "athletics.v0",
              "speed": 0.99, "power": 0.99, "endurance": 0.99,
              "land": 0.99, "water": 0.99, "air": 0.99,
-             "roll": 0.05}
+             "identity_nudges": {"speed": 0.05, "power": -0.03, "endurance": 0.01}}
     resolved = athletics.resolve_athletics(
         {"athletics": stale, "movement_class": "mammalian_quadruped",
-         "animations": {"walk": {}, "idle": {}}})
+         "animations": {"walk": {}, "idle": {}}},
+        pet_id="a-different-identity-entirely")
     assert resolved["table_version"] == athletics.TABLE_VERSION
-    assert resolved["roll"] == 0.05
+    assert resolved["identity_nudges"] == stale["identity_nudges"]
     row = athletics.base_row("mammalian_quadruped")
     assert resolved["speed"] == pytest.approx(min(row["speed"] + 0.05, 1.0))
+    assert resolved["power"] == pytest.approx(row["power"] - 0.03)
 
 
 def test_absent_block_derives_from_manifest_facts():
@@ -236,7 +240,8 @@ def test_absent_block_derives_from_manifest_facts():
     row = athletics.base_row("aquatic_swimmer")
     assert resolved["water"] == row["water"]
     assert resolved["poses"] == ["walk", "idle", "swim"]
-    assert resolved["roll"] == 0.0  # no sheet bytes offered
+    # No pet id offered → neutral identity, still a usable athlete.
+    assert resolved["identity_nudges"] == {a: 0.0 for a in athletics.ATTRIBUTES}
 
 
 def test_design_modifiers_move_the_derived_attributes():
@@ -250,17 +255,35 @@ def test_design_modifiers_move_the_derived_attributes():
     assert thin["power"] < fat["power"]
 
 
-def test_sheet_roll_is_stable_and_bounded():
-    # §5.2 — same bytes, same roll, forever; different bytes, (almost surely)
-    # a different athlete; always inside ±pet_roll_range.
-    a = athletics.derive_roll_from_sheet(b"sheet-bytes-one")
-    b = athletics.derive_roll_from_sheet(b"sheet-bytes-one")
-    c = athletics.derive_roll_from_sheet(b"sheet-bytes-two")
+def test_identity_nudges_stable_bounded_and_per_attribute():
+    # §3.4 (Rev.7) — same id, same athlete, forever; a different id is a
+    # different athlete; every nudge inside ±identity_nudge_range; and the
+    # three nudges are INDEPENDENT — identity has shape, not just level.
+    a = athletics.identity_nudges_from_pet_id("11111111-2222-3333-4444-555555555555")
+    b = athletics.identity_nudges_from_pet_id("11111111-2222-3333-4444-555555555555")
+    c = athletics.identity_nudges_from_pet_id("99999999-8888-7777-6666-000000000000")
     assert a == b
     assert a != c
-    limit = athletics.pet_roll_range()
-    for roll in (a, c):
-        assert -limit <= roll <= limit
+    limit = athletics.identity_nudge_range()
+    for nudges in (a, c):
+        assert set(nudges) == set(athletics.ATTRIBUTES)
+        for value in nudges.values():
+            assert -limit <= value <= limit
+    # Per-attribute independence: this id's three segments differ (a flat
+    # profile from three independent 32-bit folds would be astonishing).
+    assert len({round(v, 6) for v in a.values()}) > 1
+
+
+def test_adopted_twins_are_distinct_athletes():
+    # Rev.7's product win: two copies of the SAME artifact (identical manifest,
+    # identical sheet bytes) under different pet ids are different athletes.
+    manifest = {"movement_class": "mammalian_quadruped",
+                "animations": {"walk": {}, "idle": {}, "run": {}}}
+    yours = athletics.resolve_athletics(manifest, pet_id="adopted-copy-one")
+    mine = athletics.resolve_athletics(manifest, pet_id="adopted-copy-two")
+    assert yours["identity_nudges"] != mine["identity_nudges"]
+    assert (yours["speed"], yours["power"], yours["endurance"]) != \
+           (mine["speed"], mine["power"], mine["endurance"])
 
 
 # ---------------------------------------------------------------------------

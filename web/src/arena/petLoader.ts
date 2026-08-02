@@ -1,9 +1,8 @@
 /**
- * Load a pet for racing: manifest + sheet bytes → athletics stats (sheet roll
- * included — §5.2) → engine registration. The same fetch pattern PetStage
- * uses (blob: URL, ownership passes to the engine; removePet revokes it),
- * plus one extra read of the bytes for the roll hash — the §5.2 design point
- * is that the arena already had to fetch these bytes to render the pet.
+ * Load a pet for racing: manifest → athletics stats (identity nudges decoded
+ * from the pet id — §3.4 Rev.7) → sheet fetch → engine registration. The same
+ * fetch pattern PetStage uses (blob: URL, ownership passes to the engine;
+ * removePet revokes it).
  */
 
 import {
@@ -12,7 +11,7 @@ import {
 } from "@/pet";
 import { petManifestUrl, petSheetUrl } from "@/lib/api";
 import {
-  deriveRollFromSheet, resolveAthletics, type AthleticsManifest,
+  deriveIdentityNudges, resolveAthletics, type AthleticsManifest,
 } from "./athletics";
 import { HANDICAP_LADDER, type ArenaEventDecl } from "./declarations";
 import type { LoadedRacer, RacerConfig } from "./gameTypes";
@@ -37,8 +36,10 @@ export async function loadRacer(
   if (!sheetRes.ok) throw new Error(`sheet fetch failed: ${sheetRes.status}`);
   const bytes = await sheetRes.arrayBuffer();
 
-  const roll = await deriveRollFromSheet(bytes);
-  const stats = resolveAthletics(manifest, roll);
+  // Identity decodes from the PET id, not the lane's storeId (§3.4) — the
+  // same pet racing its own twin is the same athlete in both lanes.
+  const nudges = await deriveIdentityNudges(config.petId);
+  const stats = resolveAthletics(manifest, nudges);
 
   const blobUrl = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
   const sheet: PetSheet = {

@@ -1,4 +1,0 @@
-{
-  "_doc": "SPEC_PET_ARENA §3.4/§7.5 — the PET roll: a bounded random modifier minted once (or, for legacy pets, derived stably from the sheet bytes — §5.2) and folded into the three attributes. Identity, not texture: two identical designs are different athletes. Wide enough to distinguish twins, narrow enough that design still dominates. The RACE roll is per-event (events/*.json race_roll) and deliberately small (§7.5).",
-  "pet_roll_range": 0.08
-}

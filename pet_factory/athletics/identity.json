@@ -1,0 +1,4 @@
+{
+  "_doc": "SPEC_PET_ARENA §3.4 (Rev.7) — the identity profile: three bounded per-attribute nudges decoded from the PET ID (sha256 of the id, one 4-byte segment per attribute, folded onto ±identity_nudge_range). The owner's design: 'use the pet identity key, and decode it — put values to the letters and convert it into base 10.' Same id → same athlete, forever, with nothing stored and no asset fetch; two identically designed pets differ in SHAPE (this one the sprinter, that one the stayer), and two adopted copies of one store pet are distinct athletes because each copy has its own id. Wide enough to tell twins apart, narrow enough that design still dominates. The RACE roll is separate and per-event (events/*.json race_roll — §7.5).",
+  "identity_nudge_range": 0.08
+}

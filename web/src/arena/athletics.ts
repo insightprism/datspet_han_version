@@ -11,7 +11,8 @@
 
 import type { RawManifest } from "@/pet";
 import {
-  MODIFIERS, MOVEMENT_CLASSES, MOVEMENT_CLASS_DEFAULT, PET_ROLL_RANGE, TUNING,
+  IDENTITY_NUDGE_RANGE, MODIFIERS, MOVEMENT_CLASSES, MOVEMENT_CLASS_DEFAULT,
+  TUNING,
   type ArenaEventDecl, type ArenaTuning, type MovementClassRow,
 } from "./declarations";
 
@@ -20,12 +21,18 @@ export const TABLE_VERSION = "athletics.v1";
 export const ATTRIBUTES = ["speed", "power", "endurance"] as const;
 export const MEDIUMS = ["land", "water", "air"] as const;
 
+/** §3.4 (Rev.7) — the identity profile: one bounded nudge per attribute,
+ *  decoded from the pet id. Identity has SHAPE, not just level. */
+export interface IdentityNudges {
+  speed: number; power: number; endurance: number;
+}
+
 export interface AthleticsStats {
   schema_version: string;
   table_version: string;
   speed: number; power: number; endurance: number;
   land: number; water: number; air: number;
-  roll: number;
+  identity_nudges: IdentityNudges;
   poses: string[];
 }
 
@@ -41,15 +48,26 @@ function baseRow(movementClass: string | undefined): MovementClassRow {
 }
 
 /**
- * §5.2 — the stable roll for a pet that was never minted one, derived from the
- * sheet bytes the arena fetched anyway. Mirrors `derive_roll_from_sheet`
- * exactly: sha256, first 4 bytes big-endian, mapped onto ±PET_ROLL_RANGE.
+ * §3.4 (Rev.7) — decode the pet id into the identity profile. The owner's
+ * design ("put values to the letters and convert it into base 10"), hardened:
+ * sha256 of the UTF-8 id; attribute i takes bytes [4i, 4i+4) big-endian,
+ * mapped onto ±IDENTITY_NUDGE_RANGE. Mirrors `identity_nudges_from_pet_id`
+ * exactly. Same id → same athlete, forever, with nothing stored and no asset
+ * fetch — which is also why an adopted copy of a store pet (its own id) is a
+ * distinct athlete from its twin.
  */
-export async function deriveRollFromSheet(bytes: ArrayBuffer): Promise<number> {
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  const unit = new DataView(digest).getUint32(0) / 0xffffffff;
-  return (2 * unit - 1) * PET_ROLL_RANGE;
+export async function deriveIdentityNudges(petId: string): Promise<IdentityNudges> {
+  // globalThis, not the bare identifier: the browser, Node 18+, and the
+  // vitest worker sandbox all expose WebCrypto there.
+  const digest = await globalThis.crypto.subtle.digest(
+    "SHA-256", new TextEncoder().encode(petId));
+  const view = new DataView(digest);
+  const fold = (segment: number) =>
+    (2 * (view.getUint32(segment * 4) / 0xffffffff) - 1) * IDENTITY_NUDGE_RANGE;
+  return { speed: fold(0), power: fold(1), endurance: fold(2) };
 }
+
+const NEUTRAL_NUDGES: IdentityNudges = { speed: 0, power: 0, endurance: 0 };
 
 function isFiniteNumber(v: unknown): v is number {
   return typeof v === "number" && Number.isFinite(v);
@@ -70,24 +88,31 @@ export interface AthleticsManifest extends RawManifest {
   design?: { picks?: Record<string, string> };
 }
 
+function nudgesAreValid(nudges: unknown): nudges is IdentityNudges {
+  if (typeof nudges !== "object" || nudges === null) return false;
+  const n = nudges as Record<string, unknown>;
+  return ATTRIBUTES.every((a) => isFiniteNumber(n[a]));
+}
+
 /**
  * §5.1 precedence, verbatim from the Python resolver: valid block → use it as
- * is; stale/malformed block → re-derive reusing its stored roll (§5.3 —
- * identity survives a rebalance); absent → derive. `roll` is the pre-computed
- * sheet roll (hashing is async, so the caller derives it once at load time);
- * it is ignored whenever a stored roll exists.
+ * is; stale/malformed block → re-derive reusing its stored `identity_nudges`
+ * (§5.3 — identity survives a rebalance, and even a nudge-algorithm change);
+ * absent → derive. `nudges` is the pre-computed id decode (hashing is async,
+ * so the caller derives it once — `deriveIdentityNudges(petId)`); it is
+ * ignored whenever stored nudges exist.
  */
 export function resolveAthletics(
   manifest: AthleticsManifest | null | undefined,
-  roll: number | null,
+  nudges: IdentityNudges | null,
 ): AthleticsStats {
   const m = manifest ?? {};
   const block = m.athletics;
   if (blockIsValid(block)) return block;
 
   const stored = (typeof block === "object" && block !== null)
-    ? (block as Record<string, unknown>).roll : undefined;
-  const effectiveRoll = isFiniteNumber(stored) ? stored : (roll ?? 0);
+    ? (block as Record<string, unknown>).identity_nudges : undefined;
+  const identity = nudgesAreValid(stored) ? stored : (nudges ?? NEUTRAL_NUDGES);
 
   const row = baseRow(m.movement_class);
   const poses = Object.keys(m.animations ?? {});
@@ -95,7 +120,7 @@ export function resolveAthletics(
 
   const stats: Record<string, number> = {};
   for (const attr of ATTRIBUTES) {
-    let value = row[attr] + effectiveRoll;
+    let value = row[attr] + identity[attr];
     for (const [axis, option] of Object.entries(picks)) {
       const delta = MODIFIERS[axis]?.[option]?.[attr];
       if (isFiniteNumber(delta)) value += delta;
@@ -111,7 +136,7 @@ export function resolveAthletics(
     table_version: TABLE_VERSION,
     speed: stats.speed, power: stats.power, endurance: stats.endurance,
     land: stats.land, water: stats.water, air: stats.air,
-    roll: effectiveRoll,
+    identity_nudges: identity,
     poses,
   };
 }

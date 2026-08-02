@@ -17,7 +17,8 @@ import Link from "next/link";
 import { listPets, petManifestUrl } from "@/lib/api";
 import PetThumbnail from "@/components/PetThumbnail";
 import {
-  qualifies, resolveAthletics, unsatisfiedClauses, ATTRIBUTES,
+  deriveIdentityNudges, qualifies, resolveAthletics, unsatisfiedClauses,
+  ATTRIBUTES,
   type AthleticsManifest,
 } from "./athletics";
 import { CHALLENGES, listChallenges } from "./challenges/registry";
@@ -99,7 +100,10 @@ export default function SetupScreen({ onStart }: Props) {
             label: s.display_name,
             manifest,
             poses: Object.keys(manifest.animations ?? {}),
-            previewStats: resolveAthletics(manifest, null),
+            // The real numbers, id-nudges included (§3.4 Rev.7) — the bars a
+            // child compares are exactly what the race will use.
+            previewStats: resolveAthletics(
+              manifest, await deriveIdentityNudges(s.id)),
           };
           return info;
         }));

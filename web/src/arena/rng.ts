@@ -45,6 +45,6 @@ export function mulberry32(seed: number): () => number {
 /** Mint a race seed (setup time only — never inside game logic). */
 export function mintRaceSeed(): number {
   const buf = new Uint32Array(1);
-  crypto.getRandomValues(buf);
+  globalThis.crypto.getRandomValues(buf);
   return buf[0];
 }
