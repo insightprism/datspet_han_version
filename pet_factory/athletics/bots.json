@@ -1,0 +1,8 @@
+{
+  "_doc": "SPEC_PET_ARENA §7.3 (Rev.6) — the bot's answer-rate ladder, answers per second per named rung. A ladder, not one number: practice-vs-bot is plausibly the most-played mode (§8.8) and a child who beats the bot needs a next bot to beat. Guard test pins the rungs as named, positive and strictly ascending. Lives beside the other athletics declarations (not in the browser) so a room hosting a bot lane reads the same data the solo arena does — the §6.1a posture.",
+  "rungs": {
+    "gentle": 0.5,
+    "steady": 1.0,
+    "brisk": 1.8
+  }
+}

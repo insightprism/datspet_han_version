@@ -1,0 +1,16 @@
+{
+  "key": "sprint_100",
+  "label": "100 m Sprint",
+  "emoji": "🏁",
+  "medium": "land",
+  "distance_m": 100,
+  "decay": 0.0,
+  "race_roll": 0.03,
+  "time_limit_s": 180,
+  "weights": { "speed": 0.8, "power": 0.15, "endurance": 0.05 },
+  "requires": [["run"]],
+  "team_size": 1,
+  "preferred_poses": ["run", "walk"],
+  "result_unit": "seconds",
+  "_note": "SPEC_PET_ARENA §6.4 event 1 — one attribute dominates, one clause. decay 0: endurance is inert in a sprint (§2.4). A fish that owns run may enter, and flopping down the track in last place is the joke (§6.3)."
+}

@@ -1,0 +1,9 @@
+{
+  "_doc": "SPEC_PET_ARENA §8.3.1 (Rev.6) — the handicap ladder: per-entrant stride multipliers, chosen at race setup, visible to everyone, recorded in the race header so replays reproduce. CLOSED set — race setup refuses a value off it; a free slider is how 'visible and honest' quietly becomes 1.37x and unexplainable. The names are the point: a child who accepts 'you get the rocket' has agreed to something they understand. At rocket (2.0) a younger sibling answering at half the rate holds even. Values are >= 1.0 (a handicap may only help) and 'none' (1.0) must exist — both guard-tested.",
+  "handicap_ladder": {
+    "none": 1.0,
+    "boost": 1.25,
+    "big_boost": 1.5,
+    "rocket": 2.0
+  }
+}

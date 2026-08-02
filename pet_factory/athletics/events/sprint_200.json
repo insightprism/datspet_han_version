@@ -1,0 +1,16 @@
+{
+  "key": "sprint_200",
+  "label": "200 m",
+  "emoji": "🏃",
+  "medium": "land",
+  "distance_m": 200,
+  "decay": 0.35,
+  "race_roll": 0.03,
+  "time_limit_s": 240,
+  "weights": { "speed": 0.65, "power": 0.1, "endurance": 0.25 },
+  "requires": [["run"]],
+  "team_size": 1,
+  "preferred_poses": ["run", "walk"],
+  "result_unit": "seconds",
+  "_note": "SPEC_PET_ARENA §6.4 event 2 — adds endurance and the decay curve (§2.4): at decay 0.35 a zero-endurance pet finishes at 65% stride while an endurance-1.0 pet never slows. What makes the 200 m a different event rather than a longer one. Costs no new pose — the catalogue-depth proof."
+}

@@ -1,0 +1,41 @@
+{
+  "_doc": "SPEC_PET_ARENA §3.1 — the base six-tuple per declared movement_class. The single biggest determinant of a pet's athletics, and one flat table an admin can tune. Keys are the movement_class strings the motion profiles declare (guard test pins the bijection both ways); `default` is the never-raises fallback row for an unknown class, mirroring motion_profiles registry.default. Attributes and affinities are all 0.0-1.0; affinities MULTIPLY performance and never gate entry (§2.2) — eligibility is the pose requirement (§6.3).",
+  "default": "mammalian_quadruped",
+  "classes": {
+    "mammalian_quadruped": {
+      "speed": 0.75, "power": 0.65, "endurance": 0.60,
+      "land": 0.95, "water": 0.35, "air": 0.05,
+      "_note": "The baseline athlete. Strong on land, adequate in water, hopeless in the air."
+    },
+    "avian_biped": {
+      "speed": 0.55, "power": 0.50, "endurance": 0.55,
+      "land": 0.60, "water": 0.30, "air": 0.95,
+      "_note": "Waddles on the track, owns the sky. The natural premium archetype (§10.3)."
+    },
+    "winged_flyer": {
+      "speed": 0.65, "power": 0.60, "endurance": 0.55,
+      "land": 0.45, "water": 0.20, "air": 1.00,
+      "_note": "Dragons and their kin. Dominant airborne, awkward everywhere else."
+    },
+    "humanoid_biped": {
+      "speed": 0.60, "power": 0.70, "endurance": 0.65,
+      "land": 0.90, "water": 0.40, "air": 0.70,
+      "_note": "The all-rounder; the air affinity is for the flying superheroes."
+    },
+    "primate_walker": {
+      "speed": 0.55, "power": 0.75, "endurance": 0.55,
+      "land": 0.85, "water": 0.40, "air": 0.10,
+      "_note": "Power first — built for the jumps once they ship."
+    },
+    "aquatic_swimmer": {
+      "speed": 0.55, "power": 0.30, "endurance": 0.70,
+      "land": 0.15, "water": 1.00, "air": 0.05,
+      "_note": "Dominant in the pool, comic on the track. The comedy is the design (§0.5)."
+    },
+    "limbless_serpentine": {
+      "speed": 0.45, "power": 0.40, "endurance": 0.75,
+      "land": 0.55, "water": 0.80, "air": 0.02,
+      "_note": "Slow but relentless; the endurance events are where a snake surprises people."
+    }
+  }
+}

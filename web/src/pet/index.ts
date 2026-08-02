@@ -4,6 +4,16 @@
 // (components/PetStage.tsx, replacing datsme's PetOverlay) differ.
 export { PetCanvas } from "./PetCanvas";
 export { ensurePet, removePet, getPet, setAnim, petStore } from "./petStore";
+// Frame primitives for the arena's race driver (SPEC_PET_ARENA §7.6/§9.2):
+// the arena is a second DRIVER over the same primitives — it mounts these
+// instead of useAutoStateMachine and paces pets from the impulse stream.
+// This index is one of the two files the runtime designates as legitimately
+// host-specific, so widening it is the sanctioned seam rather than a fork.
+export {
+  setBgPos, applyTransform, getDisplayFrame, resolveRestAnim,
+  recomputeMirroringPolicy,
+} from "./petStore";
+export type { PetState } from "./petStore";
 export { animsFromManifest, deriveRows } from "./manifest";
 export type { RawManifest } from "./manifest";
 export { useAnimationLoop } from "./useAnimationLoop";

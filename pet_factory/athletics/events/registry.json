@@ -1,0 +1,8 @@
+{
+  "_doc": "SPEC_PET_ARENA §6.1/§6.1a — the event registry. One Tier-1 event = one JSON file here + one entry; NO companion code module anywhere (guard-tested), because the generic integrator parameterised by the declaration IS the procedure. Read by the browser (web/src/arena/declarations.ts), the reference integrator (pet_factory.athletics), the guard tests, and — when rooms ship — the room server. Jumps (best-of-three, elimination heights) are Tier 2 and will arrive as declaration + a small code module per side (§6.1a).",
+  "events": [
+    { "key": "racewalk", "file": "racewalk.json" },
+    { "key": "sprint_100", "file": "sprint_100.json" },
+    { "key": "sprint_200", "file": "sprint_200.json" }
+  ]
+}

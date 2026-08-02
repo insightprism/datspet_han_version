@@ -1,0 +1,16 @@
+{
+  "key": "racewalk",
+  "label": "Racewalk",
+  "emoji": "🚶",
+  "medium": "land",
+  "distance_m": 50,
+  "decay": 0.0,
+  "race_roll": 0.03,
+  "time_limit_s": 180,
+  "weights": { "speed": 0.5, "power": 0.1, "endurance": 0.4 },
+  "requires": [["walk"]],
+  "team_size": 1,
+  "preferred_poses": ["walk"],
+  "result_unit": "seconds",
+  "_note": "The universal event (SPEC_PET_ARENA §6.3.3): walk is required-enabled on every pet ever built, so no child's pet is ever locked out of everything. A real Olympic sport. Deleting this event fails the build (the at-least-one-walk-only guard)."
+}
