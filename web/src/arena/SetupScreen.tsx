@@ -25,6 +25,7 @@ import { CHALLENGES, listChallenges } from "./challenges/registry";
 import {
   ARENA_EVENTS, BOT_RUNGS, HANDICAP_LADDER, type ArenaEventDecl,
 } from "./declarations";
+import PetProfileModal from "./PetProfileModal";
 import { PoseBadges, PoseLegend } from "./PoseBadges";
 import StatBars from "./StatBars";
 import type { ArenaPetInfo } from "./gameTypes";
@@ -69,6 +70,9 @@ export default function SetupScreen({ onStart }: Props) {
   const [botPetId, setBotPetId] = useState<string | null>(null);
   const [playerOneHandicap, setPlayerOneHandicap] = useState("none");
   const [playerTwoHandicap, setPlayerTwoHandicap] = useState("none");
+  // The animated profile (owner ask): clicking your already-selected athlete
+  // opens it — the card is a <button>, so a nested trigger is not an option.
+  const [profilePet, setProfilePet] = useState<ArenaPetInfo | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -199,6 +203,9 @@ export default function SetupScreen({ onStart }: Props) {
       {/* 3 — the athlete. Unqualified pets greyed with the reason named. */}
       <section>
         <h3 className="mb-1 text-sm font-semibold">3 · Pick your athlete</h3>
+        <div className="mb-1 text-[11px]" style={{ color: "var(--muted)" }}>
+          Click your athlete again to watch them move.
+        </div>
         <PoseLegend />
         <div className="flex flex-wrap gap-2">
           {pets.map((p) => {
@@ -206,7 +213,13 @@ export default function SetupScreen({ onStart }: Props) {
             const missing = unsatisfiedClauses(p.poses, event.requires);
             return (
               <button key={p.id} type="button" disabled={!ok}
-                onClick={() => setPlayerOnePetId(p.id)}
+                onClick={() => {
+                  // First click selects; a click on the already-selected
+                  // athlete opens the animated profile (owner ask) — the
+                  // card is itself a button, so no nested ▶ trigger.
+                  if (playerOnePetId === p.id) setProfilePet(p);
+                  else setPlayerOnePetId(p.id);
+                }}
                 className="card p-2 text-left"
                 style={{
                   width: 150,
@@ -307,6 +320,8 @@ export default function SetupScreen({ onStart }: Props) {
           )}
         </div>
       </section>
+
+      <PetProfileModal pet={profilePet} onClose={() => setProfilePet(null)} />
 
       <button type="button" className="btn self-start px-8 py-3 text-lg"
         disabled={!startable}
