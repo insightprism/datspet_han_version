@@ -20,27 +20,34 @@ export const COUNTDOWN_SECONDS = 3;
  *  so the bot does not answer like a metronome; seeded, so replays hold. */
 export const BOT_JITTER_FRACTION = 0.25;
 
-/** §7.6 — sprite frame rate tracks velocity. Rate factor = velocity over
- *  (stride_base_m × 1 answer/s), clamped so a stalled pet still breathes and
- *  a sprinting one does not strobe. */
+/** §7.6 — sprite frame rate tracks the APPARENT velocity (the camera-layer
+ *  chase speed), clamped so a stalled pet still trots in place and a
+ *  sprinting one does not strobe. */
 export const SPRITE_RATE_WINDOW_MS = 2000;
 export const SPRITE_RATE_MIN = 0.35;
 export const SPRITE_RATE_MAX = 2.5;
 
-/** Track presentation. Sprite size is a REALISM knob, not taste (owner call
- *  2026-08-02): at 96px a cat spanned ~12 of a 110 m course's metres — as
- *  long as the gap between hurdles — so every jump read wrong. 64px puts a
- *  runner at ~7 "metres", small enough that obstacles and marks mean
- *  something against its body. */
+/** The runner-game camera (owner design, 2026-08-02 — "think like a game
+ *  developer"): each lane is a VIEWPORT onto a fixed window of track; the
+ *  runner anchors part-way across and the world scrolls past. A pixel means
+ *  a fixed slice of course, so proportions hold on every course length — a
+ *  64px runner is ~2 real metres, a hurdle is a hurdle. */
 export const ARENA_PET_DISPLAY_SIZE_PX = 64;
 export const LANE_HEIGHT_PX = 88;
 export const TRACK_EDGE_PADDING_PX = 16;
+export const VIEWPORT_TRACK_METERS = 28;
+export const CAMERA_ANCHOR_FRACTION = 0.35;
+/** Ground marks every N metres — rolling texture for the scroll. */
+export const TRACK_SCROLL_MARK_STEP_M = 10;
 
-/** Distance markings on the track (owner ask: "he can be on the 40"): the
- *  smallest of these round steps that keeps a course at no more than
- *  TRACK_MARK_MAX_COUNT marks. */
-export const TRACK_MARK_STEPS_M = [5, 10, 25, 50, 100];
-export const TRACK_MARK_MAX_COUNT = 5;
+/** The render chases the simulation (owner: "the animal is always moving, or
+ *  appears to move"): drawn position approaches the true integrator distance
+ *  exponentially with this time constant, so each answer is a surge that
+ *  plays out smoothly and a lockout reads as deceleration — never teleports.
+ *  RENDER-ONLY: the referee still scores the impulse log (§7.4). */
+export const DISPLAY_CHASE_TAU_MS = 500;
+/** Apparent m/s that maps to 1× leg speed. */
+export const APPARENT_SPEED_BASE_M_S = 2.0;
 
 /** Recap playback speed (§8.8 — "watch how you won"). */
 export const RECAP_PLAYBACK_SPEED = 2;

@@ -1,33 +1,36 @@
 "use client";
 
 /**
- * ArenaTrack — the racecourse, and the arena's DRIVER over the pet runtime
- * (SPEC_PET_ARENA §1.2/§9.2): it mounts the frame primitives (setBgPos,
- * applyTransform, setAnim via @/pet's sanctioned re-exports) and paces every
- * lane from the impulse stream. It does NOT mount useAnimationLoop or
- * useAutoStateMachine — a race is a third driver beside ambient life, not a
- * flag on it — and it edits nothing in web/src/pet/.
+ * ArenaTrack — the racecourse as a RUNNER-GAME CAMERA (owner design,
+ * 2026-08-02: "think like a game developer"). Each lane is a viewport onto a
+ * fixed ~28 m window of track: the runner anchors part-way across the lane
+ * and the WORLD — ground marks, hurdles, the finish line — scrolls past.
+ * A pixel means a fixed slice of course on every course length, so a 64px
+ * runner is ~2 real metres and a hurdle is hurdle-sized.
  *
- * Lanes are stacked containers; each sprite is absolutely positioned inside
- * its lane and moved by the same translate/rotate/scaleX composition the
- * ambient runtime uses (applyTransform). Sprite frame rate tracks the answer
- * tempo (§7.6) so a pet being driven hard visibly runs faster — the feedback
- * loop that makes answering feel like pedalling.
+ * Motion is CHASE-SMOOTHED: the drawn position approaches the integrator's
+ * true distance exponentially (DISPLAY_CHASE_TAU_MS), so each answer is a
+ * surge that plays out over real time, a lockout reads as deceleration, and
+ * the animal never teleports. Render-only — the referee still scores the
+ * impulse log (§7.4), and the hurdle GATE still clamps in the simulation;
+ * the camera just draws the glide.
  *
- * The same component replays a recap (§8.8): hand it a scaled `raceClock` and
- * recorded logs and it is a playback, because the impulse log IS the race
- * (§7.4).
+ * This is the arena's second driver over the pet runtime (§1.2/§9.2): frame
+ * primitives only, no ambient state machine, nothing in web/src/pet/ edited.
+ * Hurdle jump poses trigger by screen-space collision (the owner's hidden
+ * pixel): nose crosses the trigger line → jump; tail clears the obstacle →
+ * run. Computed in world coordinates, camera-independent.
  */
 
 import { useEffect, useRef } from "react";
 import { applyTransform, getDisplayFrame, getPet, setAnim, setBgPos } from "@/pet";
 import {
-  ARENA_PET_DISPLAY_SIZE_PX, HURDLE_GLYPH_PX, HURDLE_TRIGGER_LEAD_PX,
-  LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN, SPRITE_RATE_WINDOW_MS,
-  TRACK_EDGE_PADDING_PX, TRACK_MARK_MAX_COUNT, TRACK_MARK_STEPS_M,
+  APPARENT_SPEED_BASE_M_S, ARENA_PET_DISPLAY_SIZE_PX, CAMERA_ANCHOR_FRACTION,
+  DISPLAY_CHASE_TAU_MS, HURDLE_GLYPH_PX, HURDLE_TRIGGER_LEAD_PX,
+  LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN, TRACK_EDGE_PADDING_PX,
+  TRACK_SCROLL_MARK_STEP_M, VIEWPORT_TRACK_METERS,
 } from "./constants";
 import type { LaneIntegrator, Impulse } from "./raceEngine";
-import { recentAnswerRate } from "./raceEngine";
 
 export interface TrackLane {
   storeId: string;
@@ -35,40 +38,13 @@ export interface TrackLane {
   /** Shown on the lane — a hidden handicap is the failure §8.3.1 forbids. */
   handicapName: string;
   racingPose: string;
-  /** Hurdle events (§6.6): the pose played while crossing a hurdle mark —
-   *  the first owned of jump/play, per the qualification's alternatives. */
+  /** Hurdle events (§6.6): the pose played over an obstacle — the first
+   *  owned of jump/play, per the qualification's alternatives. */
   hopPose?: string;
   /** The lane's integrator, owned by the parent and rebuilt per run. */
   integrator: LaneIntegrator;
   /** The live (or recorded) impulse log. Parent appends; track only reads. */
   log: Impulse[];
-}
-
-/** The distance-marking step for a course: the smallest round step that keeps
- *  the track at no more than TRACK_MARK_MAX_COUNT marks (50 m → every 10 m,
- *  100 m → every 25 m, 300 m → every 100 m). */
-function markStepM(distanceM: number): number {
-  return TRACK_MARK_STEPS_M.find((step) => distanceM / step <= TRACK_MARK_MAX_COUNT)
-    ?? TRACK_MARK_STEPS_M[TRACK_MARK_STEPS_M.length - 1];
-}
-
-function trackMarks(distanceM: number): number[] {
-  return trackMarksEvery(distanceM, markStepM(distanceM));
-}
-
-function trackMarksEvery(distanceM: number, step: number): number[] {
-  const marks: number[] = [];
-  for (let d = step; d < distanceM; d += step) marks.push(d);
-  return marks;
-}
-
-/** A mark's CSS left, aligned to where the runner's NOSE is at that distance —
- *  the same mapping the driver uses for the sprite (nose = sprite right edge,
- *  which crosses the finish line exactly at full distance). */
-function markLeftCss(d: number, distanceM: number): string {
-  const noseOffsetPx = TRACK_EDGE_PADDING_PX + ARENA_PET_DISPLAY_SIZE_PX;
-  const usablePx = ARENA_PET_DISPLAY_SIZE_PX + 2 * TRACK_EDGE_PADDING_PX;
-  return `calc(${noseOffsetPx}px + ${d / distanceM} * (100% - ${usablePx}px))`;
 }
 
 interface Props {
@@ -82,16 +58,31 @@ interface Props {
   onLaneFinish?: (laneIndex: number, finishMs: number) => void;
 }
 
+/** The runner's nose sits here in WORLD px when its distance is 0. */
+const NOSE_HOME_PX = TRACK_EDGE_PADDING_PX + ARENA_PET_DISPLAY_SIZE_PX;
+
+function everyM(step: number, distanceM: number): number[] {
+  const out: number[] = [];
+  for (let d = step; d < distanceM; d += step) out.push(d);
+  return out;
+}
+
+/** World-space left for a course position, as CSS — the driver publishes the
+ *  live px-per-metre on the lane as a custom property, so world children
+ *  position themselves without a re-render on resize. */
+function worldLeftCss(d: number): string {
+  return `calc(${NOSE_HOME_PX}px + ${d} * var(--px-per-m, 30px))`;
+}
+
 export default function ArenaTrack({
   lanes, distanceM, hurdlesEveryM, raceClock, onLaneFinish,
 }: Props) {
   const laneElsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const worldElsRef = useRef<(HTMLDivElement | null)[]>([]);
   const spriteElsRef = useRef<(HTMLDivElement | null)[]>([]);
-  // The live "how far he got" readout — written by the driver loop directly
-  // (textContent, no React re-render at 60 fps), like every other per-frame
-  // update on this track.
   const progressElsRef = useRef<(HTMLDivElement | null)[]>([]);
-  // Per-lane finish flag so onLaneFinish fires exactly once.
+  /** Per-lane chase-smoothed distance — the DRAWN position. */
+  const displayMRef = useRef<number[]>([]);
   const finishedRef = useRef<boolean[]>([]);
   const onLaneFinishRef = useRef(onLaneFinish);
   onLaneFinishRef.current = onLaneFinish;
@@ -100,10 +91,8 @@ export default function ArenaTrack({
 
   useEffect(() => {
     finishedRef.current = lanes.map(() => false);
+    displayMRef.current = lanes.map(() => 0);
 
-    // Bind each lane's DOM onto its pet instance — the same registration
-    // PetCanvas performs, done here because arena sprites are positioned
-    // inside a lane, not fixed to the viewport.
     lanes.forEach((lane, i) => {
       const pet = getPet(lane.storeId);
       const petEl = spriteElsRef.current[i];
@@ -129,30 +118,52 @@ export default function ArenaTrack({
     let lastMs = performance.now();
 
     function tick(now: number) {
-      const dt = Math.min(now - lastMs, 50);
+      // The chase uses REAL elapsed time — under rAF throttling (occluded
+      // window, battery saver) frames arrive seconds apart, and clamping
+      // here would make the glide run arbitrarily slow. Only the sprite
+      // frame-stepping below wants the clamp (a 2 s frame-burst would strobe).
+      const rawDt = now - lastMs;
+      const dt = Math.min(rawDt, 50);
       lastMs = now;
       const t = raceClock();
+      // Exponential chase factor for this frame (§ constants: render-only).
+      const chase = 1 - Math.exp(-rawDt / DISPLAY_CHASE_TAU_MS);
 
       lanes.forEach((lane, i) => {
         const pet = getPet(lane.storeId);
         const petEl = spriteElsRef.current[i];
         const laneEl = laneElsRef.current[i];
-        if (!pet || !petEl || !laneEl) return;
+        const worldEl = worldElsRef.current[i];
+        if (!pet || !petEl || !laneEl || !worldEl) return;
 
         if (t !== null) {
           lane.integrator.consume(lane.log, t);
           if (lane.integrator.finished && !finishedRef.current[i]) {
             finishedRef.current[i] = true;
-            setAnim(pet, "idle");
             onLaneFinishRef.current?.(i, lane.integrator.finishMs ?? t);
           }
         }
 
-        // Position: distance fraction across the usable lane width.
-        const usable = Math.max(
-          laneEl.clientWidth - ARENA_PET_DISPLAY_SIZE_PX - 2 * TRACK_EDGE_PADDING_PX, 1);
-        pet.instance.x =
-          TRACK_EDGE_PADDING_PX + lane.integrator.distanceFraction * usable;
+        const laneW = laneEl.clientWidth;
+        const pxPerM = laneW / VIEWPORT_TRACK_METERS;
+        laneEl.style.setProperty("--px-per-m", `${pxPerM}px`);
+
+        // The drawn position glides toward the truth; its derivative is the
+        // APPARENT velocity that drives the legs.
+        const prevDisplay = displayMRef.current[i];
+        const displayM = prevDisplay
+          + (lane.integrator.distanceM - prevDisplay) * chase;
+        displayMRef.current[i] = displayM;
+        const apparentVel = rawDt > 0 ? ((displayM - prevDisplay) / rawDt) * 1000 : 0;
+
+        // Camera: keep the nose at the anchor, clamped to the course ends.
+        const noseWorld = NOSE_HOME_PX + displayM * pxPerM;
+        const anchorPx = laneW * CAMERA_ANCHOR_FRACTION;
+        const finishWorld = NOSE_HOME_PX + distanceM * pxPerM;
+        const camMax = Math.max(0, finishWorld + TRACK_EDGE_PADDING_PX - laneW);
+        const cam = Math.min(Math.max(0, noseWorld - anchorPx), camMax);
+        worldEl.style.transform = `translate3d(${-cam}px, 0, 0)`;
+        pet.instance.x = noseWorld - ARENA_PET_DISPLAY_SIZE_PX - cam;
 
         const progressEl = progressElsRef.current[i];
         if (progressEl) {
@@ -160,20 +171,16 @@ export default function ArenaTrack({
             `${Math.floor(lane.integrator.distanceM)} / ${distanceM} m`;
         }
 
-        // Hurdles (§6.6, owner's collision design): the jump pose triggers in
-        // SCREEN space — a hidden trigger line just before each obstacle. It
-        // fires when the nose crosses the line and releases when the tail
-        // clears the obstacle, so the leap can never drift from where the
-        // obstacle is drawn. Never after finish.
+        // Hurdle poses by collision (owner's hidden pixel), in world coords:
+        // fire when the nose crosses the trigger line, release when the tail
+        // clears the obstacle. Never after finish.
         if (hurdlesEveryM && t !== null && !lane.integrator.finished) {
-          const noseX = pet.instance.x + ARENA_PET_DISPLAY_SIZE_PX;
-          const tailX = pet.instance.x;
-          const noseOffset = TRACK_EDGE_PADDING_PX + ARENA_PET_DISPLAY_SIZE_PX;
+          const tailWorld = noseWorld - ARENA_PET_DISPLAY_SIZE_PX;
           let overObstacle = false;
           for (let d = hurdlesEveryM; d < distanceM; d += hurdlesEveryM) {
-            const obstacleX = noseOffset + (d / distanceM) * usable;
-            if (noseX >= obstacleX - HURDLE_TRIGGER_LEAD_PX
-                && tailX <= obstacleX + HURDLE_GLYPH_PX) {
+            const obstacleWorld = NOSE_HOME_PX + d * pxPerM;
+            if (noseWorld >= obstacleWorld - HURDLE_TRIGGER_LEAD_PX
+                && tailWorld <= obstacleWorld + HURDLE_GLYPH_PX) {
               overObstacle = true;
               break;
             }
@@ -182,12 +189,13 @@ export default function ArenaTrack({
           if (pet.anim !== wanted) setAnim(pet, wanted);
         }
 
-        // Frame advance at answer tempo (§7.6). Finished lanes idle at 1×.
+        // Legs follow the APPARENT speed (§7.6): fast glide, fast strides;
+        // stalled, a slow trot-in-place. Finished lanes idle at 1×.
         const anim = pet.anims[pet.anim];
         if (anim) {
           const rate = (t !== null && !lane.integrator.finished)
             ? Math.min(Math.max(
-                recentAnswerRate(lane.log, t, SPRITE_RATE_WINDOW_MS),
+                apparentVel / APPARENT_SPEED_BASE_M_S,
                 SPRITE_RATE_MIN), SPRITE_RATE_MAX)
             : 1;
           pet.frameElapsedMs += dt * rate;
@@ -236,6 +244,43 @@ export default function ArenaTrack({
             border: "1px solid rgba(255,255,255,0.08)",
           }}
         >
+          {/* The scrolling world: marks, hurdles, finish. Driver translates it. */}
+          <div ref={(el) => { worldElsRef.current[i] = el; }}
+            className="absolute inset-y-0 left-0 will-change-transform">
+            {everyM(TRACK_SCROLL_MARK_STEP_M, distanceM).map((d) => (
+              <div key={`m${d}`} className="pointer-events-none absolute bottom-0 top-0"
+                style={{ left: worldLeftCss(d), width: 1, background: "rgba(255,255,255,0.07)" }}>
+                <span className="absolute bottom-0.5 left-1 text-[9px]"
+                  style={{ color: "var(--muted)", opacity: 0.8 }}>
+                  {d}
+                </span>
+              </div>
+            ))}
+            {hurdlesEveryM && everyM(hurdlesEveryM, distanceM).map((d) => (
+              <div key={`h${d}`} className="pointer-events-none absolute"
+                style={{
+                  left: worldLeftCss(d), bottom: 2,
+                  fontSize: HURDLE_GLYPH_PX, lineHeight: 1, opacity: 0.65,
+                }}>
+                🚧
+              </div>
+            ))}
+            {/* The finish line. */}
+            <div className="pointer-events-none absolute bottom-0 top-0"
+              style={{
+                left: worldLeftCss(distanceM),
+                width: 3,
+                backgroundImage:
+                  "repeating-linear-gradient(180deg, #fff 0 6px, #333 6px 12px)",
+                opacity: 0.6,
+              }} />
+            <div className="pointer-events-none absolute top-0.5 text-xs"
+              style={{ left: `calc(${worldLeftCss(distanceM)} + 6px)` }}>
+              🏁
+            </div>
+          </div>
+
+          {/* Fixed overlays: who + how far. */}
           <div className="absolute left-2 top-1 text-xs" style={{ color: "var(--muted)" }}>
             {lane.label}
             {lane.handicapName !== "none" && (
@@ -245,47 +290,12 @@ export default function ArenaTrack({
               </span>
             )}
           </div>
-          {/* Distance markings, like a real track — the runner is literally
-              "on the 40" (owner). Aligned to the nose, same mapping as the
-              finish line. */}
-          {trackMarks(distanceM).map((d) => (
-            <div key={d} className="pointer-events-none absolute bottom-0 top-0"
-              style={{
-                left: markLeftCss(d, distanceM),
-                width: 1,
-                background: "rgba(255,255,255,0.08)",
-              }}>
-              <span className="absolute bottom-0.5 left-1 text-[9px]"
-                style={{ color: "var(--muted)", opacity: 0.8 }}>
-                {d}
-              </span>
-            </div>
-          ))}
-          {/* Hurdle obstacles (§6.6) — same nose-aligned mapping as the
-              numbers; hip-height against the runner (owner proportion call). */}
-          {hurdlesEveryM && trackMarksEvery(distanceM, hurdlesEveryM).map((d) => (
-            <div key={`h${d}`} className="pointer-events-none absolute"
-              style={{
-                left: markLeftCss(d, distanceM), bottom: 2,
-                fontSize: HURDLE_GLYPH_PX, lineHeight: 1, opacity: 0.65,
-              }}>
-              🚧
-            </div>
-          ))}
-          {/* The finish line. */}
-          <div className="absolute bottom-0 top-0"
-            style={{
-              right: TRACK_EDGE_PADDING_PX,
-              width: 3,
-              backgroundImage:
-                "repeating-linear-gradient(180deg, #fff 0 6px, #333 6px 12px)",
-              opacity: 0.5,
-            }} />
           <div ref={(el) => { progressElsRef.current[i] = el; }}
             className="mono absolute right-2 top-1 text-[10px] tabular-nums"
             style={{ color: "var(--muted)" }}>
             0 / {distanceM} m
           </div>
+
           <div
             ref={(el) => { spriteElsRef.current[i] = el; }}
             className="absolute"
