@@ -104,6 +104,16 @@ export const CRASH_FX_MS = 1400;
  *  clears it. Parked at the gate the runner stays grounded. */
 export const HURDLE_JUMP_ARC_PX = 36;
 
+/** One ground line for animal and obstacle (owner: "the legs should touch
+ *  the same level as the hurdle"). Sprite frames carry transparent padding
+ *  BELOW the paws (the factory centers the art in its cell), so the sprite
+ *  cell hangs this far below the lane floor to put the visible feet on the
+ *  hurdle's baseline. Lane overflow clips the transparent excess.
+ *  Measured by canvas alpha-scan (2026-08-02, leopard run frames): 14px of
+ *  pad under the paws in the 64px cell → paws rest on TRACK_GROUND_Y_PX. */
+export const SPRITE_BASELINE_OFFSET_PX = -12;
+export const TRACK_GROUND_Y_PX = 2;
+
 /** Rev.9 — the JUMP color: what the challenge panel wears while the lane is
  *  parked at a hurdle and the question is one rung harder. Amber, distinct
  *  from the running green, readable on the dark card. */

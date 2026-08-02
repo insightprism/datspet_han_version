@@ -28,8 +28,9 @@ import {
   APPARENT_SPEED_BASE_M_S, ARENA_PET_DISPLAY_SIZE_PX, CAMERA_ANCHOR_FRACTION,
   DISPLAY_CHASE_TAU_MS, DISPLAY_MAX_CHASE_M_S, DISPLAY_MIN_CREEP_M_S,
   HURDLE_HEIGHT_PX, HURDLE_JUMP_ARC_PX, HURDLE_TRIGGER_LEAD_PX,
-  HURDLE_WIDTH_PX, LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN,
-  TRACK_EDGE_PADDING_PX, TRACK_SCROLL_MARK_STEP_M, VIEWPORT_TRACK_METERS,
+  HURDLE_WIDTH_PX, LANE_HEIGHT_PX, SPRITE_BASELINE_OFFSET_PX, SPRITE_RATE_MAX,
+  SPRITE_RATE_MIN, TRACK_EDGE_PADDING_PX, TRACK_GROUND_Y_PX,
+  TRACK_SCROLL_MARK_STEP_M, VIEWPORT_TRACK_METERS,
 } from "./constants";
 import type { LaneIntegrator, Impulse } from "./raceEngine";
 
@@ -300,7 +301,7 @@ export default function ArenaTrack({
             {hurdlesEveryM && everyM(hurdlesEveryM, distanceM).map((d) => (
               <div key={`h${d}`} className="pointer-events-none absolute"
                 style={{
-                  left: worldLeftCss(d), bottom: 2,
+                  left: worldLeftCss(d), bottom: TRACK_GROUND_Y_PX,
                   width: HURDLE_WIDTH_PX, height: HURDLE_HEIGHT_PX,
                 }}>
                 <div style={{
@@ -333,6 +334,13 @@ export default function ArenaTrack({
             </div>
           </div>
 
+          {/* The shared ground line — animal paws and hurdle feet both live
+              on it (owner alignment call). */}
+          <div className="pointer-events-none absolute left-0 right-0"
+            style={{
+              bottom: TRACK_GROUND_Y_PX, height: 1,
+              background: "rgba(255,255,255,0.10)",
+            }} />
           {/* Fixed overlays: who + how far. */}
           <div className="absolute left-2 top-1 text-xs" style={{ color: "var(--muted)" }}>
             {lane.label}
@@ -358,7 +366,7 @@ export default function ArenaTrack({
             ref={(el) => { spriteElsRef.current[i] = el; }}
             className="absolute"
             style={{
-              bottom: 4,
+              bottom: SPRITE_BASELINE_OFFSET_PX,
               left: 0,
               width: "var(--pet-display-size, 96px)",
               height: "var(--pet-display-size, 96px)",

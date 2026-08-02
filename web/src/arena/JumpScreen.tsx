@@ -19,8 +19,9 @@ import { botImpulseLog } from "./bot";
 import { questionAt, type ArenaChallenge } from "./challenges/registry";
 import {
   ARENA_PET_DISPLAY_SIZE_PX, COUNTDOWN_SECONDS, JUMP_PIT_DISPLAY_MAX_M,
-  LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN, SPRITE_RATE_WINDOW_MS,
-  TRACK_EDGE_PADDING_PX, WRONG_ANSWER_LOCKOUT_MS, WRONG_CHOICE_LOCKOUT_MS,
+  LANE_HEIGHT_PX, SPRITE_BASELINE_OFFSET_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN,
+  SPRITE_RATE_WINDOW_MS, TRACK_EDGE_PADDING_PX, WRONG_ANSWER_LOCKOUT_MS,
+  WRONG_CHOICE_LOCKOUT_MS,
 } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
 import { jumpEventDurationMs, scoreJumpEntrant } from "./fieldJump";
@@ -316,7 +317,7 @@ export default function JumpScreen({
               ref={(el) => { spriteElsRef.current[i] = el; }}
               className="absolute"
               style={{
-                bottom: 4, left: 0,
+                bottom: SPRITE_BASELINE_OFFSET_PX, left: 0,
                 width: "var(--pet-display-size, 96px)",
                 height: "var(--pet-display-size, 96px)",
                 backgroundRepeat: "no-repeat",
