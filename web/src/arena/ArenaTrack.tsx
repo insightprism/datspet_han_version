@@ -26,9 +26,9 @@ import { useEffect, useRef } from "react";
 import { applyTransform, getDisplayFrame, getPet, setAnim, setBgPos } from "@/pet";
 import {
   APPARENT_SPEED_BASE_M_S, ARENA_PET_DISPLAY_SIZE_PX, CAMERA_ANCHOR_FRACTION,
-  DISPLAY_CHASE_TAU_MS, HURDLE_GLYPH_PX, HURDLE_TRIGGER_LEAD_PX,
-  LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN, TRACK_EDGE_PADDING_PX,
-  TRACK_SCROLL_MARK_STEP_M, VIEWPORT_TRACK_METERS,
+  DISPLAY_CHASE_TAU_MS, DISPLAY_MIN_CREEP_M_S, HURDLE_GLYPH_PX,
+  HURDLE_TRIGGER_LEAD_PX, LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN,
+  TRACK_EDGE_PADDING_PX, TRACK_SCROLL_MARK_STEP_M, VIEWPORT_TRACK_METERS,
 } from "./constants";
 import type { LaneIntegrator, Impulse } from "./raceEngine";
 
@@ -151,10 +151,17 @@ export default function ArenaTrack({
         // The drawn position glides toward the truth; its derivative is the
         // APPARENT velocity that drives the legs.
         const prevDisplay = displayMRef.current[i];
-        const displayM = prevDisplay
-          + (lane.integrator.distanceM - prevDisplay) * chase;
+        const gap = lane.integrator.distanceM - prevDisplay;
+        // Exponential glide with a creep floor: while distance is owed the
+        // runner keeps rolling at least DISPLAY_MIN_CREEP_M_S; it stops only
+        // when truly caught up (a parked gate must read as parked).
+        let step = gap * chase;
+        if (gap > 0) {
+          step = Math.min(gap, Math.max(step, DISPLAY_MIN_CREEP_M_S * (rawDt / 1000)));
+        }
+        const displayM = prevDisplay + step;
         displayMRef.current[i] = displayM;
-        const apparentVel = rawDt > 0 ? ((displayM - prevDisplay) / rawDt) * 1000 : 0;
+        const apparentVel = rawDt > 0 ? (step / rawDt) * 1000 : 0;
 
         // Camera: keep the nose at the anchor, clamped to the course ends.
         const noseWorld = NOSE_HOME_PX + displayM * pxPerM;

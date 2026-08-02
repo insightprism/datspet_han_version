@@ -44,8 +44,16 @@ export const TRACK_SCROLL_MARK_STEP_M = 10;
  *  appears to move"): drawn position approaches the true integrator distance
  *  exponentially with this time constant, so each answer is a surge that
  *  plays out smoothly and a lockout reads as deceleration — never teleports.
- *  RENDER-ONLY: the referee still scores the impulse log (§7.4). */
-export const DISPLAY_CHASE_TAU_MS = 500;
+ *  RENDER-ONLY: the referee still scores the impulse log (§7.4).
+ *
+ *  Tuned by instrument (2026-08-02): at τ=500 a human answering every ~1.3 s
+ *  left the runner motionless HALF of all frames (glide done in ~1.2 s). τ=800
+ *  plus the creep floor below keeps motion continuous at human pace. */
+export const DISPLAY_CHASE_TAU_MS = 800;
+/** While ANY distance is still owed, the runner never moves slower than this —
+ *  the roll between surges. It still stops dead when fully caught up (a
+ *  parked hurdle gate must read as parked). */
+export const DISPLAY_MIN_CREEP_M_S = 0.35;
 /** Apparent m/s that maps to 1× leg speed. */
 export const APPARENT_SPEED_BASE_M_S = 2.0;
 
