@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import ModalOverlay from "@/components/ModalOverlay";
 import PosePlayer from "@/components/PosePlayer";
 import { renamePet } from "@/lib/api";
+import { defaultPetFirstName } from "@/lib/petFirstNames";
 import type { ArenaPetInfo } from "./gameTypes";
 import StatBars from "./StatBars";
 
@@ -93,7 +94,10 @@ export default function PetProfileModal({ pet, onClose, onRenamed }: Props) {
               {pet.label}
               <button type="button" aria-label="Name this pet"
                 className="text-sm opacity-50 transition hover:opacity-100"
-                onClick={() => { setEditingName(true); setNameDraft(pet.pet_name ?? ""); }}>
+                onClick={() => {
+                  setEditingName(true);
+                  setNameDraft(pet.pet_name ?? defaultPetFirstName(pet.id));
+                }}>
                 ✏️
               </button>
             </h3>

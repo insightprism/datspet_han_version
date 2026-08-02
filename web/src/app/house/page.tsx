@@ -23,6 +23,7 @@ import PetStage from "@/components/PetStage";
 import PetThumbnail from "@/components/PetThumbnail";
 import ConfirmModal from "@/components/ConfirmModal";
 import { HOUSE_NAME } from "@/lib/houseCopy";
+import { defaultPetFirstName } from "@/lib/petFirstNames";
 import { composePetName } from "@/lib/petName";
 import { canBeThanked as canBeThankedFor, canOfferDonate } from "./donateVisibility";
 
@@ -488,7 +489,13 @@ export default function HousePage() {
                     <button type="button"
                       className="text-xs opacity-50 transition hover:opacity-100"
                       aria-label="Name this pet"
-                      onClick={() => { setRenamingId(p.id); setNameDraft(p.pet_name ?? ""); }}>
+                      onClick={() => {
+                        setRenamingId(p.id);
+                        // Prefill with the effective first name — stored, or
+                        // the id-derived default — so editing starts from
+                        // what the card shows.
+                        setNameDraft(p.pet_name ?? defaultPetFirstName(p.id));
+                      }}>
                       ✏️
                     </button>
                   </div>

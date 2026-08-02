@@ -10,13 +10,19 @@
  * rename.
  */
 
+import { defaultPetFirstName } from "./petFirstNames";
+
 export interface NamedPet {
+  /** The pet's unique id — the DEFAULT first name derives from it (stable,
+   *  never stored). Without an id, an unnamed pet shows its breed name. */
+  id?: string;
   pet_name?: string | null;
   display_name: string;
 }
 
 export function composePetName(pet: NamedPet): string {
-  const first = pet.pet_name?.trim();
+  const first = pet.pet_name?.trim()
+    || (pet.id ? defaultPetFirstName(pet.id) : "");
   if (!first) return pet.display_name;
   const surname = pet.display_name.trim().split(/\s+/).pop() ?? "";
   return surname ? `${first} ${surname}` : first;
