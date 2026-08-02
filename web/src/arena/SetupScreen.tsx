@@ -182,7 +182,7 @@ export default function SetupScreen({ onStart }: Props) {
             </button>
           ))}
           {challenge.ladder.length > 1 && (
-            <select className="rounded border bg-transparent px-2 py-1 text-sm"
+            <select className="input text-sm"
               value={difficulty}
               onChange={(e) => setDifficulty(e.target.value)}>
               {challenge.ladder.map((rung) => (
@@ -246,7 +246,7 @@ export default function SetupScreen({ onStart }: Props) {
               </button>
             ))}
             <span style={{ color: "var(--muted)" }}>Bot's pet:</span>
-            <select className="rounded border bg-transparent px-2 py-1"
+            <select className="input"
               value={effectiveBotPetId ?? ""}
               onChange={(e) => setBotPetId(e.target.value)}>
               {qualified.map((p) => (
@@ -259,7 +259,7 @@ export default function SetupScreen({ onStart }: Props) {
         ) : (
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <span style={{ color: "var(--muted)" }}>Player 2's pet:</span>
-            <select className="rounded border bg-transparent px-2 py-1"
+            <select className="input"
               value={playerTwoPetId ?? ""}
               onChange={(e) => setPlayerTwoPetId(e.target.value || null)}>
               <option value="">— pick —</option>
@@ -281,7 +281,7 @@ export default function SetupScreen({ onStart }: Props) {
           <span style={{ color: "var(--muted)" }}>
             {mode === "hotseat" ? "Player 1:" : "You:"}
           </span>
-          <select className="rounded border bg-transparent px-2 py-1"
+          <select className="input"
             value={playerOneHandicap}
             onChange={(e) => setPlayerOneHandicap(e.target.value)}>
             {Object.entries(HANDICAP_LADDER).map(([name, mult]) => (
@@ -291,7 +291,7 @@ export default function SetupScreen({ onStart }: Props) {
           {mode === "hotseat" && (
             <>
               <span style={{ color: "var(--muted)" }}>Player 2:</span>
-              <select className="rounded border bg-transparent px-2 py-1"
+              <select className="input"
                 value={playerTwoHandicap}
                 onChange={(e) => setPlayerTwoHandicap(e.target.value)}>
                 {Object.entries(HANDICAP_LADDER).map(([name, mult]) => (
