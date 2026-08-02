@@ -8,6 +8,11 @@
  *  no impulse, and the pet never moves backwards. */
 export const WRONG_ANSWER_LOCKOUT_MS = 600;
 
+/** §8.5 (Rev.10) — a missed CHOICE freezes longer than a typo: ~2 misses per
+ *  guessed hit ≈ 4 s per answer vs a knowing child's ~1 s, so mashing runs at
+ *  a quarter speed. Guard-pinned to ≥ 2× the typed lockout. */
+export const WRONG_CHOICE_LOCKOUT_MS = 1500;
+
 /** Server-less countdown before the gun (rooms will broadcast theirs). */
 export const COUNTDOWN_SECONDS = 3;
 

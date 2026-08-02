@@ -5,7 +5,12 @@
  * (§8.5).
  */
 import { describe, expect, it } from "vitest";
-import { CHALLENGES, listChallenges } from "./challenges/registry";
+import {
+  CHALLENGES, listChallenges, questionAt, NUM_ANSWER_CHOICES,
+} from "./challenges/registry";
+import {
+  WRONG_ANSWER_LOCKOUT_MS, WRONG_CHOICE_LOCKOUT_MS,
+} from "./constants";
 import { mulberry32 } from "./rng";
 
 describe("both registries enforced (§14)", () => {
@@ -14,7 +19,7 @@ describe("both registries enforced (§14)", () => {
     for (const c of listChallenges()) {
       expect(c.key).toBeTruthy();
       expect(c.label).toBeTruthy();
-      expect(["numeric", "tap", "text"]).toContain(c.inputKind);
+      expect(["numeric", "tap", "text", "choice"]).toContain(c.inputKind);
       expect(c.ladder.length).toBeGreaterThan(0);
       expect(typeof c.generate).toBe("function");
       expect(typeof c.check).toBe("function");
@@ -42,25 +47,36 @@ describe("same questions for everyone (§8.3)", () => {
   });
 });
 
-describe("guessing does not pay (§8.5)", () => {
-  it("arithmetic is typed numeric — no choice list exists to mash", () => {
+describe("guessing loses (§8.5, Rev.10)", () => {
+  it("arithmetic deals exactly three choices, the answer among them", () => {
     const arithmetic = CHALLENGES.arithmetic;
-    expect(arithmetic.inputKind).toBe("numeric");
-    // The question exposes a prompt and the checked answer — nothing else.
-    const q = arithmetic.generate(mulberry32(1), arithmetic.ladder[0].key);
-    expect(Object.keys(q).sort()).toEqual(["answer", "prompt"]);
-  });
-
-  it("arithmetic answers actually check out", () => {
-    const arithmetic = CHALLENGES.arithmetic;
+    expect(arithmetic.inputKind).toBe("choice");
     for (const rung of arithmetic.ladder) {
       const rng = mulberry32(7);
       for (let i = 0; i < 100; i++) {
         const q = arithmetic.generate(rng, rung.key);
+        expect(q.choices).toHaveLength(NUM_ANSWER_CHOICES);
+        expect(q.choices).toContain(q.answer);
+        expect(new Set(q.choices).size).toBe(NUM_ANSWER_CHOICES);
         expect(arithmetic.check(q.answer, q.answer)).toBe(true);
         expect(arithmetic.check(`${q.answer}1`, q.answer)).toBe(false);
       }
     }
+  });
+
+  it("the same (seed, index, rung) deals identical choices in order (§8.3)", () => {
+    const arithmetic = CHALLENGES.arithmetic;
+    for (let i = 0; i < 20; i++) {
+      expect(questionAt(arithmetic, 20260802, i, "times_tables"))
+        .toEqual(questionAt(arithmetic, 20260802, i, "times_tables"));
+    }
+  });
+
+  it("the miss freeze keeps mashing at a fraction of knowing", () => {
+    // §14 — the constant relation §8.5's arithmetic rests on: if these drift
+    // to where guessing approaches knowing, this is the alarm.
+    expect(WRONG_CHOICE_LOCKOUT_MS).toBeGreaterThanOrEqual(
+      2 * WRONG_ANSWER_LOCKOUT_MS);
   });
 });
 

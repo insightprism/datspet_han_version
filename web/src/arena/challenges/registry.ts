@@ -19,7 +19,14 @@ import { typing } from "./typing";
 export interface ChallengeQuestion {
   prompt: string;
   answer: string;
+  /** "choice" challenges only (§8.5, Rev.10): exactly NUM_ANSWER_CHOICES
+   *  options, the answer among them, dealt in seeded order — identical for
+   *  every entrant at the same (seed, index, rung). */
+  choices?: string[];
 }
+
+/** §8.5 (Rev.10) — the owner's three. */
+export const NUM_ANSWER_CHOICES = 3;
 
 export interface DifficultyRung {
   key: string;
@@ -30,10 +37,10 @@ export interface ArenaChallenge {
   key: string;
   label: string;
   emoji: string;
-  /** §8.5/§8.6 — "numeric" is typed digits, "text" typed words (never
-   *  multiple choice, either); "tap" is the accessibility floor: no reading,
-   *  no arithmetic, no typing. */
-  inputKind: "numeric" | "tap" | "text";
+  /** §8.5/§8.6 — "choice" taps one of three (Rev.10, the mobile default for
+   *  arithmetic); "numeric"/"text" are typed; "tap" is the accessibility
+   *  floor: no reading, no arithmetic, no typing. */
+  inputKind: "numeric" | "tap" | "text" | "choice";
   /** §8.7 — a declared ladder, selectable at race setup, never adaptive. */
   ladder: DifficultyRung[];
   /** Pure and seeded: the same rng sequence yields the same questions — the

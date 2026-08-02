@@ -19,7 +19,7 @@ import {
 } from "./challenges/registry";
 import {
   COUNTDOWN_SECONDS, HURDLE_JUMP_ACCENT, HURDLE_JUMP_ACCENT_BG,
-  WRONG_ANSWER_LOCKOUT_MS,
+  WRONG_ANSWER_LOCKOUT_MS, WRONG_CHOICE_LOCKOUT_MS,
 } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
 import type { LoadedRacer } from "./gameTypes";
@@ -169,13 +169,17 @@ export default function RaceScreen({
       setQIndex((i) => i + 1);
       setGivenAnswer("");
     } else {
-      // §7.2 — time cost, never distance: no impulse, brief lockout.
+      // §7.2 — time cost, never distance: no impulse, a lockout. Choices
+      // (Rev.10) pay MORE time and BURN the question — no eliminating your
+      // way to the answer; every guess is a fresh 1-in-3 (§8.5).
+      const isChoice = challenge.inputKind === "choice";
+      if (isChoice) setQIndex((i) => i + 1);
       setGivenAnswer("");
       setLockedOut(true);
       setTimeout(() => {
         setLockedOut(false);
         inputRef.current?.focus();
-      }, WRONG_ANSWER_LOCKOUT_MS);
+      }, isChoice ? WRONG_CHOICE_LOCKOUT_MS : WRONG_ANSWER_LOCKOUT_MS);
     }
   }
 
@@ -237,6 +241,29 @@ export default function RaceScreen({
             >
               {atHurdle ? "TAP to JUMP!" : question.prompt}
             </button>
+          ) : challenge.inputKind === "choice" && question.choices ? (
+            <div className="flex flex-col items-center gap-3">
+              <div className="text-4xl font-bold">{question.prompt} = ?</div>
+              <div className="flex flex-wrap justify-center gap-3">
+                {question.choices.map((choice) => (
+                  <button key={choice} type="button"
+                    className="btn min-w-24 px-8 py-4 text-2xl"
+                    disabled={lockedOut}
+                    style={atHurdle
+                      ? { background: HURDLE_JUMP_ACCENT_BG, color: HURDLE_JUMP_ACCENT,
+                          borderColor: HURDLE_JUMP_ACCENT }
+                      : undefined}
+                    onClick={() => submitAnswer(choice)}>
+                    {choice}
+                  </button>
+                ))}
+              </div>
+              {lockedOut && (
+                <div className="text-sm" style={{ color: "#f87171" }}>
+                  Not quite — here's a fresh one…
+                </div>
+              )}
+            </div>
           ) : (
             <form
               onSubmit={(e) => { e.preventDefault(); submitAnswer(givenAnswer); }}

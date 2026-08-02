@@ -20,7 +20,7 @@ import { questionAt, type ArenaChallenge } from "./challenges/registry";
 import {
   ARENA_PET_DISPLAY_SIZE_PX, COUNTDOWN_SECONDS, JUMP_PIT_DISPLAY_MAX_M,
   LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN, SPRITE_RATE_WINDOW_MS,
-  TRACK_EDGE_PADDING_PX, WRONG_ANSWER_LOCKOUT_MS,
+  TRACK_EDGE_PADDING_PX, WRONG_ANSWER_LOCKOUT_MS, WRONG_CHOICE_LOCKOUT_MS,
 } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
 import { jumpEventDurationMs, scoreJumpEntrant } from "./fieldJump";
@@ -240,12 +240,15 @@ export default function JumpScreen({
       setQIndex((i) => i + 1);
       setGivenAnswer("");
     } else {
+      // Choices burn the question and pay the longer freeze (§8.5, Rev.10).
+      const isChoice = challenge.inputKind === "choice";
+      if (isChoice) setQIndex((i) => i + 1);
       setGivenAnswer("");
       setLockedOut(true);
       setTimeout(() => {
         setLockedOut(false);
         inputRef.current?.focus();
-      }, WRONG_ANSWER_LOCKOUT_MS);
+      }, isChoice ? WRONG_CHOICE_LOCKOUT_MS : WRONG_ANSWER_LOCKOUT_MS);
     }
   }
 
@@ -333,6 +336,25 @@ export default function JumpScreen({
                 onPointerDown={() => submitAnswer("")}>
                 {question.prompt}
               </button>
+            ) : challenge.inputKind === "choice" && question.choices ? (
+              <div className="flex flex-col items-center gap-3">
+                <div className="text-4xl font-bold">{question.prompt} = ?</div>
+                <div className="flex flex-wrap justify-center gap-3">
+                  {question.choices.map((choice) => (
+                    <button key={choice} type="button"
+                      className="btn min-w-24 px-8 py-4 text-2xl"
+                      disabled={lockedOut}
+                      onClick={() => submitAnswer(choice)}>
+                      {choice}
+                    </button>
+                  ))}
+                </div>
+                {lockedOut && (
+                  <div className="text-sm" style={{ color: "#f87171" }}>
+                    Not quite — here's a fresh one…
+                  </div>
+                )}
+              </div>
             ) : (
               <form onSubmit={(e) => { e.preventDefault(); submitAnswer(givenAnswer); }}
                 className="flex flex-col items-center gap-3">
