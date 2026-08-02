@@ -27,9 +27,13 @@ export const SPRITE_RATE_WINDOW_MS = 2000;
 export const SPRITE_RATE_MIN = 0.35;
 export const SPRITE_RATE_MAX = 2.5;
 
-/** Track presentation. */
-export const ARENA_PET_DISPLAY_SIZE_PX = 96;
-export const LANE_HEIGHT_PX = 116;
+/** Track presentation. Sprite size is a REALISM knob, not taste (owner call
+ *  2026-08-02): at 96px a cat spanned ~12 of a 110 m course's metres — as
+ *  long as the gap between hurdles — so every jump read wrong. 64px puts a
+ *  runner at ~7 "metres", small enough that obstacles and marks mean
+ *  something against its body. */
+export const ARENA_PET_DISPLAY_SIZE_PX = 64;
+export const LANE_HEIGHT_PX = 88;
 export const TRACK_EDGE_PADDING_PX = 16;
 
 /** Distance markings on the track (owner ask: "he can be on the 40"): the
