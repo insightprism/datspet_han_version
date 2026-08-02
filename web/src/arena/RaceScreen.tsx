@@ -80,6 +80,7 @@ export default function RaceScreen({
       label: lane.label,
       handicapName: lane.handicapName,
       racingPose: lane.racingPose,
+      stats: lane.stats,
       integrator: new LaneIntegrator(event, lane.stats, lane.handicap,
         raceSeed, laneOffset + i),
       log: laneLogs[i],

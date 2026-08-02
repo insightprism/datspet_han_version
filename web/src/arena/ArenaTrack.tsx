@@ -21,12 +21,14 @@
 
 import { useEffect, useRef } from "react";
 import { applyTransform, getDisplayFrame, getPet, setAnim, setBgPos } from "@/pet";
+import type { AthleticsStats } from "./athletics";
 import {
   ARENA_PET_DISPLAY_SIZE_PX, LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN,
   SPRITE_RATE_WINDOW_MS, TRACK_EDGE_PADDING_PX,
 } from "./constants";
 import type { LaneIntegrator, Impulse } from "./raceEngine";
 import { recentAnswerRate } from "./raceEngine";
+import StatBars from "./StatBars";
 
 export interface TrackLane {
   storeId: string;
@@ -34,6 +36,9 @@ export interface TrackLane {
   /** Shown on the lane — a hidden handicap is the failure §8.3.1 forbids. */
   handicapName: string;
   racingPose: string;
+  /** The stats this lane races with (§16.6 — visible everywhere the entrant
+   *  is: the pick card, the lane, the results row). */
+  stats: AthleticsStats;
   /** The lane's integrator, owned by the parent and rebuilt per run. */
   integrator: LaneIntegrator;
   /** The live (or recorded) impulse log. Parent appends; track only reads. */
@@ -177,6 +182,12 @@ export default function ArenaTrack({ lanes, distanceM, raceClock, onLaneFinish }
                 🚀 {lane.handicapName.replace(/_/g, " ")}
               </span>
             )}
+          </div>
+          {/* Lane furniture, behind the runner (the sprite is later in DOM
+              order): the numbers this lane races with, §16.6. */}
+          <div className="pointer-events-none absolute left-2 w-44"
+            style={{ top: 16, opacity: 0.75 }}>
+            <StatBars stats={lane.stats} />
           </div>
           {/* The finish line. */}
           <div className="absolute bottom-0 top-0"
