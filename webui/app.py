@@ -1822,6 +1822,31 @@ def pet_manifest(pet_id: str, request: Request):
                     headers={"Cache-Control": _IMMUTABLE_ASSET_CACHE})
 
 
+# Owner ask (2026-08-02): children name their pets. The stored value is the
+# FIRST name only; the frontend composes "«name» «animal»" ("Joe Leopard").
+# Bounded so a name stays a name, not a paragraph.
+PET_NAME_MAX_CHARS = 24
+
+
+@app.post("/api/pets/{pet_id}/name")
+def rename_pet(pet_id: str, request: Request, payload: dict = Body(...)):
+    """Set or clear the caller's name for their pet. An empty name clears it —
+    the pet falls back to its breed display name. 404 if the pet isn't the
+    caller's (same scope rule as keep/delete)."""
+    if not pet_id.isalnum():
+        raise HTTPException(404, "pet not found")
+    raw = payload.get("name", "")
+    if not isinstance(raw, str):
+        raise HTTPException(422, "name must be a string")
+    name = " ".join(raw.split())   # collapse runs of whitespace, trim ends
+    if len(name) > PET_NAME_MAX_CHARS:
+        raise HTTPException(422, f"name is capped at {PET_NAME_MAX_CHARS} characters")
+    owner = owner_scope.require_owner(request)
+    if not db.rename_pet(pet_id, name or None, external_user_id=owner):
+        raise HTTPException(404, "pet not found")
+    return {"id": pet_id, "pet_name": name or None}
+
+
 @app.delete("/api/pets/{pet_id}")
 def delete_pet(pet_id: str, request: Request):
     """Remove a pet from the house permanently. 404 if it isn't a stored pet

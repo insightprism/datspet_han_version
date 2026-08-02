@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { listPets, petManifestUrl } from "@/lib/api";
+import { composePetName } from "@/lib/petName";
 import PetThumbnail from "@/components/PetThumbnail";
 import {
   deriveIdentityNudges, qualifies, resolveAthletics, unsatisfiedClauses,
@@ -80,7 +81,8 @@ export default function SetupScreen({ onStart }: Props) {
           const manifest: AthleticsManifest = await r.json();
           const info: ArenaPetInfo = {
             id: s.id,
-            label: s.display_name,
+            // "Joe Leopard" — the child's name for the pet, if they gave one.
+            label: composePetName(s),
             manifest,
             poses: Object.keys(manifest.animations ?? {}),
             // The real numbers, id-nudges included (§3.4 Rev.7) — the bars a

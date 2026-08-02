@@ -238,6 +238,13 @@ def init_db() -> None:
         pet_cols = {r["name"] for r in conn.execute("PRAGMA table_info(pets)")}
         if "source_store_pet_id" not in pet_cols:
             conn.execute("ALTER TABLE pets ADD COLUMN source_store_pet_id TEXT")
+        # Pet naming (owner ask 2026-08-02): the child's own FIRST name for the
+        # pet; display composes "«pet_name» «animal»" ("Joe Leopard") at read
+        # time. NULL = unnamed → the breed display_name shows as before. A
+        # rename never rewrites display_name, the bundle, or anything the DPP
+        # export reads — the bundle stays immutable.
+        if "pet_name" not in pet_cols:
+            conn.execute("ALTER TABLE pets ADD COLUMN pet_name TEXT")
         # SPEC_PET_STORE §1.4 — the shelf lifecycle replaces the `published`
         # boolean. One-shot and guarded on the column's absence, so it is a
         # no-op on every boot after the first. `published` is DROPPED rather
@@ -470,7 +477,7 @@ def list_saved_pets(external_user_id: Optional[str] = None) -> list[dict]:
     clause, params = _scope_clause(external_user_id)
     with _lock:
         rows = _connect().execute(
-            f"""SELECT id, breed_id, display_name, created_at,
+            f"""SELECT id, breed_id, display_name, pet_name, created_at,
                        writeback_acked_at, external_user_id, manifest_json
                     FROM pets
                 WHERE draft=0 AND {clause}
@@ -545,6 +552,21 @@ def keep_pet(pet_id: str, external_user_id: Optional[str] = None) -> Optional[di
             "SELECT id, breed_id, display_name, created_at, draft FROM pets WHERE id=?",
             (pet_id,)).fetchone()
     return dict(row) if row else None
+
+
+def rename_pet(pet_id: str, pet_name: Optional[str],
+               external_user_id: Optional[str] = None) -> bool:
+    """Set (or clear, with None) the owner's name for a pet the caller may
+    access. False if absent OR not the caller's. Stores the FIRST name only —
+    the frontend composes "«pet_name» «animal»" at display time."""
+    clause, params = _scope_clause(external_user_id)
+    with _lock:
+        conn = _connect()
+        cur = conn.execute(
+            f"UPDATE pets SET pet_name=? WHERE id=? AND {clause}",
+            (pet_name, pet_id, *params))
+        conn.commit()
+        return cur.rowcount > 0
 
 
 def delete_pet(pet_id: str, external_user_id: Optional[str] = None) -> bool:

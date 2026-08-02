@@ -58,6 +58,9 @@ export interface PetSummary {
   id: string;
   breed_id: string;
   display_name: string;
+  // The owner's FIRST name for the pet (null = unnamed). Display composes
+  // "«pet_name» «animal»" via lib/petName.composePetName.
+  pet_name: string | null;
   created_at: number;
   // Already in the caller's DatsMe house — stamped by the host's post-import ack.
   // Information, not a gate: re-importing is free and updates in place
@@ -1037,6 +1040,22 @@ export async function keepPet(petId: string): Promise<void> {
     const data = await r.json().catch(() => ({}));
     throw new Error(data.detail || "Could not save the pet");
   }
+}
+
+export async function renamePet(
+  petId: string, name: string,
+): Promise<{ id: string; pet_name: string | null }> {
+  const r = await apiFetch(`${API_URL}/api/pets/${encodeURIComponent(petId)}/name`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.detail || "Could not rename the pet");
+  }
+  return r.json();
 }
 
 export async function deletePet(petId: string): Promise<void> {

@@ -12,6 +12,7 @@ import {
   listMyDonations,
   listPets,
   petZipUrl,
+  renamePet,
   type DatsmeSession,
   type Donation,
   type Entitlement,
@@ -22,6 +23,7 @@ import PetStage from "@/components/PetStage";
 import PetThumbnail from "@/components/PetThumbnail";
 import ConfirmModal from "@/components/ConfirmModal";
 import { HOUSE_NAME } from "@/lib/houseCopy";
+import { composePetName } from "@/lib/petName";
 import { canBeThanked as canBeThankedFor, canOfferDonate } from "./donateVisibility";
 
 // On a phone, showing fewer pets per page is the memory fix that matters: each
@@ -98,6 +100,10 @@ export default function HousePage() {
   const [adopting, setAdopting] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Naming (owner design): inline first-name editor per card; display
+  // composes "«name» «animal»" via composePetName.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [nameDraft, setNameDraft] = useState("");
   const [petToRemove, setPetToRemove] = useState<PetSummary | null>(null);
   // Donating is FINAL (SPEC_PET_STORE §0.5), so it gets its own confirm rather
   // than sharing Remove's — the two dialogs have to say different things.
@@ -109,6 +115,18 @@ export default function HousePage() {
   const [page, setPage] = useState(0);
   const [tab, setTab] = useState<HouseTab>("all");
   const [isNarrow, setIsNarrow] = useState(false);
+
+  const saveRename = useCallback(async (pet: PetSummary) => {
+    setRenamingId(null);
+    try {
+      const res = await renamePet(pet.id, nameDraft);
+      setPets((cur) => cur
+        ? cur.map((p) => (p.id === pet.id ? { ...p, pet_name: res.pet_name } : p))
+        : cur);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not rename the pet");
+    }
+  }, [nameDraft]);
 
   const loadHouse = useCallback(() => {
     // Independent — fire together, don't chain.
@@ -453,9 +471,28 @@ export default function HousePage() {
                 <div className="mx-auto w-fit">
                   <PetThumbnail petId={p.id} size={88} />
                 </div>
-                <div className="mt-2 truncate text-sm" style={{ color: "var(--heading)" }}>
-                  {p.display_name}
-                </div>
+                {renamingId === p.id ? (
+                  <form className="mt-2 flex items-center justify-center gap-1"
+                    onSubmit={(e) => { e.preventDefault(); void saveRename(p); }}>
+                    <input autoFocus value={nameDraft} maxLength={24}
+                      onChange={(e) => setNameDraft(e.target.value)}
+                      placeholder="First name, e.g. Joe"
+                      className="input w-28"
+                      style={{ padding: "0.15rem 0.5rem", fontSize: 12 }} />
+                    <button type="submit" className="btn-ghost px-2 py-0.5 text-xs">✓</button>
+                  </form>
+                ) : (
+                  <div className="mt-2 flex items-center justify-center gap-1 text-sm"
+                    style={{ color: "var(--heading)" }}>
+                    <span className="truncate">{composePetName(p)}</span>
+                    <button type="button"
+                      className="text-xs opacity-50 transition hover:opacity-100"
+                      aria-label="Name this pet"
+                      onClick={() => { setRenamingId(p.id); setNameDraft(p.pet_name ?? ""); }}>
+                      ✏️
+                    </button>
+                  </div>
+                )}
                 <div className="mono mt-0.5 truncate text-[11px]" style={{ color: "var(--faint)" }}>
                   {p.breed_id}
                 </div>
@@ -547,13 +584,13 @@ export default function HousePage() {
 
           {/* Only THIS page's pets are alive — mounting all of them is the memory
               blowout we're avoiding. Fixed to the viewport floor by the engine. */}
-          <PetStage pets={pagedPets.map((p) => ({ id: p.id, display_name: p.display_name }))} />
+          <PetStage pets={pagedPets.map((p) => ({ id: p.id, display_name: composePetName(p) }))} />
         </>
       )}
 
       <ConfirmModal
         open={petToDonate !== null}
-        title={`Donate ${petToDonate?.display_name ?? "this pet"} to the Pet Store?`}
+        title={`Donate ${petToDonate ? composePetName(petToDonate) : "this pet"} to the Pet Store?`}
         body={canBeThanked
           ? "This is permanent. The pet leaves your house for good and you cannot get it back — like giving something to a charity shop. DatsMe thanks you with social points."
           : "This is permanent. The pet leaves your house for good and you cannot get it back — like giving something to a charity shop. You have not allowed DatsMe to thank you for donations, so this one earns no social points. You can still donate to free up space."}
@@ -572,7 +609,7 @@ export default function HousePage() {
 
       <ConfirmModal
         open={petToRemove !== null}
-        title={`Remove ${petToRemove?.display_name ?? "this pet"}?`}
+        title={`Remove ${petToRemove ? composePetName(petToRemove) : "this pet"}?`}
         body="It disappears from the house and its bundle is deleted from this machine. This can't be undone (though you can always generate a similar one)."
         confirmLabel="Remove pet"
         onConfirm={confirmRemove}
