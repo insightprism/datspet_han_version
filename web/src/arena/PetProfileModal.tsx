@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import ModalOverlay from "@/components/ModalOverlay";
 import PosePlayer from "@/components/PosePlayer";
+import { renamePet } from "@/lib/api";
 import type { ArenaPetInfo } from "./gameTypes";
 import StatBars from "./StatBars";
 
@@ -24,17 +25,36 @@ interface Props {
   /** The pet whose profile is open, or null = closed. */
   pet: ArenaPetInfo | null;
   onClose: () => void;
+  /** Called after a successful rename so the owner list recomposes labels. */
+  onRenamed?: (petId: string, petName: string | null) => void;
 }
 
-export default function PetProfileModal({ pet, onClose }: Props) {
+export default function PetProfileModal({ pet, onClose, onRenamed }: Props) {
   const [poseIndex, setPoseIndex] = useState(0);
   const [playing, setPlaying] = useState(true);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
 
-  // A fresh pet starts its tour from the first pose, playing.
+  // A fresh pet starts its tour from the first pose, playing, not editing.
   useEffect(() => {
     setPoseIndex(0);
     setPlaying(true);
+    setEditingName(false);
+    setRenameError(null);
   }, [pet?.id]);
+
+  async function saveRename() {
+    if (!pet) return;
+    setEditingName(false);
+    try {
+      const res = await renamePet(pet.id, nameDraft);
+      setRenameError(null);
+      onRenamed?.(pet.id, res.pet_name);
+    } catch (e) {
+      setRenameError(e instanceof Error ? e.message : "Could not rename the pet");
+    }
+  }
 
   const poses = pet?.poses ?? [];
   useEffect(() => {
@@ -56,10 +76,31 @@ export default function PetProfileModal({ pet, onClose }: Props) {
               This pet has no poses to play.
             </div>
           )}
-          <h3 id="pet-profile-title" className="text-lg font-semibold"
-            style={{ color: "var(--heading)" }}>
-            {pet.label}
-          </h3>
+          {editingName ? (
+            <form className="flex items-center gap-1"
+              onSubmit={(e) => { e.preventDefault(); void saveRename(); }}>
+              <input autoFocus value={nameDraft} maxLength={24}
+                onChange={(e) => setNameDraft(e.target.value)}
+                placeholder="First name, e.g. Joe"
+                className="input w-40"
+                style={{ padding: "0.25rem 0.5rem", fontSize: 14 }} />
+              <button type="submit" className="btn-ghost px-2 py-1 text-xs">✓</button>
+            </form>
+          ) : (
+            <h3 id="pet-profile-title"
+              className="flex items-center gap-1.5 text-lg font-semibold"
+              style={{ color: "var(--heading)" }}>
+              {pet.label}
+              <button type="button" aria-label="Name this pet"
+                className="text-sm opacity-50 transition hover:opacity-100"
+                onClick={() => { setEditingName(true); setNameDraft(pet.pet_name ?? ""); }}>
+                ✏️
+              </button>
+            </h3>
+          )}
+          {renameError && (
+            <div className="text-xs" style={{ color: "#f87171" }}>{renameError}</div>
+          )}
           {/* The chip list doubles as the tour's progress readout — you can
               see WHICH pose you are watching (the store card's pattern). */}
           {poses.length > 0 && (

@@ -12,7 +12,7 @@
  * and a hidden stat is indistinguishable from a random one.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { listPets, petManifestUrl } from "@/lib/api";
 import { composePetName } from "@/lib/petName";
@@ -72,7 +72,9 @@ export default function SetupScreen({ onStart }: Props) {
   const [playerTwoHandicap, setPlayerTwoHandicap] = useState("none");
   // The animated profile (owner ask): clicking your already-selected athlete
   // opens it — the card is a <button>, so a nested trigger is not an option.
-  const [profilePet, setProfilePet] = useState<ArenaPetInfo | null>(null);
+  // Stored by ID and derived from the list, so a rename inside the modal
+  // updates the open profile and the card behind it in one state change.
+  const [profilePetId, setProfilePetId] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -87,6 +89,8 @@ export default function SetupScreen({ onStart }: Props) {
             id: s.id,
             // "Joe Leopard" — the child's name for the pet, if they gave one.
             label: composePetName(s),
+            display_name: s.display_name,
+            pet_name: s.pet_name,
             manifest,
             poses: Object.keys(manifest.animations ?? {}),
             // The real numbers, id-nudges included (§3.4 Rev.7) — the bars a
@@ -102,6 +106,18 @@ export default function SetupScreen({ onStart }: Props) {
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  const profilePet = pets?.find((p) => p.id === profilePetId) ?? null;
+
+  const applyRename = useCallback((petId: string, petName: string | null) => {
+    setPets((cur) => cur === null ? cur : cur.map((p) => p.id === petId
+      ? {
+          ...p,
+          pet_name: petName,
+          label: composePetName({ pet_name: petName, display_name: p.display_name }),
+        }
+      : p));
   }, []);
 
   const event: ArenaEventDecl = useMemo(
@@ -217,7 +233,7 @@ export default function SetupScreen({ onStart }: Props) {
                   // First click selects; a click on the already-selected
                   // athlete opens the animated profile (owner ask) — the
                   // card is itself a button, so no nested ▶ trigger.
-                  if (playerOnePetId === p.id) setProfilePet(p);
+                  if (playerOnePetId === p.id) setProfilePetId(p.id);
                   else setPlayerOnePetId(p.id);
                 }}
                 className="card p-2 text-left"
@@ -321,7 +337,8 @@ export default function SetupScreen({ onStart }: Props) {
         </div>
       </section>
 
-      <PetProfileModal pet={profilePet} onClose={() => setProfilePet(null)} />
+      <PetProfileModal pet={profilePet} onClose={() => setProfilePetId(null)}
+        onRenamed={applyRename} />
 
       <button type="button" className="btn self-start px-8 py-3 text-lg"
         disabled={!startable}

@@ -11,7 +11,12 @@ import type { AthleticsManifest, AthleticsStats } from "./athletics";
  *  are the REAL numbers the race will use. */
 export interface ArenaPetInfo {
   id: string;
+  /** Composed display: "«pet_name» «animal»", or the breed name when unnamed. */
   label: string;
+  /** The breed display name — the surname source for composition. */
+  display_name: string;
+  /** The owner's first name for the pet (null = unnamed). */
+  pet_name: string | null;
   manifest: AthleticsManifest;
   poses: string[];
   previewStats: AthleticsStats;
