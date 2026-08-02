@@ -61,7 +61,15 @@ export const ATTEMPT_REST_S = 6;
 /** Jump-lane presentation: how many metres the landing pit represents, and
  *  how long the leap moment lingers before the next run-up. */
 export const JUMP_PIT_DISPLAY_MAX_M = 16;
-export const HURDLE_HOP_WINDOW_M = 2.5;
+
+/** The hurdle obstacle, in SCREEN space (owner design, 2026-08-02): the jump
+ *  pose triggers by collision — a hidden trigger line a few px in front of
+ *  the obstacle; the pose holds while the obstacle is under the runner and
+ *  releases when the tail clears it. Screen-space, not metre-windows, so the
+ *  leap can never drift from where the obstacle is drawn. The glyph is
+ *  ~half the runner's height — hip-height, like a real hurdle. */
+export const HURDLE_GLYPH_PX = 28;
+export const HURDLE_TRIGGER_LEAD_PX = 6;
 
 /** Rev.9 — the JUMP color: what the challenge panel wears while the lane is
  *  parked at a hurdle and the question is one rung harder. Amber, distinct

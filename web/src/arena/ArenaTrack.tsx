@@ -22,8 +22,8 @@
 import { useEffect, useRef } from "react";
 import { applyTransform, getDisplayFrame, getPet, setAnim, setBgPos } from "@/pet";
 import {
-  ARENA_PET_DISPLAY_SIZE_PX, HURDLE_HOP_WINDOW_M, LANE_HEIGHT_PX,
-  SPRITE_RATE_MAX, SPRITE_RATE_MIN, SPRITE_RATE_WINDOW_MS,
+  ARENA_PET_DISPLAY_SIZE_PX, HURDLE_GLYPH_PX, HURDLE_TRIGGER_LEAD_PX,
+  LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN, SPRITE_RATE_WINDOW_MS,
   TRACK_EDGE_PADDING_PX, TRACK_MARK_MAX_COUNT, TRACK_MARK_STEPS_M,
 } from "./constants";
 import type { LaneIntegrator, Impulse } from "./raceEngine";
@@ -160,14 +160,25 @@ export default function ArenaTrack({
             `${Math.floor(lane.integrator.distanceM)} / ${distanceM} m`;
         }
 
-        // Hurdles (§6.6, presentation): the runner plays its hop pose while
-        // crossing a mark, its racing pose between them. Never after finish.
+        // Hurdles (§6.6, owner's collision design): the jump pose triggers in
+        // SCREEN space — a hidden trigger line just before each obstacle. It
+        // fires when the nose crosses the line and releases when the tail
+        // clears the obstacle, so the leap can never drift from where the
+        // obstacle is drawn. Never after finish.
         if (hurdlesEveryM && t !== null && !lane.integrator.finished) {
-          const sinceHurdle = lane.integrator.distanceM % hurdlesEveryM;
-          const nearHurdle = lane.integrator.distanceM > 1 && (
-            sinceHurdle < HURDLE_HOP_WINDOW_M
-            || hurdlesEveryM - sinceHurdle < HURDLE_HOP_WINDOW_M);
-          const wanted = nearHurdle && lane.hopPose ? lane.hopPose : lane.racingPose;
+          const noseX = pet.instance.x + ARENA_PET_DISPLAY_SIZE_PX;
+          const tailX = pet.instance.x;
+          const noseOffset = TRACK_EDGE_PADDING_PX + ARENA_PET_DISPLAY_SIZE_PX;
+          let overObstacle = false;
+          for (let d = hurdlesEveryM; d < distanceM; d += hurdlesEveryM) {
+            const obstacleX = noseOffset + (d / distanceM) * usable;
+            if (noseX >= obstacleX - HURDLE_TRIGGER_LEAD_PX
+                && tailX <= obstacleX + HURDLE_GLYPH_PX) {
+              overObstacle = true;
+              break;
+            }
+          }
+          const wanted = overObstacle && lane.hopPose ? lane.hopPose : lane.racingPose;
           if (pet.anim !== wanted) setAnim(pet, wanted);
         }
 
@@ -250,10 +261,14 @@ export default function ArenaTrack({
               </span>
             </div>
           ))}
-          {/* Hurdle marks (§6.6) — same nose-aligned mapping as the numbers. */}
+          {/* Hurdle obstacles (§6.6) — same nose-aligned mapping as the
+              numbers; hip-height against the runner (owner proportion call). */}
           {hurdlesEveryM && trackMarksEvery(distanceM, hurdlesEveryM).map((d) => (
-            <div key={`h${d}`} className="pointer-events-none absolute bottom-1 text-sm"
-              style={{ left: markLeftCss(d, distanceM), opacity: 0.5 }}>
+            <div key={`h${d}`} className="pointer-events-none absolute"
+              style={{
+                left: markLeftCss(d, distanceM), bottom: 2,
+                fontSize: HURDLE_GLYPH_PX, lineHeight: 1, opacity: 0.65,
+              }}>
               🚧
             </div>
           ))}
