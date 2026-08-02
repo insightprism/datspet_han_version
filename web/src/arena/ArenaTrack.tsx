@@ -26,9 +26,10 @@ import { useEffect, useRef } from "react";
 import { applyTransform, getDisplayFrame, getPet, setAnim, setBgPos } from "@/pet";
 import {
   APPARENT_SPEED_BASE_M_S, ARENA_PET_DISPLAY_SIZE_PX, CAMERA_ANCHOR_FRACTION,
-  DISPLAY_CHASE_TAU_MS, DISPLAY_MIN_CREEP_M_S, HURDLE_GLYPH_PX,
-  HURDLE_TRIGGER_LEAD_PX, LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN,
-  TRACK_EDGE_PADDING_PX, TRACK_SCROLL_MARK_STEP_M, VIEWPORT_TRACK_METERS,
+  DISPLAY_CHASE_TAU_MS, DISPLAY_MAX_CHASE_M_S, DISPLAY_MIN_CREEP_M_S,
+  HURDLE_HEIGHT_PX, HURDLE_TRIGGER_LEAD_PX, HURDLE_WIDTH_PX, LANE_HEIGHT_PX,
+  SPRITE_RATE_MAX, SPRITE_RATE_MIN, TRACK_EDGE_PADDING_PX,
+  TRACK_SCROLL_MARK_STEP_M, VIEWPORT_TRACK_METERS,
 } from "./constants";
 import type { LaneIntegrator, Impulse } from "./raceEngine";
 
@@ -41,6 +42,12 @@ export interface TrackLane {
   /** Hurdle events (§6.6): the pose played over an obstacle — the first
    *  owned of jump/play, per the qualification's alternatives. */
   hopPose?: string;
+  /** Rev.11: the tumble pose after a crash — first owned of sleep/sit/idle. */
+  fallenPose?: string;
+  /** Rev.11: the screen writes performance.now()+CRASH_FX_MS here on a crash;
+   *  the driver shows the tumble + 💥 while now < value. Mutable ref so no
+   *  re-render is needed mid-race. */
+  crashFxRef?: { current: number };
   /** The lane's integrator, owned by the parent and rebuilt per run. */
   integrator: LaneIntegrator;
   /** The live (or recorded) impulse log. Parent appends; track only reads. */
@@ -81,6 +88,7 @@ export default function ArenaTrack({
   const worldElsRef = useRef<(HTMLDivElement | null)[]>([]);
   const spriteElsRef = useRef<(HTMLDivElement | null)[]>([]);
   const progressElsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const crashElsRef = useRef<(HTMLDivElement | null)[]>([]);
   /** Per-lane chase-smoothed distance — the DRAWN position. */
   const displayMRef = useRef<number[]>([]);
   const finishedRef = useRef<boolean[]>([]);
@@ -157,7 +165,9 @@ export default function ArenaTrack({
         // when truly caught up (a parked gate must read as parked).
         let step = gap * chase;
         if (gap > 0) {
-          step = Math.min(gap, Math.max(step, DISPLAY_MIN_CREEP_M_S * (rawDt / 1000)));
+          const minStep = DISPLAY_MIN_CREEP_M_S * (rawDt / 1000);
+          const maxStep = DISPLAY_MAX_CHASE_M_S * (rawDt / 1000);
+          step = Math.min(gap, Math.min(Math.max(step, minStep), maxStep));
         }
         const displayM = prevDisplay + step;
         displayMRef.current[i] = displayM;
@@ -180,19 +190,29 @@ export default function ArenaTrack({
 
         // Hurdle poses by collision (owner's hidden pixel), in world coords:
         // fire when the nose crosses the trigger line, release when the tail
-        // clears the obstacle. Never after finish.
+        // clears the obstacle. A crash (Rev.11) overrides both: the fallen
+        // pose + 💥 hold while the fx window is open. Never after finish.
+        const crashing = (lane.crashFxRef?.current ?? 0) > now;
+        const crashEl = crashElsRef.current[i];
+        if (crashEl) {
+          crashEl.style.display = crashing ? "block" : "none";
+          if (crashing) crashEl.style.left = `${pet.instance.x + ARENA_PET_DISPLAY_SIZE_PX - 18}px`;
+        }
         if (hurdlesEveryM && t !== null && !lane.integrator.finished) {
-          const tailWorld = noseWorld - ARENA_PET_DISPLAY_SIZE_PX;
-          let overObstacle = false;
-          for (let d = hurdlesEveryM; d < distanceM; d += hurdlesEveryM) {
-            const obstacleWorld = NOSE_HOME_PX + d * pxPerM;
-            if (noseWorld >= obstacleWorld - HURDLE_TRIGGER_LEAD_PX
-                && tailWorld <= obstacleWorld + HURDLE_GLYPH_PX) {
-              overObstacle = true;
-              break;
+          let wanted = lane.racingPose;
+          if (crashing) {
+            wanted = lane.fallenPose ?? lane.racingPose;
+          } else {
+            const tailWorld = noseWorld - ARENA_PET_DISPLAY_SIZE_PX;
+            for (let d = hurdlesEveryM; d < distanceM; d += hurdlesEveryM) {
+              const obstacleWorld = NOSE_HOME_PX + d * pxPerM;
+              if (noseWorld >= obstacleWorld - HURDLE_TRIGGER_LEAD_PX
+                  && tailWorld <= obstacleWorld + HURDLE_WIDTH_PX) {
+                wanted = lane.hopPose ?? lane.racingPose;
+                break;
+              }
             }
           }
-          const wanted = overObstacle && lane.hopPose ? lane.hopPose : lane.racingPose;
           if (pet.anim !== wanted) setAnim(pet, wanted);
         }
 
@@ -263,13 +283,26 @@ export default function ArenaTrack({
                 </span>
               </div>
             ))}
+            {/* Real athletics hurdles (Rev.11): white top board on two legs. */}
             {hurdlesEveryM && everyM(hurdlesEveryM, distanceM).map((d) => (
               <div key={`h${d}`} className="pointer-events-none absolute"
                 style={{
                   left: worldLeftCss(d), bottom: 2,
-                  fontSize: HURDLE_GLYPH_PX, lineHeight: 1, opacity: 0.65,
+                  width: HURDLE_WIDTH_PX, height: HURDLE_HEIGHT_PX,
                 }}>
-                🚧
+                <div style={{
+                  position: "absolute", top: 0, left: 0, right: 0, height: 7,
+                  background: "#f2f2f2", borderRadius: 1,
+                  boxShadow: "inset 0 -2px 0 #c9c9c9",
+                }} />
+                <div style={{
+                  position: "absolute", top: 5, bottom: 0, left: 2, width: 2,
+                  background: "#8a8a8a",
+                }} />
+                <div style={{
+                  position: "absolute", top: 5, bottom: 0, right: 2, width: 2,
+                  background: "#8a8a8a",
+                }} />
               </div>
             ))}
             {/* The finish line. */}
@@ -301,6 +334,11 @@ export default function ArenaTrack({
             className="mono absolute right-2 top-1 text-[10px] tabular-nums"
             style={{ color: "var(--muted)" }}>
             0 / {distanceM} m
+          </div>
+          <div ref={(el) => { crashElsRef.current[i] = el; }}
+            className="pointer-events-none absolute text-2xl"
+            style={{ display: "none", bottom: LANE_HEIGHT_PX - 40 }}>
+            💥
           </div>
 
           <div

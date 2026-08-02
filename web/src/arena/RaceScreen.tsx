@@ -18,8 +18,8 @@ import {
   harderRung, questionAt, type ArenaChallenge,
 } from "./challenges/registry";
 import {
-  COUNTDOWN_SECONDS, HURDLE_JUMP_ACCENT, HURDLE_JUMP_ACCENT_BG,
-  WRONG_ANSWER_LOCKOUT_MS, WRONG_CHOICE_LOCKOUT_MS,
+  COUNTDOWN_SECONDS, CRASH_FX_MS, HURDLE_CRASHES_TO_DQ, HURDLE_JUMP_ACCENT,
+  HURDLE_JUMP_ACCENT_BG, WRONG_ANSWER_LOCKOUT_MS, WRONG_CHOICE_LOCKOUT_MS,
 } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
 import type { LoadedRacer, RunAccuracy } from "./gameTypes";
@@ -65,6 +65,11 @@ export default function RaceScreen({
   const humanLogRef = useRef<Impulse[]>([]);
   // Wrongs counted here; rights ARE the log length (§7.1).
   const wrongCountRef = useRef(0);
+  // Rev.11: wrong answers AT a gate are crashes; three disqualify.
+  const crashCountRef = useRef(0);
+  const [crashCount, setCrashCount] = useState(0);
+  const crashFxRefs = useRef(lanes.map(() => ({ current: 0 })));
+  const dqRef = useRef(false);
   const doneRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -89,6 +94,8 @@ export default function RaceScreen({
       handicapName: lane.handicapName,
       racingPose: lane.racingPose,
       hopPose: ["jump", "play"].find((p) => lane.stats.poses.includes(p)),
+      fallenPose: ["sleep", "sit", "idle"].find((p) => lane.stats.poses.includes(p)),
+      crashFxRef: crashFxRefs.current[i],
       integrator: new LaneIntegrator(event, lane.stats, lane.handicap,
         raceSeed, laneOffset + i),
       log: laneLogs[i],
@@ -131,7 +138,8 @@ export default function RaceScreen({
       if (t >= event.time_limit_s * 1000 && !doneRef.current) {
         doneRef.current = true;
         onDone(humanLogRef.current,
-          { right: humanLogRef.current.length, wrong: wrongCountRef.current });
+          { right: humanLogRef.current.length, wrong: wrongCountRef.current,
+            crashes: crashCountRef.current, disqualified: dqRef.current });
       }
     }, 100);
     return () => clearInterval(interval);
@@ -142,7 +150,8 @@ export default function RaceScreen({
     if (!doneRef.current) {
       doneRef.current = true;
       onDone(humanLogRef.current,
-        { right: humanLogRef.current.length, wrong: wrongCountRef.current });
+        { right: humanLogRef.current.length, wrong: wrongCountRef.current,
+          crashes: crashCountRef.current, disqualified: dqRef.current });
     }
   }, [onDone]);
 
@@ -164,7 +173,7 @@ export default function RaceScreen({
   }, [finishedLanes, lanes.length, humanLaneIndex, phase, finish]);
 
   function submitAnswer(given: string) {
-    if (phase !== "racing" || lockedOut || !question) return;
+    if (phase !== "racing" || lockedOut || dqRef.current || !question) return;
     const t = raceClock();
     if (t === null) return;
     if (challenge.check(given, question.answer)) {
@@ -178,6 +187,22 @@ export default function RaceScreen({
       // way to the answer; every guess is a fresh 1-in-3 (§8.5).
       const isChoice = challenge.inputKind === "choice";
       wrongCountRef.current += 1;
+      // Rev.11 — a wrong answer AT the gate is hitting the hurdle: tumble,
+      // count it, and the third crash disqualifies on the spot.
+      if (atHurdle && event.hurdles_every_m) {
+        crashCountRef.current += 1;
+        setCrashCount(crashCountRef.current);
+        const fx = crashFxRefs.current[humanLaneIndex];
+        if (fx) fx.current = performance.now() + CRASH_FX_MS;
+        if (crashCountRef.current >= HURDLE_CRASHES_TO_DQ) {
+          // The third crash ends it — lock input NOW so nothing lands during
+          // the tumble, show the fall, then to the results.
+          dqRef.current = true;
+          setLockedOut(true);
+          setTimeout(finish, CRASH_FX_MS);
+          return;
+        }
+      }
       if (isChoice) setQIndex((i) => i + 1);
       setGivenAnswer("");
       setLockedOut(true);
@@ -199,6 +224,7 @@ export default function RaceScreen({
               anyone — a race that just stops reads as a bug. */}
           <span className="mono text-sm" style={{ color: "var(--muted)" }}>
             {clockDisplay.toFixed(1)} / {event.time_limit_s} s · {answeredCount} answered
+            {event.hurdles_every_m ? ` · 💥 ${crashCount}/${HURDLE_CRASHES_TO_DQ}` : ""}
           </span>
           {phase === "racing" && (
             <button type="button" className="btn-ghost text-xs" onClick={finish}>

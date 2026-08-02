@@ -77,6 +77,7 @@ export default function ResultsScreen({
     lanes.forEach((lane, i) => {
       const r = results[i];
       if (lane.kind !== "human" || !r.finished || r.finish_ms === null) return;
+      if (accuracies[i]?.disqualified) return;  // a DQ sets no best (Rev.11)
       const key = bestKey(event.key, challenge.key, difficulty, lane.handicapName);
       outcomes[i] = recordResultSeconds(window.localStorage, key, r.finish_ms / 1000);
     });
@@ -105,9 +106,12 @@ export default function ResultsScreen({
     }));
   }, [recapping, lanes, logs, event, raceSeed]);
 
+  // Rev.11: disqualified lanes rank below every finisher and non-finisher —
+  // a DQ is not a slow race, it is no race.
   const ordered = useMemo(() =>
-    results.map((r, i) => ({ ...r, lane: i })).sort((a, b) => a.place - b.place),
-  [results]);
+    results.map((r, i) => ({ ...r, lane: i, dq: !!accuracies[i]?.disqualified }))
+      .sort((a, b) => (Number(a.dq) - Number(b.dq)) || (a.place - b.place)),
+  [results, accuracies]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -122,7 +126,9 @@ export default function ResultsScreen({
               className="flex flex-wrap items-baseline justify-between gap-2 border-b border-white/5 pb-2 last:border-b-0">
               <div className="flex flex-col">
                 <div className="flex items-baseline gap-2">
-                  <span className="text-2xl">{MEDALS[r.place - 1] ?? `#${r.place}`}</span>
+                  <span className="text-2xl">
+                    {r.dq ? "💥" : MEDALS[ordered.indexOf(r)] ?? `#${ordered.indexOf(r) + 1}`}
+                  </span>
                   <span className="font-semibold">{lane.label}</span>
                   {lane.handicapName !== "none" && (
                     <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
@@ -136,10 +142,12 @@ export default function ResultsScreen({
                 <StatBars stats={lane.stats} className="ml-9 w-44" />
               </div>
               <div className="text-right">
-                <span className="mono">
-                  {r.finished && r.finish_ms !== null
-                    ? `${(r.finish_ms / 1000).toFixed(1)} s`
-                    : `${r.distance_m.toFixed(0)} m of ${event.distance_m} m`}
+                <span className="mono" style={r.dq ? { color: "#f87171" } : undefined}>
+                  {r.dq
+                    ? `Disqualified — ${accuracies[r.lane]?.crashes ?? 0} crashes`
+                    : r.finished && r.finish_ms !== null
+                      ? `${(r.finish_ms / 1000).toFixed(1)} s`
+                      : `${r.distance_m.toFixed(0)} m of ${event.distance_m} m`}
                 </span>
                 {best && (
                   <div className="text-xs" style={{ color: "var(--green)" }}>

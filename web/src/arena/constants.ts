@@ -54,6 +54,11 @@ export const DISPLAY_CHASE_TAU_MS = 800;
  *  the roll between surges. It still stops dead when fully caught up (a
  *  parked hurdle gate must read as parked). */
 export const DISPLAY_MIN_CREEP_M_S = 0.35;
+/** …and never faster than this (Rev.11, "move consistently"): the chase is
+ *  velocity-BANDED, so a burst of answers reads as steady fast rolling, not a
+ *  rubber-band spike. The band converges — max is well above any sustainable
+ *  earning rate. */
+export const DISPLAY_MAX_CHASE_M_S = 3.2;
 /** Apparent m/s that maps to 1× leg speed. */
 export const APPARENT_SPEED_BASE_M_S = 2.0;
 
@@ -81,10 +86,17 @@ export const JUMP_PIT_DISPLAY_MAX_M = 16;
  *  pose triggers by collision — a hidden trigger line a few px in front of
  *  the obstacle; the pose holds while the obstacle is under the runner and
  *  releases when the tail clears it. Screen-space, not metre-windows, so the
- *  leap can never drift from where the obstacle is drawn. The glyph is
- *  ~half the runner's height — hip-height, like a real hurdle. */
-export const HURDLE_GLYPH_PX = 28;
+ *  leap can never drift from where the obstacle is drawn. Drawn like a real
+ *  athletics hurdle (Rev.11): white top board on two legs, hip-height
+ *  against the runner. */
+export const HURDLE_HEIGHT_PX = 28;
+export const HURDLE_WIDTH_PX = 20;
 export const HURDLE_TRIGGER_LEAD_PX = 6;
+
+/** Rev.11 (owner rule): a wrong answer while parked at a gate IS hitting the
+ *  hurdle. The pet tumbles for CRASH_FX_MS; the third crash disqualifies. */
+export const HURDLE_CRASHES_TO_DQ = 3;
+export const CRASH_FX_MS = 1400;
 
 /** Rev.9 — the JUMP color: what the challenge panel wears while the lane is
  *  parked at a hurdle and the question is one rung harder. Amber, distinct

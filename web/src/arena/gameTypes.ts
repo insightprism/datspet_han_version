@@ -48,8 +48,12 @@ export interface LoadedRacer extends RacerConfig {
 
 /** A human run's answer tally (owner ask, 2026-08-02): rights are the impulse
  *  log's length by definition (§7.1 — a wrong emits nothing), wrongs are
- *  counted by the screen. Results show "✓ 18 · ✗ 4 · 82% right". */
+ *  counted by the screen. Results show "✓ 18 · ✗ 4 · 82% right".
+ *  Rev.11: crashes (wrong answers AT a hurdle gate) ride along, and three of
+ *  them set `disqualified` — a screen outcome, never encoded in the log. */
 export interface RunAccuracy {
   right: number;
   wrong: number;
+  crashes?: number;
+  disqualified?: boolean;
 }
