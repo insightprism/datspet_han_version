@@ -80,6 +80,7 @@ export default function RaceScreen({
       label: lane.label,
       handicapName: lane.handicapName,
       racingPose: lane.racingPose,
+      hopPose: ["jump", "play"].find((p) => lane.stats.poses.includes(p)),
       integrator: new LaneIntegrator(event, lane.stats, lane.handicap,
         raceSeed, laneOffset + i),
       log: laneLogs[i],
@@ -187,6 +188,7 @@ export default function RaceScreen({
       <ArenaTrack
         lanes={trackLanes}
         distanceM={event.distance_m}
+        hurdlesEveryM={event.hurdles_every_m}
         raceClock={raceClock}
         onLaneFinish={onLaneFinish}
       />

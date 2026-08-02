@@ -2,6 +2,7 @@
   "key": "sprint_200",
   "label": "200 m",
   "emoji": "🏃",
+  "procedure": "race",
   "medium": "land",
   "distance_m": 200,
   "decay": 0.35,

@@ -1,0 +1,20 @@
+{
+  "key": "triple_jump",
+  "label": "Triple Jump",
+  "emoji": "🐸",
+  "procedure": "jump",
+  "medium": "land",
+  "distance_m": 40,
+  "decay": 0.0,
+  "race_roll": 0.03,
+  "time_limit_s": 90,
+  "attempts": 3,
+  "attempt_window_s": 10,
+  "jump_conversion": 0.6,
+  "weights": { "speed": 0.45, "power": 0.45, "endurance": 0.1 },
+  "requires": [["run"], ["jump"]],
+  "team_size": 1,
+  "preferred_poses": ["run", "walk"],
+  "result_unit": "meters",
+  "_note": "SPEC_PET_ARENA §6.6 (Rev.8) — the same jump procedure on different data: a higher conversion (hop, step, jump — real triple jumps run ~2x a long jump) and a run+jump qualification. Proof that Tier 2 is a PROCEDURE, not per-event code: this event cost one JSON file."
+}

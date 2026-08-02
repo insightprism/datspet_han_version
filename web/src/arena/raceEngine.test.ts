@@ -26,7 +26,8 @@ function steady(n: number, periodMs: number, quality = 1): Impulse[] {
 }
 
 const EVEN_EVENT: ArenaEventDecl = {
-  key: "even", label: "even", medium: "land", distance_m: 100, decay: 0,
+  key: "even", label: "even", procedure: "race", medium: "land",
+  distance_m: 100, decay: 0,
   race_roll: 0, time_limit_s: 180,
   weights: { speed: 0.5, power: 0.3, endurance: 0.2 },
   requires: [["run"]], team_size: 1, preferred_poses: ["run"],

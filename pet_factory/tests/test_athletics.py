@@ -67,8 +67,8 @@ def test_event_registry_entries_are_fully_formed():
     registry = json.loads((_ATHLETICS_DIR / "events" / "registry.json").read_text())
     for entry, event in zip(registry["events"], events):
         assert entry["key"] == event["key"], f"registry key {entry['key']} != file key"
-    required = {"key", "label", "medium", "distance_m", "decay", "race_roll",
-                "time_limit_s", "weights", "requires", "team_size",
+    required = {"key", "label", "procedure", "medium", "distance_m", "decay",
+                "race_roll", "time_limit_s", "weights", "requires", "team_size",
                 "preferred_poses", "result_unit"}
     for event in events:
         missing = required - set(event)
@@ -84,6 +84,26 @@ def test_event_registry_entries_are_fully_formed():
         assert event["preferred_poses"], f"{event['key']}: no preferred_poses"
         for pose in event["preferred_poses"]:
             assert pose in mp.CANONICAL_POSES, f"{event['key']}: unknown pose {pose}"
+
+
+def test_the_procedure_field_is_closed_and_its_fields_are_exclusive():
+    # Rev.8 (§6.6): procedure ∈ {race, jump} is the tier marker. A jump event
+    # declares its attempt fields; a race event declares NONE of them —
+    # populating a field the procedure never reads is how numbers rot.
+    jump_fields = {"attempts", "attempt_window_s", "jump_conversion"}
+    for event in athletics.list_events():
+        assert event["procedure"] in {"race", "jump"}, event["key"]
+        if event["procedure"] == "jump":
+            assert isinstance(event["attempts"], int) and event["attempts"] >= 1
+            assert event["attempt_window_s"] > 0
+            assert event["jump_conversion"] > 0
+        else:
+            present = jump_fields & set(event)
+            assert not present, f"{event['key']}: race event carries {present}"
+        # hurdles_every_m is presentational and race-only; positive when present.
+        if "hurdles_every_m" in event:
+            assert event["procedure"] == "race"
+            assert event["hurdles_every_m"] > 0
 
 
 def test_every_required_pose_exists_in_the_live_canonical_set():

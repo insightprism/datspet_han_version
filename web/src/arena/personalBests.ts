@@ -50,3 +50,26 @@ export function recordResultSeconds(
   }
   return { improved: false, previousSeconds: previous };
 }
+
+/** Field events (§6.6): the best is metres, and HIGHER is better. Same key
+ *  space — an event's result unit never changes, so a key never flips
+ *  direction. */
+export interface BestMetersOutcome {
+  improved: boolean;
+  previousMeters: number | null;
+}
+
+export function readBestMeters(store: BestStore, key: string): number | null {
+  return readBestSeconds(store, key);   // same parse; direction is the caller's
+}
+
+export function recordResultMeters(
+  store: BestStore, key: string, meters: number,
+): BestMetersOutcome {
+  const previous = readBestMeters(store, key);
+  if (meters > 0 && (previous === null || meters > previous)) {
+    store.setItem(key, String(meters));
+    return { improved: true, previousMeters: previous };
+  }
+  return { improved: false, previousMeters: previous };
+}

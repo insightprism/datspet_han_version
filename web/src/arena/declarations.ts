@@ -22,6 +22,9 @@ import sprint200Json from "../../../pet_factory/athletics/events/sprint_200.json
 import freestyle100Json from "../../../pet_factory/athletics/events/freestyle_100.json";
 import airRaceJson from "../../../pet_factory/athletics/events/air_race.json";
 import downhillSkiJson from "../../../pet_factory/athletics/events/downhill_ski.json";
+import hurdlesJson from "../../../pet_factory/athletics/events/hurdles.json";
+import longJumpJson from "../../../pet_factory/athletics/events/long_jump.json";
+import tripleJumpJson from "../../../pet_factory/athletics/events/triple_jump.json";
 
 /** One Tier-1 event declaration (§6.1a). Shapes are guard-tested in
  *  pet_factory/tests/test_athletics.py — the fields here stay loose strings
@@ -30,6 +33,9 @@ export interface ArenaEventDecl {
   key: string;
   label: string;
   emoji?: string;
+  /** The tier marker (§6.6, Rev.8): "race" = generic integrator; "jump" = the
+   *  field procedure. Closed set, guard-tested Python-side. */
+  procedure: string;
   medium: string;
   distance_m: number;
   decay: number;
@@ -40,6 +46,12 @@ export interface ArenaEventDecl {
   team_size: number;
   preferred_poses: string[];
   result_unit: string;
+  /** jump events only (§6.6). */
+  attempts?: number;
+  attempt_window_s?: number;
+  jump_conversion?: number;
+  /** race presentation only: hurdle marks on the lane (§6.6). */
+  hurdles_every_m?: number;
 }
 
 export interface MovementClassRow {
@@ -74,6 +86,9 @@ export const ARENA_EVENTS: ArenaEventDecl[] = [
   freestyle100Json,
   airRaceJson,
   downhillSkiJson,
+  hurdlesJson,
+  longJumpJson,
+  tripleJumpJson,
 ];
 
 export function loadEvent(key: string): ArenaEventDecl | undefined {

@@ -2,6 +2,7 @@
   "key": "sprint_100",
   "label": "100 m Sprint",
   "emoji": "🏁",
+  "procedure": "race",
   "medium": "land",
   "distance_m": 100,
   "decay": 0.0,

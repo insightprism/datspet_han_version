@@ -19,6 +19,9 @@ import { CHALLENGES } from "./challenges/registry";
 import { ARENA_PET_DISPLAY_SIZE_PX } from "./constants";
 import { loadEvent, type ArenaEventDecl } from "./declarations";
 import type { ArenaPetInfo, LoadedRacer, RacerConfig } from "./gameTypes";
+import { jumpEventDurationMs } from "./fieldJump";
+import JumpResultsScreen from "./JumpResultsScreen";
+import JumpScreen from "./JumpScreen";
 import { loadRacer } from "./petLoader";
 import type { Impulse } from "./raceEngine";
 import { mintRaceSeed } from "./rng";
@@ -132,10 +135,14 @@ export default function ArenaGame() {
   }
 
   const challenge = CHALLENGES[choice.challengeKey];
+  const isJump = event.procedure === "jump";
 
   if (phase.kind === "race" && choice.mode === "bot") {
+    // Field events (§6.6) swap the screen, never the flow: same lanes, same
+    // challenge, same seed — a different procedure scores the same log.
+    const Screen = isJump ? JumpScreen : RaceScreen;
     return (
-      <RaceScreen
+      <Screen
         key={`bot-${raceSeed}`}
         event={event} challenge={challenge} difficulty={choice.difficulty}
         raceSeed={raceSeed} lanes={racers} humanLaneIndex={0}
@@ -147,13 +154,14 @@ export default function ArenaGame() {
   }
 
   if (phase.kind === "race" && phase.run === 0) {
+    const Screen = isJump ? JumpScreen : RaceScreen;
     return (
-      <RaceScreen
+      <Screen
         key={`p1-${raceSeed}`}
         event={event} challenge={challenge} difficulty={choice.difficulty}
         raceSeed={raceSeed} lanes={[racers[0]]} laneOffset={0}
         humanLaneIndex={0} ghostLogs={[null]}
-        runLabel="Player 1 sets the time"
+        runLabel={isJump ? "Player 1 jumps first" : "Player 1 sets the time"}
         onDone={(log) => onRunDone(0, 0, log)}
       />
     );
@@ -176,6 +184,20 @@ export default function ArenaGame() {
   }
 
   if (phase.kind === "race") {
+    if (isJump) {
+      // Field events run in sequence, as real ones do — player 2 jumps alone
+      // (canonical lane 1, for the jitter stream) chasing player 1's number.
+      return (
+        <JumpScreen
+          key={`p2-${raceSeed}`}
+          event={event} challenge={challenge} difficulty={choice.difficulty}
+          raceSeed={raceSeed} lanes={[racers[1]]} laneOffset={1}
+          humanLaneIndex={0} ghostLogs={[null]}
+          runLabel="Player 2 — beat that distance!"
+          onDone={(log) => onRunDone(1, 1, log)}
+        />
+      );
+    }
     return (
       <RaceScreen
         key={`p2-${raceSeed}`}
@@ -190,14 +212,35 @@ export default function ArenaGame() {
   }
 
   // Results: authoritative logs per canonical lane — recorded for humans,
-  // regenerated (same seed, same lane, same function) for the bot.
+  // regenerated (same seed, same lane, same function) for the bot. A bot's
+  // log runs the event's duration: the time limit for a race, the declared
+  // attempt schedule for a field event.
   const logs: Impulse[][] = racers.map((racer, lane) => {
     if (racer.kind === "bot") {
       return botImpulseLog(racer.botRung ?? "steady", raceSeed, lane,
-        event.time_limit_s * 1000);
+        isJump ? jumpEventDurationMs(event) : event.time_limit_s * 1000);
     }
     return humanLogsRef.current[lane] ?? [];
   });
+
+  if (isJump) {
+    return (
+      <JumpResultsScreen
+        event={event} challenge={challenge} difficulty={choice.difficulty}
+        raceSeed={raceSeed} lanes={racers} logs={logs}
+        onRaceAgain={() => {
+          humanLogsRef.current = racers.map(() => null);
+          setRaceSeed(mintRaceSeed());
+          setPhase({ kind: "race", run: 0 });
+        }}
+        onBackToSetup={() => {
+          racersRef.current.forEach((r) => removePet(r.storeId));
+          setRacers([]);
+          setPhase({ kind: "setup" });
+        }}
+      />
+    );
+  }
 
   return (
     <ResultsScreen

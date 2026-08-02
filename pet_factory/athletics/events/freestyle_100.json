@@ -2,6 +2,7 @@
   "key": "freestyle_100",
   "label": "100 m Freestyle",
   "emoji": "🏊",
+  "procedure": "race",
   "medium": "water",
   "distance_m": 100,
   "decay": 0.0,

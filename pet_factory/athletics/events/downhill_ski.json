@@ -2,6 +2,7 @@
   "key": "downhill_ski",
   "label": "Downhill Ski",
   "emoji": "⛷️",
+  "procedure": "race",
   "medium": "land",
   "distance_m": 300,
   "decay": 0.25,

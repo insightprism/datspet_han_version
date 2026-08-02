@@ -1,0 +1,20 @@
+{
+  "key": "long_jump",
+  "label": "Long Jump",
+  "emoji": "🦘",
+  "procedure": "jump",
+  "medium": "land",
+  "distance_m": 40,
+  "decay": 0.0,
+  "race_roll": 0.03,
+  "time_limit_s": 90,
+  "attempts": 3,
+  "attempt_window_s": 10,
+  "jump_conversion": 0.35,
+  "weights": { "speed": 0.35, "power": 0.55, "endurance": 0.1 },
+  "requires": [["jump"]],
+  "team_size": 1,
+  "preferred_poses": ["run", "walk"],
+  "result_unit": "meters",
+  "_note": "SPEC_PET_ARENA §6.6 (Rev.8) — the first Tier-2 event: three run-up windows on a fixed clock, distance = charge × jump_conversion, best of three, ranked descending. distance_m here is the RUNUP length the lane draws, not a target to cover; power leads the weights, which is what makes the jumpers differ from the sprinters."
+}

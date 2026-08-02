@@ -2,6 +2,7 @@
   "key": "racewalk",
   "label": "Racewalk",
   "emoji": "🚶",
+  "procedure": "race",
   "medium": "land",
   "distance_m": 50,
   "decay": 0.0,

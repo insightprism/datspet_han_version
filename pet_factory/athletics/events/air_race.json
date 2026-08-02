@@ -2,6 +2,7 @@
   "key": "air_race",
   "label": "Air Race",
   "emoji": "🛫",
+  "procedure": "race",
   "medium": "air",
   "distance_m": 150,
   "decay": 0.2,

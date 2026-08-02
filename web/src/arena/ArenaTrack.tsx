@@ -22,9 +22,9 @@
 import { useEffect, useRef } from "react";
 import { applyTransform, getDisplayFrame, getPet, setAnim, setBgPos } from "@/pet";
 import {
-  ARENA_PET_DISPLAY_SIZE_PX, LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN,
-  SPRITE_RATE_WINDOW_MS, TRACK_EDGE_PADDING_PX, TRACK_MARK_MAX_COUNT,
-  TRACK_MARK_STEPS_M,
+  ARENA_PET_DISPLAY_SIZE_PX, HURDLE_HOP_WINDOW_M, LANE_HEIGHT_PX,
+  SPRITE_RATE_MAX, SPRITE_RATE_MIN, SPRITE_RATE_WINDOW_MS,
+  TRACK_EDGE_PADDING_PX, TRACK_MARK_MAX_COUNT, TRACK_MARK_STEPS_M,
 } from "./constants";
 import type { LaneIntegrator, Impulse } from "./raceEngine";
 import { recentAnswerRate } from "./raceEngine";
@@ -35,6 +35,9 @@ export interface TrackLane {
   /** Shown on the lane — a hidden handicap is the failure §8.3.1 forbids. */
   handicapName: string;
   racingPose: string;
+  /** Hurdle events (§6.6): the pose played while crossing a hurdle mark —
+   *  the first owned of jump/play, per the qualification's alternatives. */
+  hopPose?: string;
   /** The lane's integrator, owned by the parent and rebuilt per run. */
   integrator: LaneIntegrator;
   /** The live (or recorded) impulse log. Parent appends; track only reads. */
@@ -50,7 +53,10 @@ function markStepM(distanceM: number): number {
 }
 
 function trackMarks(distanceM: number): number[] {
-  const step = markStepM(distanceM);
+  return trackMarksEvery(distanceM, markStepM(distanceM));
+}
+
+function trackMarksEvery(distanceM: number, step: number): number[] {
   const marks: number[] = [];
   for (let d = step; d < distanceM; d += step) marks.push(d);
   return marks;
@@ -68,13 +74,17 @@ function markLeftCss(d: number, distanceM: number): string {
 interface Props {
   lanes: TrackLane[];
   distanceM: number;
+  /** Hurdle marks every N metres (§6.6) — presentation only. */
+  hurdlesEveryM?: number;
   /** Current race time in ms, or null before the gun. Live races return
    *  now − gun; recaps return a scaled clock. */
   raceClock: () => number | null;
   onLaneFinish?: (laneIndex: number, finishMs: number) => void;
 }
 
-export default function ArenaTrack({ lanes, distanceM, raceClock, onLaneFinish }: Props) {
+export default function ArenaTrack({
+  lanes, distanceM, hurdlesEveryM, raceClock, onLaneFinish,
+}: Props) {
   const laneElsRef = useRef<(HTMLDivElement | null)[]>([]);
   const spriteElsRef = useRef<(HTMLDivElement | null)[]>([]);
   // The live "how far he got" readout — written by the driver loop directly
@@ -148,6 +158,17 @@ export default function ArenaTrack({ lanes, distanceM, raceClock, onLaneFinish }
         if (progressEl) {
           progressEl.textContent =
             `${Math.floor(lane.integrator.distanceM)} / ${distanceM} m`;
+        }
+
+        // Hurdles (§6.6, presentation): the runner plays its hop pose while
+        // crossing a mark, its racing pose between them. Never after finish.
+        if (hurdlesEveryM && t !== null && !lane.integrator.finished) {
+          const sinceHurdle = lane.integrator.distanceM % hurdlesEveryM;
+          const nearHurdle = lane.integrator.distanceM > 1 && (
+            sinceHurdle < HURDLE_HOP_WINDOW_M
+            || hurdlesEveryM - sinceHurdle < HURDLE_HOP_WINDOW_M);
+          const wanted = nearHurdle && lane.hopPose ? lane.hopPose : lane.racingPose;
+          if (pet.anim !== wanted) setAnim(pet, wanted);
         }
 
         // Frame advance at answer tempo (§7.6). Finished lanes idle at 1×.
@@ -227,6 +248,13 @@ export default function ArenaTrack({ lanes, distanceM, raceClock, onLaneFinish }
                 style={{ color: "var(--muted)", opacity: 0.8 }}>
                 {d}
               </span>
+            </div>
+          ))}
+          {/* Hurdle marks (§6.6) — same nose-aligned mapping as the numbers. */}
+          {hurdlesEveryM && trackMarksEvery(distanceM, hurdlesEveryM).map((d) => (
+            <div key={`h${d}`} className="pointer-events-none absolute bottom-1 text-sm"
+              style={{ left: markLeftCss(d, distanceM), opacity: 0.5 }}>
+              🚧
             </div>
           ))}
           {/* The finish line. */}

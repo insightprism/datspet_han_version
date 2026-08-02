@@ -96,6 +96,7 @@ export default function ResultsScreen({
       label: lane.label,
       handicapName: lane.handicapName,
       racingPose: lane.racingPose,
+      hopPose: ["jump", "play"].find((p) => lane.stats.poses.includes(p)),
       integrator: new LaneIntegrator(event, lane.stats, lane.handicap, raceSeed, i),
       log: logs[i],
     }));
@@ -160,7 +161,8 @@ export default function ResultsScreen({
 
       {recapping && (
         <div className="flex flex-col gap-2">
-          <ArenaTrack lanes={recapLanes} distanceM={event.distance_m} raceClock={recapClock} />
+          <ArenaTrack lanes={recapLanes} distanceM={event.distance_m}
+            hurdlesEveryM={event.hurdles_every_m} raceClock={recapClock} />
           <button type="button" className="btn-ghost self-end"
             onClick={() => setRecapping(false)}>
             Stop recap

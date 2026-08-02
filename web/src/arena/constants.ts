@@ -42,3 +42,14 @@ export const PERSONAL_BEST_KEY_PREFIX = "datspet.arena.pb.v1";
 /** Stats are 0..1 floats in the engine (§2.5); children read them as 0..100.
  *  A display scale, never a game value — the stride formula sees the floats. */
 export const STAT_DISPLAY_MAX = 100;
+
+/** §6.6 — the rest between jump attempts: buzzer, leap, measurement, walk
+ *  back. Part of the DECLARED schedule (window i opens at i × (window+rest)),
+ *  so changing it changes where recorded logs land — a game value, not UI
+ *  polish. */
+export const ATTEMPT_REST_S = 6;
+
+/** Jump-lane presentation: how many metres the landing pit represents, and
+ *  how long the leap moment lingers before the next run-up. */
+export const JUMP_PIT_DISPLAY_MAX_M = 16;
+export const HURDLE_HOP_WINDOW_M = 2.5;

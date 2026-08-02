@@ -9,11 +9,37 @@ block from the pet id (Rev.7) — §3.2's design modifiers activate automaticall
 SPEC_PET_DESIGN_PROVENANCE Phase 2 stamps the design block, and are inert until then. The Tier-1
 catalogue is six events (racewalk, 100 m, 200 m, freestyle, air race, downhill ski — the last
 three one JSON file each, the §6.4 depth claim made real) and three challenges (tap, arithmetic,
-typing). **Remaining:** the jump events + pole vault (Tier-2 — their attempt/elimination gameplay
-needs an owner call, §16), the spelling challenge (mechanic needs a call: audio vs unscramble),
-and rooms (`SPEC_PET_ARENA_ROOMS.md`, unbuilt). §16.1's spread number is live-tunable on the sofa.
+typing). Rev.8 adds the field procedure (§6.6): long jump + triple jump (Tier 2, the run-up-on-a-
+clock attempt) and hurdles (Tier 1, jump-decorated). **Remaining:** high jump + pole vault
+(elimination-at-heights, deferred), the spelling challenge (mechanic needs a call: audio vs
+unscramble), and rooms (`SPEC_PET_ARENA_ROOMS.md`, unbuilt). §16.1's spread number is live-tunable
+on the sofa.
 
-> ### Rev.7 — the identity IS the pet id, decoded: per-stat nudges replace the roll
+> ### Rev.8 — the jumps, specified: an attempt is a run-up on a fixed clock
+>
+> The owner: *"let's do the jump as that will unlock hurdles, long jump and triple jump."* Exactly
+> right, and the unlock splits by tier:
+>
+> **Hurdles is Tier 1** — a race that jump merely *qualifies* (`[["run"], ["jump", "play"]]`, the
+> catalogue's first multi-clause event). The generic integrator already scores it; the hurdles
+> themselves are presentation (`hurdles_every_m` marks on the lane, the pet playing its jump pose as
+> it crosses each one). No penalty for v1 — a stumble mechanic is a tripwire, not a launch feature.
+>
+> **Long jump and triple jump are the first real Tier-2 events** (§6.6, new): `procedure: "jump"` in
+> the declaration — the `procedure` field is now the tier marker, explicit on every event. An
+> attempt is a RUN-UP ON A FIXED CLOCK: `attempts` windows of `attempt_window_s`, on a declared
+> schedule, so the whole event replays from the impulse log alone (§7.4 holds). Charge accumulates
+> per correct answer with the SAME stride arithmetic a race uses (weights make it power-heavy);
+> at the buzzer the pet leaps and `distance = charge × jump_conversion`. Best of three counts,
+> ranked by distance — the different result shape §6.4 promised. Personal bests for field events
+> are metres, HIGHER is better.
+>
+> Skill posture unchanged (§0.9/§8.4): the player is still the engine — a jump is a burst-rate
+> contest the way a race is a sustained-rate contest. The bot jumps by the identical formula.
+> High jump and pole vault stay deferred: elimination-at-rising-heights is a genuinely different
+> result shape and earns its own revision when wanted.
+
+<details><summary>Rev.7 — the identity IS the pet id, decoded: per-stat nudges replace the roll</summary>
 >
 > The owner: *"since those stats are per pet identity, i was going to use the pet identity key, and
 > decode it to convert it into speed power endurance or other stats. use the letters and number of
@@ -39,6 +65,8 @@ and rooms (`SPEC_PET_ARENA_ROOMS.md`, unbuilt). §16.1's spread number is live-t
 > is still slower); the id decides only the bounded per-pet uniqueness term. §3.4, §4.1, §5.2 and
 > §7.5 are rewritten; the block's `roll` field becomes `identity_nudges`; swapped pre-launch with
 > nothing durable stamped, so no compatibility surface existed.
+
+</details>
 
 <details><summary>Rev.6 — the pre-build review: losing is designed for; the handicap and the bot get definitions</summary>
 >
@@ -740,9 +768,10 @@ the §6.3 clause form.
 | 0 | **racewalk** | `[["walk"]]` | 1 | **the universal event.** Every pet ever built qualifies (§6.3.3). Ships alongside the 100 m so no pet is ever empty-handed. |
 | 1 | 100 m sprint | `[["run"]]` | 1 | one attribute dominates, one clause. The whole pipeline proven end to end on the simplest rules. |
 | 2 | 200 m | `[["run"]]` | 1 | adds `endurance` and a decay curve. **Costs no new pose** — the catalogue-depth proof. |
-| 3 | long jump | `[["jump"]]` | 1 | adds `power` and a best-of-three attempts structure. |
-| 4 | high jump | `[["jump"]]` | 1 | elimination at rising heights — a different result shape from a time or a distance, which proves the event interface is general. |
-| later | hurdles | `[["run"], ["jump","play"]]` | 1 | **the first multi-clause event**, and the first with alternatives — both from poses that exist today. |
+| 3 | long jump | `[["jump"]]` | 1 | adds `power` and a best-of-three attempts structure — **the first Tier-2 event** (§6.6). |
+| 4 | hurdles | `[["run"], ["jump","play"]]` | 1 | **the first multi-clause event**, and the first with alternatives — Tier 1: jump qualifies and decorates it (§6.6). |
+| 5 | triple jump | `[["run"], ["jump"]]` | 1 | the §6.6 procedure on different data — proof that Tier 2 is a procedure, not per-event code. |
+| later | high jump | `[["jump"]]` | 1 | elimination at rising heights — a different result shape again; deferred with pole vault (Rev.8). |
 | later | medley relay | `[["run"], ["play"]]` | **4** | **the first team event** (§6.5). Legs `[100,200,100,400]` — unequal on purpose, so pet order is a decision (§6.5.1). |
 | later | 100 m freestyle | `[["swim"]]` | 1 | the first event a fish wins, and the first that makes `water` affinity pay. |
 | later | pole vault | `[["jump"]]` | 1 | |
@@ -851,6 +880,39 @@ and it makes the anchor leg feel like the anchor leg.
 - **Hot-seat handover is free.** *"Leg two — your turn"* is a built-in reason to pass a device. Whether
   a relay is one child driving four legs or four children driving one each is a **setup choice**, not
   two code paths — the event consumes an impulse stream and never asks who fills it (§7.3).
+
+### 6.6 The jumps — the Tier-2 field procedure (Rev.8)
+
+**The `procedure` field is the tier marker**, explicit on every declaration: `"race"` runs the
+generic integrator (§6.1a); `"jump"` runs the field procedure below. The procedure lives
+browser-side only until rooms want a field event — the §6.1a "written twice, kept honest by a
+fixture" rule applies the day that happens.
+
+**An attempt is a run-up on a fixed clock.** A jump event declares `attempts` (3), an
+`attempt_window_s` (the answer burst), and a `jump_conversion`. The attempt schedule is FIXED
+relative to the gun — window `i` opens at `i × (attempt_window_s + rest)` — so the event stays a
+pure function of the impulse log (§7.4: the log IS the event; replay needs no UI state).
+
+- **Charge**: every correct answer inside the window advances charge by the SAME stride arithmetic
+  a race step uses — weights (power-heavy), medium affinity, handicap, seeded per-impulse jitter.
+  One arithmetic for the whole game; the jumps just integrate it in windows.
+- **The leap**: at the buzzer, automatically — `distance_m = charge × jump_conversion`. The pet
+  plays its jump pose; a slow run-up is a short leap, which a child can see and explain.
+- **The result shape** §6.4 promised: `{ attempts: [m…], best_m }`, ranked by `best_m` DESCENDING.
+  Ties break toward the earlier best. Personal bests for field events are metres, higher is better.
+- **The bot jumps by the identical formula** over its own log (§7.3 — the event never learns who
+  answered). Hot-seat field events run naturally in sequence — real field events do too — with the
+  same seed, so both players face identical questions (§8.3).
+
+**Hurdles is deliberately NOT this** — it is a Tier-1 race that jump *qualifies*
+(`[["run"], ["jump", "play"]]`) and decorates: `hurdles_every_m` marks on the lane, the runner
+playing its jump pose as it crosses each mark. Purely presentational in v1; a missed-hurdle
+penalty is a **tripwire** (it would need a rule for what a "miss" even is in an answer-driven
+race), not a launch feature.
+
+**Triple jump is data, not code**: the same `"jump"` procedure with its own conversion and
+qualification (`[["run"], ["jump"]]`) — the pet visibly bounds three times, but hop-step-jump is
+animation, not a third integrator.
 
 ---
 
@@ -1376,6 +1438,12 @@ pets is a lot to burn through.
   both sides — the SPEC_PET_OWNER_FIELD §2.3a pattern.
 - **Tier-1 events carry no code:** every event in `athletics/events/` is pure JSON with no companion
   module, asserted so a "just a little logic" exception fails the build (§6.1a tripwire).
+- **The procedure field is closed** (Rev.8): every event declares `procedure` ∈ {`race`, `jump`};
+  a `jump` event declares positive `attempts`/`attempt_window_s`/`jump_conversion`; a `race` event
+  declares none of them (populating a field the procedure never reads is how numbers rot).
+- **The jump scorer is pure and windowed** (§6.6): only impulses inside an attempt's declared
+  window count; the same log scores identically twice; the bot's log and a human-shaped copy score
+  identically; ranking is best-descending with ties to the earlier best.
 - **Both registries enforced:** every event declares every required field, weights sum to 1.0,
   `medium` is in the vocabulary, `preferredPoses` are canonical pose names; every challenge declares
   `generate`, `check`, `inputKind` and a difficulty ladder.
