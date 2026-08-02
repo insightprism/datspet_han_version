@@ -18,7 +18,7 @@ import { botImpulseLog } from "./bot";
 import { CHALLENGES } from "./challenges/registry";
 import { ARENA_PET_DISPLAY_SIZE_PX } from "./constants";
 import { loadEvent, type ArenaEventDecl } from "./declarations";
-import type { ArenaPetInfo, LoadedRacer, RacerConfig } from "./gameTypes";
+import type { ArenaPetInfo, LoadedRacer, RacerConfig, RunAccuracy } from "./gameTypes";
 import { jumpEventDurationMs } from "./fieldJump";
 import JumpResultsScreen from "./JumpResultsScreen";
 import JumpScreen from "./JumpScreen";
@@ -78,6 +78,7 @@ export default function ArenaGame() {
   const [raceSeed, setRaceSeed] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const humanLogsRef = useRef<(Impulse[] | null)[]>([]);
+  const accuraciesRef = useRef<(RunAccuracy | null)[]>([]);
   const racersRef = useRef<LoadedRacer[]>([]);
   racersRef.current = racers;
 
@@ -104,6 +105,7 @@ export default function ArenaGame() {
       const configs = buildLaneConfigs(setup, pets);
       const loaded = await Promise.all(configs.map((c) => loadRacer(c, eventDecl)));
       humanLogsRef.current = configs.map(() => null);
+      accuraciesRef.current = configs.map(() => null);
       setChoice(setup);
       setEvent(eventDecl);
       setRacers(loaded);
@@ -115,8 +117,10 @@ export default function ArenaGame() {
     }
   }, []);
 
-  const onRunDone = useCallback((run: 0 | 1, humanLaneIndex: number, log: Impulse[]) => {
+  const onRunDone = useCallback((run: 0 | 1, humanLaneIndex: number,
+                                 log: Impulse[], accuracy: RunAccuracy) => {
     humanLogsRef.current[humanLaneIndex] = log;
+    accuraciesRef.current[humanLaneIndex] = accuracy;
     if (choice?.mode === "hotseat" && run === 0) setPhase({ kind: "handoff" });
     else setPhase({ kind: "results" });
   }, [choice]);
@@ -148,7 +152,7 @@ export default function ArenaGame() {
         raceSeed={raceSeed} lanes={racers} humanLaneIndex={0}
         ghostLogs={racers.map(() => null)}
         runLabel="go!"
-        onDone={(log) => onRunDone(0, 0, log)}
+        onDone={(log, acc) => onRunDone(0, 0, log, acc)}
       />
     );
   }
@@ -162,7 +166,7 @@ export default function ArenaGame() {
         raceSeed={raceSeed} lanes={[racers[0]]} laneOffset={0}
         humanLaneIndex={0} ghostLogs={[null]}
         runLabel={isJump ? "Player 1 jumps first" : "Player 1 sets the time"}
-        onDone={(log) => onRunDone(0, 0, log)}
+        onDone={(log, acc) => onRunDone(0, 0, log, acc)}
       />
     );
   }
@@ -194,7 +198,7 @@ export default function ArenaGame() {
           raceSeed={raceSeed} lanes={[racers[1]]} laneOffset={1}
           humanLaneIndex={0} ghostLogs={[null]}
           runLabel="Player 2 — beat that distance!"
-          onDone={(log) => onRunDone(1, 1, log)}
+          onDone={(log, acc) => onRunDone(1, 1, log, acc)}
         />
       );
     }
@@ -206,7 +210,7 @@ export default function ArenaGame() {
         humanLaneIndex={1}
         ghostLogs={[humanLogsRef.current[0], null]}
         runLabel="Player 2 — catch the ghost!"
-        onDone={(log) => onRunDone(1, 1, log)}
+        onDone={(log, acc) => onRunDone(1, 1, log, acc)}
       />
     );
   }
@@ -228,6 +232,7 @@ export default function ArenaGame() {
       <JumpResultsScreen
         event={event} challenge={challenge} difficulty={choice.difficulty}
         raceSeed={raceSeed} lanes={racers} logs={logs}
+        accuracies={accuraciesRef.current}
         onRaceAgain={() => {
           humanLogsRef.current = racers.map(() => null);
           setRaceSeed(mintRaceSeed());
@@ -246,8 +251,10 @@ export default function ArenaGame() {
     <ResultsScreen
       event={event} challenge={challenge} difficulty={choice.difficulty}
       raceSeed={raceSeed} lanes={racers} logs={logs}
+      accuracies={accuraciesRef.current}
       onRaceAgain={() => {
         humanLogsRef.current = racers.map(() => null);
+        accuraciesRef.current = racers.map(() => null);
         setRaceSeed(mintRaceSeed());
         setPhase({ kind: "race", run: 0 });
       }}

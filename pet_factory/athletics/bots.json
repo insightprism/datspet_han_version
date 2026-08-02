@@ -1,8 +1,8 @@
 {
-  "_doc": "SPEC_PET_ARENA §7.3 (Rev.6) — the bot's answer-rate ladder, answers per second per named rung (scaled -40% 2026-08-02, owner pace call: the computer animal moved too fast). A ladder, not one number: practice-vs-bot is plausibly the most-played mode (§8.8) and a child who beats the bot needs a next bot to beat. Guard test pins the rungs as named, positive and strictly ascending. Lives beside the other athletics declarations (not in the browser) so a room hosting a bot lane reads the same data the solo arena does — the §6.1a posture.",
+  "_doc": "SPEC_PET_ARENA §7.3 (Rev.6) — the bot's answer-rate ladder, answers per second per named rung (tuned down twice on 2026-08-02 — owner pace calls: -40%, then ~-15% more after the owner, barely missing an answer, still could not beat steady). A ladder, not one number: practice-vs-bot is plausibly the most-played mode (§8.8) and a child who beats the bot needs a next bot to beat. Guard test pins the rungs as named, positive and strictly ascending. Lives beside the other athletics declarations (not in the browser) so a room hosting a bot lane reads the same data the solo arena does — the §6.1a posture.",
   "rungs": {
-    "gentle": 0.3,
-    "steady": 0.6,
-    "brisk": 1.08
+    "gentle": 0.25,
+    "steady": 0.5,
+    "brisk": 0.9
   }
 }

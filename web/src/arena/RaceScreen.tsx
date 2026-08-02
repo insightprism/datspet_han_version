@@ -22,7 +22,7 @@ import {
   WRONG_ANSWER_LOCKOUT_MS, WRONG_CHOICE_LOCKOUT_MS,
 } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
-import type { LoadedRacer } from "./gameTypes";
+import type { LoadedRacer, RunAccuracy } from "./gameTypes";
 import { LaneIntegrator, type Impulse } from "./raceEngine";
 import ArenaTrack, { type TrackLane } from "./ArenaTrack";
 
@@ -40,7 +40,7 @@ interface Props {
   /** Per lane: a recorded log for ghost lanes, null otherwise. */
   ghostLogs: (Impulse[] | null)[];
   runLabel: string;
-  onDone: (humanLog: Impulse[]) => void;
+  onDone: (humanLog: Impulse[], accuracy: RunAccuracy) => void;
 }
 
 type RunPhase = "countdown" | "racing" | "watching";
@@ -63,6 +63,8 @@ export default function RaceScreen({
 
   const gunPerfRef = useRef<number | null>(null);
   const humanLogRef = useRef<Impulse[]>([]);
+  // Wrongs counted here; rights ARE the log length (§7.1).
+  const wrongCountRef = useRef(0);
   const doneRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -128,7 +130,8 @@ export default function RaceScreen({
       setAtHurdle(trackLanes[humanLaneIndex]?.integrator.atHurdle ?? false);
       if (t >= event.time_limit_s * 1000 && !doneRef.current) {
         doneRef.current = true;
-        onDone(humanLogRef.current);
+        onDone(humanLogRef.current,
+          { right: humanLogRef.current.length, wrong: wrongCountRef.current });
       }
     }, 100);
     return () => clearInterval(interval);
@@ -138,7 +141,8 @@ export default function RaceScreen({
   const finish = useCallback(() => {
     if (!doneRef.current) {
       doneRef.current = true;
-      onDone(humanLogRef.current);
+      onDone(humanLogRef.current,
+        { right: humanLogRef.current.length, wrong: wrongCountRef.current });
     }
   }, [onDone]);
 
@@ -173,6 +177,7 @@ export default function RaceScreen({
       // (Rev.10) pay MORE time and BURN the question — no eliminating your
       // way to the answer; every guess is a fresh 1-in-3 (§8.5).
       const isChoice = challenge.inputKind === "choice";
+      wrongCountRef.current += 1;
       if (isChoice) setQIndex((i) => i + 1);
       setGivenAnswer("");
       setLockedOut(true);

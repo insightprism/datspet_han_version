@@ -24,7 +24,7 @@ import {
 } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
 import { jumpEventDurationMs, scoreJumpEntrant } from "./fieldJump";
-import type { LoadedRacer } from "./gameTypes";
+import type { LoadedRacer, RunAccuracy } from "./gameTypes";
 import { recentAnswerRate, type Impulse } from "./raceEngine";
 
 interface Props {
@@ -39,7 +39,7 @@ interface Props {
    *  ghost lanes in v1 — hot-seat jumps run in sequence, as real ones do. */
   ghostLogs?: (Impulse[] | null)[];
   runLabel: string;
-  onDone: (humanLog: Impulse[]) => void;
+  onDone: (humanLog: Impulse[], accuracy: RunAccuracy) => void;
 }
 
 type JumpPhase = "countdown" | "running";
@@ -66,6 +66,8 @@ export default function JumpScreen({
 
   const gunPerfRef = useRef<number | null>(null);
   const humanLogRef = useRef<Impulse[]>([]);
+  // Wrongs counted here; rights ARE the log length (§7.1).
+  const wrongCountRef = useRef(0);
   const doneRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const laneElsRef = useRef<(HTMLDivElement | null)[]>([]);
@@ -108,7 +110,8 @@ export default function JumpScreen({
   const finish = useCallback(() => {
     if (!doneRef.current) {
       doneRef.current = true;
-      onDone(humanLogRef.current);
+      onDone(humanLogRef.current,
+        { right: humanLogRef.current.length, wrong: wrongCountRef.current });
     }
   }, [onDone]);
 
@@ -242,6 +245,7 @@ export default function JumpScreen({
     } else {
       // Choices burn the question and pay the longer freeze (§8.5, Rev.10).
       const isChoice = challenge.inputKind === "choice";
+      wrongCountRef.current += 1;
       if (isChoice) setQIndex((i) => i + 1);
       setGivenAnswer("");
       setLockedOut(true);

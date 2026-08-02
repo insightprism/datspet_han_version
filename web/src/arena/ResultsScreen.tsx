@@ -16,7 +16,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ArenaChallenge } from "./challenges/registry";
 import { RECAP_PLAYBACK_SPEED } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
-import type { LoadedRacer } from "./gameTypes";
+import AccuracyLine from "./AccuracyLine";
+import type { LoadedRacer, RunAccuracy } from "./gameTypes";
 import {
   buildRaceHeader, LaneIntegrator, simulateRace, type Impulse,
 } from "./raceEngine";
@@ -35,12 +36,14 @@ interface Props {
   raceSeed: number;
   lanes: LoadedRacer[];
   logs: Impulse[][];
+  /** Per canonical lane; null for bot/ghost lanes (owner ask: ✓/✗/%). */
+  accuracies: (RunAccuracy | null)[];
   onRaceAgain: () => void;
   onBackToSetup: () => void;
 }
 
 export default function ResultsScreen({
-  event, challenge, difficulty, raceSeed, lanes, logs,
+  event, challenge, difficulty, raceSeed, lanes, logs, accuracies,
   onRaceAgain, onBackToSetup,
 }: Props) {
   const results = useMemo(() =>
@@ -149,6 +152,7 @@ export default function ResultsScreen({
                         : null}
                   </div>
                 )}
+                <AccuracyLine accuracy={accuracies[r.lane] ?? null} />
               </div>
             </div>
           );

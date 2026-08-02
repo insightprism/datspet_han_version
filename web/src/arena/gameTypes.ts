@@ -45,3 +45,11 @@ export interface LoadedRacer extends RacerConfig {
   handicap: number;
   racingPose: string;
 }
+
+/** A human run's answer tally (owner ask, 2026-08-02): rights are the impulse
+ *  log's length by definition (§7.1 — a wrong emits nothing), wrongs are
+ *  counted by the screen. Results show "✓ 18 · ✗ 4 · 82% right". */
+export interface RunAccuracy {
+  right: number;
+  wrong: number;
+}

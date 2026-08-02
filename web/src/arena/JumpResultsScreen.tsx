@@ -12,7 +12,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { ArenaChallenge } from "./challenges/registry";
 import type { ArenaEventDecl } from "./declarations";
 import { scoreJumpEvent } from "./fieldJump";
-import type { LoadedRacer } from "./gameTypes";
+import AccuracyLine from "./AccuracyLine";
+import type { LoadedRacer, RunAccuracy } from "./gameTypes";
 import type { Impulse } from "./raceEngine";
 import {
   bestKey, recordResultMeters, type BestMetersOutcome,
@@ -28,12 +29,14 @@ interface Props {
   raceSeed: number;
   lanes: LoadedRacer[];
   logs: Impulse[][];
+  /** Per canonical lane; null for bot/ghost lanes (owner ask: ✓/✗/%). */
+  accuracies: (RunAccuracy | null)[];
   onRaceAgain: () => void;
   onBackToSetup: () => void;
 }
 
 export default function JumpResultsScreen({
-  event, challenge, difficulty, raceSeed, lanes, logs,
+  event, challenge, difficulty, raceSeed, lanes, logs, accuracies,
   onRaceAgain, onBackToSetup,
 }: Props) {
   const results = useMemo(() =>
@@ -105,6 +108,7 @@ export default function JumpResultsScreen({
                         : null}
                   </div>
                 )}
+                <AccuracyLine accuracy={accuracies[r.lane] ?? null} />
               </div>
             </div>
           );
