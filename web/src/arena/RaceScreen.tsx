@@ -166,13 +166,22 @@ export default function RaceScreen({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-baseline justify-between">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-xl font-semibold">
           {event.emoji} {event.label} — {runLabel}
         </h2>
-        <span className="mono text-sm" style={{ color: "var(--muted)" }}>
-          {clockDisplay.toFixed(1)} s · {answeredCount} answered
-        </span>
+        <div className="flex items-baseline gap-3">
+          {/* The limit is visible so the automatic ending never surprises
+              anyone — a race that just stops reads as a bug. */}
+          <span className="mono text-sm" style={{ color: "var(--muted)" }}>
+            {clockDisplay.toFixed(1)} / {event.time_limit_s} s · {answeredCount} answered
+          </span>
+          {phase === "racing" && (
+            <button type="button" className="btn-ghost text-xs" onClick={finish}>
+              🏳️ End race
+            </button>
+          )}
+        </div>
       </div>
 
       <ArenaTrack
