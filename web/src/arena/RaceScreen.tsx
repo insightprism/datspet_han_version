@@ -203,16 +203,20 @@ export default function RaceScreen({
               onSubmit={(e) => { e.preventDefault(); submitAnswer(givenAnswer); }}
               className="flex flex-col items-center gap-3"
             >
-              <div className="text-4xl font-bold">{question.prompt} = ?</div>
+              <div className="text-4xl font-bold">
+                {challenge.inputKind === "numeric"
+                  ? `${question.prompt} = ?`
+                  : question.prompt}
+              </div>
               <div className="flex gap-2">
                 <input
                   ref={inputRef}
                   autoFocus
-                  inputMode="numeric"
+                  inputMode={challenge.inputKind === "numeric" ? "numeric" : "text"}
                   value={givenAnswer}
                   disabled={lockedOut}
                   onChange={(e) => setGivenAnswer(e.target.value)}
-                  className="w-32 rounded-lg border bg-transparent px-3 py-2 text-center text-2xl"
+                  className={`${challenge.inputKind === "numeric" ? "w-32" : "w-64"} rounded-lg border bg-transparent px-3 py-2 text-center text-2xl`}
                   style={lockedOut ? { borderColor: "#f87171" } : undefined}
                 />
                 <button type="submit" className="btn" disabled={lockedOut}>Go</button>

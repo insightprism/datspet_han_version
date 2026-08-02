@@ -14,7 +14,7 @@ describe("both registries enforced (§14)", () => {
     for (const c of listChallenges()) {
       expect(c.key).toBeTruthy();
       expect(c.label).toBeTruthy();
-      expect(["numeric", "tap"]).toContain(c.inputKind);
+      expect(["numeric", "tap", "text"]).toContain(c.inputKind);
       expect(c.ladder.length).toBeGreaterThan(0);
       expect(typeof c.generate).toBe("function");
       expect(typeof c.check).toBe("function");
@@ -59,6 +59,21 @@ describe("guessing does not pay (§8.5)", () => {
         const q = arithmetic.generate(rng, rung.key);
         expect(arithmetic.check(q.answer, q.answer)).toBe(true);
         expect(arithmetic.check(`${q.answer}1`, q.answer)).toBe(false);
+      }
+    }
+  });
+});
+
+describe("typing types the shown word (§8.1)", () => {
+  it("accepts case and spacing slop, refuses a different word", () => {
+    const typing = CHALLENGES.typing;
+    for (const rung of typing.ladder) {
+      const rng = mulberry32(11);
+      for (let i = 0; i < 50; i++) {
+        const q = typing.generate(rng, rung.key);
+        expect(typing.check(q.answer, q.answer)).toBe(true);
+        expect(typing.check(`  ${q.answer.toUpperCase()}  `, q.answer)).toBe(true);
+        expect(typing.check(`${q.answer}x`, q.answer)).toBe(false);
       }
     }
   });

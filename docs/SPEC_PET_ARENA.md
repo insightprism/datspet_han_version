@@ -1,12 +1,17 @@
 # SPEC_PET_ARENA — the Pet Games: a track-and-field meet for pets you built
 
-**Status: Rev.6 (2026-08-02) — PHASES 1–3 IMPLEMENTED (same day); no deploy.** The content
-package (`pet_factory/athletics/`), the playable arena (`web/src/arena/`, `/arena`), the bot,
-hot-seat with ghost replay, the handicap, medals/personal-bests/recap, and the guard tests on both
-sides are built and green; verified end-to-end in the browser against the live dev stack. Phase 4
-(the manifest stamp) waits on SPEC_PET_DESIGN_PROVENANCE Phase 2; Phases 5–6 and rooms
-(`SPEC_PET_ARENA_ROOMS.md`) are unbuilt. §0 records the owner's product direction; §16 still lists
-what needs a call — §16.1's spread number is now live-tunable on the sofa.
+**Status: Rev.6 (2026-08-02) — PHASES 1–4 IMPLEMENTED + the Tier-1 catalogue; no deploy.** The
+content package (`pet_factory/athletics/`), the playable arena (`web/src/arena/`, `/arena`), the
+bot, hot-seat with ghost replay, the handicap, medals/personal-bests/recap, and the guard tests on
+both sides are built and green; verified end-to-end in the browser against the live dev stack.
+Phase 4's stamp (`webui/pet_athletics.py`, the fourth patch at `_finalize_pet_from_zip`) mints the
+block from the sheet-bytes roll — §3.2's design modifiers activate automatically when
+SPEC_PET_DESIGN_PROVENANCE Phase 2 stamps the design block, and are inert until then. The Tier-1
+catalogue is six events (racewalk, 100 m, 200 m, freestyle, air race, downhill ski — the last
+three one JSON file each, the §6.4 depth claim made real) and three challenges (tap, arithmetic,
+typing). **Remaining:** the jump events + pole vault (Tier-2 — their attempt/elimination gameplay
+needs an owner call, §16), the spelling challenge (mechanic needs a call: audio vs unscramble),
+and rooms (`SPEC_PET_ARENA_ROOMS.md`, unbuilt). §16.1's spread number is live-tunable on the sofa.
 
 > ### Rev.6 — the pre-build review: losing is designed for; the handicap and the bot get definitions
 >

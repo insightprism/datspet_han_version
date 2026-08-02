@@ -1,0 +1,16 @@
+{
+  "key": "downhill_ski",
+  "label": "Downhill Ski",
+  "emoji": "⛷️",
+  "medium": "land",
+  "distance_m": 300,
+  "decay": 0.25,
+  "race_roll": 0.03,
+  "time_limit_s": 300,
+  "weights": { "speed": 0.7, "power": 0.2, "endurance": 0.1 },
+  "requires": [["run"]],
+  "team_size": 1,
+  "preferred_poses": ["run", "walk"],
+  "result_unit": "seconds",
+  "_note": "SPEC_PET_ARENA §6.4 — the ski is a prop; the motion is the same. A whole category on a pose everyone already owns, which is the catalogue-depth claim made real: this event cost one JSON file."
+}

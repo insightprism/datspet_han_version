@@ -1,0 +1,16 @@
+{
+  "key": "air_race",
+  "label": "Air Race",
+  "emoji": "🛫",
+  "medium": "air",
+  "distance_m": 150,
+  "decay": 0.2,
+  "race_roll": 0.03,
+  "time_limit_s": 210,
+  "weights": { "speed": 0.55, "power": 0.15, "endurance": 0.3 },
+  "requires": [["fly"]],
+  "team_size": 1,
+  "preferred_poses": ["fly"],
+  "result_unit": "seconds",
+  "_note": "SPEC_PET_ARENA §6.4 — birds, dragons and flying superheroes only. The event that makes the bird the natural premium archetype (§10.3): only fly-capable body types can ever enter."
+}

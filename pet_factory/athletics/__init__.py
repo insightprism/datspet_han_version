@@ -158,6 +158,14 @@ def _block_is_valid(block) -> bool:
                for k in ATTRIBUTES + MEDIUMS)
 
 
+def block_is_current(block) -> bool:
+    """True when a stored athletics block is valid under the CURRENT schema and
+    table versions — the no-op test the build stamp uses (§4.2): a bundle whose
+    block is current is returned unchanged, same-object, so nothing re-compresses
+    3.5 MB to write what is already there."""
+    return _block_is_valid(block)
+
+
 def resolve_athletics(manifest: Optional[dict],
                       sheet_bytes: Optional[bytes] = None) -> dict:
     """§5.1 precedence, strictly: a present, valid block is used VERBATIM; a

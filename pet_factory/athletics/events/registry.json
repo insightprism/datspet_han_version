@@ -3,6 +3,9 @@
   "events": [
     { "key": "racewalk", "file": "racewalk.json" },
     { "key": "sprint_100", "file": "sprint_100.json" },
-    { "key": "sprint_200", "file": "sprint_200.json" }
+    { "key": "sprint_200", "file": "sprint_200.json" },
+    { "key": "freestyle_100", "file": "freestyle_100.json" },
+    { "key": "air_race", "file": "air_race.json" },
+    { "key": "downhill_ski", "file": "downhill_ski.json" }
   ]
 }

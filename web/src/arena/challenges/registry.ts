@@ -11,6 +11,7 @@
 
 import { arithmetic } from "./arithmetic";
 import { tap } from "./tap";
+import { typing } from "./typing";
 
 /** §8.2 — a challenge is a seeded generator plus a validator, both pure.
  *  Nobody writes a question bank. */
@@ -28,9 +29,10 @@ export interface ArenaChallenge {
   key: string;
   label: string;
   emoji: string;
-  /** §8.5/§8.6 — "numeric" is typed digits (never multiple choice); "tap" is
-   *  the accessibility floor: no reading, no arithmetic, no typing. */
-  inputKind: "numeric" | "tap";
+  /** §8.5/§8.6 — "numeric" is typed digits, "text" typed words (never
+   *  multiple choice, either); "tap" is the accessibility floor: no reading,
+   *  no arithmetic, no typing. */
+  inputKind: "numeric" | "tap" | "text";
   /** §8.7 — a declared ladder, selectable at race setup, never adaptive. */
   ladder: DifficultyRung[];
   /** Pure and seeded: the same rng sequence yields the same questions — the
@@ -42,6 +44,7 @@ export interface ArenaChallenge {
 export const CHALLENGES: Record<string, ArenaChallenge> = {
   [tap.key]: tap,
   [arithmetic.key]: arithmetic,
+  [typing.key]: typing,
 };
 
 export function listChallenges(): ArenaChallenge[] {

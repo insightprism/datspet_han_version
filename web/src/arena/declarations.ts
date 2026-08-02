@@ -19,6 +19,9 @@ import eventsRegistryJson from "../../../pet_factory/athletics/events/registry.j
 import racewalkJson from "../../../pet_factory/athletics/events/racewalk.json";
 import sprint100Json from "../../../pet_factory/athletics/events/sprint_100.json";
 import sprint200Json from "../../../pet_factory/athletics/events/sprint_200.json";
+import freestyle100Json from "../../../pet_factory/athletics/events/freestyle_100.json";
+import airRaceJson from "../../../pet_factory/athletics/events/air_race.json";
+import downhillSkiJson from "../../../pet_factory/athletics/events/downhill_ski.json";
 
 /** One Tier-1 event declaration (§6.1a). Shapes are guard-tested in
  *  pet_factory/tests/test_athletics.py — the fields here stay loose strings
@@ -67,6 +70,9 @@ export const ARENA_EVENTS: ArenaEventDecl[] = [
   racewalkJson,
   sprint100Json,
   sprint200Json,
+  freestyle100Json,
+  airRaceJson,
+  downhillSkiJson,
 ];
 
 export function loadEvent(key: string): ArenaEventDecl | undefined {

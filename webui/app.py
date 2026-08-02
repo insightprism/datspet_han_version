@@ -47,6 +47,7 @@ from fastapi.responses import FileResponse, Response
 
 import db
 import house_capacity
+import pet_athletics
 import pet_ownership
 import pool_client
 # design_calibration owns the design redraw's denoise band (effective_strength) and the
@@ -626,6 +627,13 @@ def _finalize_pet_from_zip(job: Job, *, description: str, breed_id: str,
         category=pet_ownership.FACTORY_CATEGORY,
         name=pet_ownership.FACTORY_OWNER_NAME,
         at=pet_ownership.epoch_to_utc_iso(job.created_at))
+    # SPEC_PET_ARENA §4.2 — the athletics block, a fourth patch at this same
+    # seam and for the same reasons: upstream of insert_pet so bundle_sha256
+    # covers it, both backends and the pool-reattach path converge here, and
+    # the packer stays free of game rules. Must run AFTER any future design
+    # stamp so §3.2's modifiers are visible to the mint.
+    zip_bytes, manifest_json = pet_athletics.stamp_pet_athletics(
+        zip_bytes, at=pet_ownership.epoch_to_utc_iso(job.created_at))
 
     db.insert_pet(
         pet_id=job.id, breed_id=breed_id, display_name=display_name,

@@ -1,0 +1,16 @@
+{
+  "key": "freestyle_100",
+  "label": "100 m Freestyle",
+  "emoji": "🏊",
+  "medium": "water",
+  "distance_m": 100,
+  "decay": 0.0,
+  "race_roll": 0.03,
+  "time_limit_s": 180,
+  "weights": { "speed": 0.7, "power": 0.15, "endurance": 0.15 },
+  "requires": [["swim"]],
+  "team_size": 1,
+  "preferred_poses": ["swim"],
+  "result_unit": "seconds",
+  "_note": "SPEC_PET_ARENA §6.4 — the first event a fish wins, and the first that makes water affinity pay. Aquatic and serpentine bodies enable swim today; §10.4's quadruped-swim question is the content change that would open this category to dogs."
+}
