@@ -27,9 +27,9 @@ import { applyTransform, getDisplayFrame, getPet, setAnim, setBgPos } from "@/pe
 import {
   APPARENT_SPEED_BASE_M_S, ARENA_PET_DISPLAY_SIZE_PX, CAMERA_ANCHOR_FRACTION,
   DISPLAY_CHASE_TAU_MS, DISPLAY_MAX_CHASE_M_S, DISPLAY_MIN_CREEP_M_S,
-  HURDLE_HEIGHT_PX, HURDLE_TRIGGER_LEAD_PX, HURDLE_WIDTH_PX, LANE_HEIGHT_PX,
-  SPRITE_RATE_MAX, SPRITE_RATE_MIN, TRACK_EDGE_PADDING_PX,
-  TRACK_SCROLL_MARK_STEP_M, VIEWPORT_TRACK_METERS,
+  HURDLE_HEIGHT_PX, HURDLE_JUMP_ARC_PX, HURDLE_TRIGGER_LEAD_PX,
+  HURDLE_WIDTH_PX, LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN,
+  TRACK_EDGE_PADDING_PX, TRACK_SCROLL_MARK_STEP_M, VIEWPORT_TRACK_METERS,
 } from "./constants";
 import type { LaneIntegrator, Impulse } from "./raceEngine";
 
@@ -198,6 +198,10 @@ export default function ArenaTrack({
           crashEl.style.display = crashing ? "block" : "none";
           if (crashing) crashEl.style.left = `${pet.instance.x + ARENA_PET_DISPLAY_SIZE_PX - 18}px`;
         }
+        // The obstacle is SOLID (Rev.11): crossing it lifts the sprite on a
+        // parabolic arc higher than the bar — the body visibly clears it.
+        // Parked at the gate (integrator.atHurdle) the runner stays grounded.
+        let liftY = 0;
         if (hurdlesEveryM && t !== null && !lane.integrator.finished) {
           let wanted = lane.racingPose;
           if (crashing) {
@@ -206,15 +210,24 @@ export default function ArenaTrack({
             const tailWorld = noseWorld - ARENA_PET_DISPLAY_SIZE_PX;
             for (let d = hurdlesEveryM; d < distanceM; d += hurdlesEveryM) {
               const obstacleWorld = NOSE_HOME_PX + d * pxPerM;
-              if (noseWorld >= obstacleWorld - HURDLE_TRIGGER_LEAD_PX
+              const crossStart = obstacleWorld - HURDLE_TRIGGER_LEAD_PX;
+              if (noseWorld >= crossStart
                   && tailWorld <= obstacleWorld + HURDLE_WIDTH_PX) {
                 wanted = lane.hopPose ?? lane.racingPose;
+                if (!lane.integrator.atHurdle) {
+                  const crossLen = HURDLE_TRIGGER_LEAD_PX + HURDLE_WIDTH_PX
+                    + ARENA_PET_DISPLAY_SIZE_PX;
+                  const p = Math.min(Math.max(
+                    (noseWorld - crossStart) / crossLen, 0), 1);
+                  liftY = HURDLE_JUMP_ARC_PX * Math.sin(p * Math.PI);
+                }
                 break;
               }
             }
           }
           if (pet.anim !== wanted) setAnim(pet, wanted);
         }
+        pet.instance.y = liftY;
 
         // Legs follow the APPARENT speed (§7.6): fast glide, fast strides;
         // stalled, a slow trot-in-place. Finished lanes idle at 1×.

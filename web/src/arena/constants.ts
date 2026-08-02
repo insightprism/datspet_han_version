@@ -98,6 +98,12 @@ export const HURDLE_TRIGGER_LEAD_PX = 6;
 export const HURDLE_CRASHES_TO_DQ = 3;
 export const CRASH_FX_MS = 1400;
 
+/** The obstacle is SOLID (owner: "the hurdle is just an image with no
+ *  awareness of the animal"): while crossing, the sprite rises over the bar
+ *  on a real parabolic arc — higher than the hurdle, so the body visibly
+ *  clears it. Parked at the gate the runner stays grounded. */
+export const HURDLE_JUMP_ARC_PX = 36;
+
 /** Rev.9 — the JUMP color: what the challenge panel wears while the lane is
  *  parked at a hurdle and the question is one rung harder. Amber, distinct
  *  from the running green, readable on the dark card. */
