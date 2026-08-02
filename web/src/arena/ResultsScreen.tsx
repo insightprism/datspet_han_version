@@ -96,7 +96,6 @@ export default function ResultsScreen({
       label: lane.label,
       handicapName: lane.handicapName,
       racingPose: lane.racingPose,
-      stats: lane.stats,
       integrator: new LaneIntegrator(event, lane.stats, lane.handicap, raceSeed, i),
       log: logs[i],
     }));

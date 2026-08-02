@@ -27,6 +27,12 @@ export const ARENA_PET_DISPLAY_SIZE_PX = 96;
 export const LANE_HEIGHT_PX = 116;
 export const TRACK_EDGE_PADDING_PX = 16;
 
+/** Distance markings on the track (owner ask: "he can be on the 40"): the
+ *  smallest of these round steps that keeps a course at no more than
+ *  TRACK_MARK_MAX_COUNT marks. */
+export const TRACK_MARK_STEPS_M = [5, 10, 25, 50, 100];
+export const TRACK_MARK_MAX_COUNT = 5;
+
 /** Recap playback speed (§8.8 — "watch how you won"). */
 export const RECAP_PLAYBACK_SPEED = 2;
 

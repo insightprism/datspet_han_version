@@ -21,14 +21,13 @@
 
 import { useEffect, useRef } from "react";
 import { applyTransform, getDisplayFrame, getPet, setAnim, setBgPos } from "@/pet";
-import type { AthleticsStats } from "./athletics";
 import {
   ARENA_PET_DISPLAY_SIZE_PX, LANE_HEIGHT_PX, SPRITE_RATE_MAX, SPRITE_RATE_MIN,
-  SPRITE_RATE_WINDOW_MS, TRACK_EDGE_PADDING_PX,
+  SPRITE_RATE_WINDOW_MS, TRACK_EDGE_PADDING_PX, TRACK_MARK_MAX_COUNT,
+  TRACK_MARK_STEPS_M,
 } from "./constants";
 import type { LaneIntegrator, Impulse } from "./raceEngine";
 import { recentAnswerRate } from "./raceEngine";
-import StatBars from "./StatBars";
 
 export interface TrackLane {
   storeId: string;
@@ -36,13 +35,34 @@ export interface TrackLane {
   /** Shown on the lane — a hidden handicap is the failure §8.3.1 forbids. */
   handicapName: string;
   racingPose: string;
-  /** The stats this lane races with (§16.6 — visible everywhere the entrant
-   *  is: the pick card, the lane, the results row). */
-  stats: AthleticsStats;
   /** The lane's integrator, owned by the parent and rebuilt per run. */
   integrator: LaneIntegrator;
   /** The live (or recorded) impulse log. Parent appends; track only reads. */
   log: Impulse[];
+}
+
+/** The distance-marking step for a course: the smallest round step that keeps
+ *  the track at no more than TRACK_MARK_MAX_COUNT marks (50 m → every 10 m,
+ *  100 m → every 25 m, 300 m → every 100 m). */
+function markStepM(distanceM: number): number {
+  return TRACK_MARK_STEPS_M.find((step) => distanceM / step <= TRACK_MARK_MAX_COUNT)
+    ?? TRACK_MARK_STEPS_M[TRACK_MARK_STEPS_M.length - 1];
+}
+
+function trackMarks(distanceM: number): number[] {
+  const step = markStepM(distanceM);
+  const marks: number[] = [];
+  for (let d = step; d < distanceM; d += step) marks.push(d);
+  return marks;
+}
+
+/** A mark's CSS left, aligned to where the runner's NOSE is at that distance —
+ *  the same mapping the driver uses for the sprite (nose = sprite right edge,
+ *  which crosses the finish line exactly at full distance). */
+function markLeftCss(d: number, distanceM: number): string {
+  const noseOffsetPx = TRACK_EDGE_PADDING_PX + ARENA_PET_DISPLAY_SIZE_PX;
+  const usablePx = ARENA_PET_DISPLAY_SIZE_PX + 2 * TRACK_EDGE_PADDING_PX;
+  return `calc(${noseOffsetPx}px + ${d / distanceM} * (100% - ${usablePx}px))`;
 }
 
 interface Props {
@@ -57,6 +77,10 @@ interface Props {
 export default function ArenaTrack({ lanes, distanceM, raceClock, onLaneFinish }: Props) {
   const laneElsRef = useRef<(HTMLDivElement | null)[]>([]);
   const spriteElsRef = useRef<(HTMLDivElement | null)[]>([]);
+  // The live "how far he got" readout — written by the driver loop directly
+  // (textContent, no React re-render at 60 fps), like every other per-frame
+  // update on this track.
+  const progressElsRef = useRef<(HTMLDivElement | null)[]>([]);
   // Per-lane finish flag so onLaneFinish fires exactly once.
   const finishedRef = useRef<boolean[]>([]);
   const onLaneFinishRef = useRef(onLaneFinish);
@@ -119,6 +143,12 @@ export default function ArenaTrack({ lanes, distanceM, raceClock, onLaneFinish }
           laneEl.clientWidth - ARENA_PET_DISPLAY_SIZE_PX - 2 * TRACK_EDGE_PADDING_PX, 1);
         pet.instance.x =
           TRACK_EDGE_PADDING_PX + lane.integrator.distanceFraction * usable;
+
+        const progressEl = progressElsRef.current[i];
+        if (progressEl) {
+          progressEl.textContent =
+            `${Math.floor(lane.integrator.distanceM)} / ${distanceM} m`;
+        }
 
         // Frame advance at answer tempo (§7.6). Finished lanes idle at 1×.
         const anim = pet.anims[pet.anim];
@@ -183,12 +213,22 @@ export default function ArenaTrack({ lanes, distanceM, raceClock, onLaneFinish }
               </span>
             )}
           </div>
-          {/* Lane furniture, behind the runner (the sprite is later in DOM
-              order): the numbers this lane races with, §16.6. */}
-          <div className="pointer-events-none absolute left-2 w-44"
-            style={{ top: 16, opacity: 0.75 }}>
-            <StatBars stats={lane.stats} />
-          </div>
+          {/* Distance markings, like a real track — the runner is literally
+              "on the 40" (owner). Aligned to the nose, same mapping as the
+              finish line. */}
+          {trackMarks(distanceM).map((d) => (
+            <div key={d} className="pointer-events-none absolute bottom-0 top-0"
+              style={{
+                left: markLeftCss(d, distanceM),
+                width: 1,
+                background: "rgba(255,255,255,0.08)",
+              }}>
+              <span className="absolute bottom-0.5 left-1 text-[9px]"
+                style={{ color: "var(--muted)", opacity: 0.8 }}>
+                {d}
+              </span>
+            </div>
+          ))}
           {/* The finish line. */}
           <div className="absolute bottom-0 top-0"
             style={{
@@ -198,8 +238,10 @@ export default function ArenaTrack({ lanes, distanceM, raceClock, onLaneFinish }
                 "repeating-linear-gradient(180deg, #fff 0 6px, #333 6px 12px)",
               opacity: 0.5,
             }} />
-          <div className="absolute right-2 top-1 text-[10px]" style={{ color: "var(--muted)" }}>
-            {distanceM} m
+          <div ref={(el) => { progressElsRef.current[i] = el; }}
+            className="mono absolute right-2 top-1 text-[10px] tabular-nums"
+            style={{ color: "var(--muted)" }}>
+            0 / {distanceM} m
           </div>
           <div
             ref={(el) => { spriteElsRef.current[i] = el; }}
