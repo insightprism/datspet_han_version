@@ -1,7 +1,8 @@
 # SPEC_PET_ARENA_LOUNGE — permanent rooms where pets find their next race
 
-**Status: Rev.1 (2026-08-02) — DRAFT FOR OWNER REVIEW; NOTHING BUILT.** No code, no deploy. §0
-records the proposed decisions; §14 lists what needs the owner's call before build.
+**Status: Rev.2 (2026-08-03) — L0–L2 BUILT (local, not deployed); L3 unbuilt.** Built on "proceed"
+with the §14 *recommended* answers as defaults — every one of them is content or a one-line change,
+so the owner's review can still revise them cheaply. §15 records the as-built notes.
 
 **Companion to `SPEC_PET_ARENA_ROOMS`, built on top of it, never instead of it.** That spec owns the
 *contest* — an ephemeral race room that lives exactly as long as the game. This one owns the *front
@@ -305,12 +306,12 @@ LOUNGE_MAX_PRESENT      = 40     # a lounge list a phone can render; joins 409 p
 Depends on SPEC_PET_ARENA_ROOMS **R1–R2 first** (a challenge must have a room to mint into; the board
 wants R3 for Watch links but can ship listing-only before it).
 
-| Phase | Ships |
-|---|---|
-| **L0** | `lounges.json` + presence: enter, see the pet list, leave, reaping. The lounge page renders. |
-| **L1** | Challenges: card → accept → minted room → both players in the room lobby. |
-| **L2** | The racing board, with Watch links once rooms-R3 exists. |
-| **L3** | Host-delivered invitations (§4.3) — cross-repo, specced separately when reached. |
+| Phase | Ships | Status |
+|---|---|---|
+| **L0** | `lounges.json` + presence: enter, see the pet list, leave, reaping. The lounge page renders. | **BUILT** 2026-08-03 |
+| **L1** | Challenges: card → accept → minted room → both players in the room lobby. | **BUILT** 2026-08-03 |
+| **L2** | The racing board, with Watch links once rooms-R3 exists. | **BUILT** 2026-08-03 (Watch links live — R3 exists) |
+| **L3** | Host-delivered invitations (§4.3) — cross-repo, specced separately when reached. | unbuilt |
 
 ---
 
@@ -359,3 +360,34 @@ once reads as three children to everyone else.
 
 **14.5 Spectator counts on the board?** "3 watching" is fun but is also a popularity number attached
 to children's races. Recommend **no** for v1.
+
+---
+
+## §15 As built (Rev.2, 2026-08-03)
+
+Backend `webui/arena_lounges.py` + `webui/lounges.json`; frontend `web/src/arena/lounge/`
+(`LoungeView` + `useLoungeStream`) entered from SetupScreen step 7, landing back in the ordinary
+room phase. Rooms-side seams exactly the two §1 predicted: a `lounge_id` tag on
+`Room`/`mint_room` and `room_snapshot_if_alive` beside `room_is_alive` — the board never touches
+`ROOMS` or its lock.
+
+**§14 defaults chosen** (all cheap to revise): 14.1 `Room 1/2/3` with 🥇🥈🥉 (a JSON edit to
+retheme); 14.2 any signed-in DatsMe user; 14.3 yes — the card pre-commits event + challenge +
+difficulty (the challenger's current setup picks); 14.4 yes — entering a lounge silently leaves
+the others; 14.5 no spectator counts.
+
+**Deviations from the letter of Rev.1, and why:**
+- **No Last-Event-ID replay ring on the lounge stream.** Unlike a room's tick deltas, every lounge
+  event carries the full lounge snapshot, so a reconnect is made whole by the snapshot-first frame;
+  a ring would be dead weight. (The SSE machinery is otherwise the rooms pattern *copied*, not
+  extracted — two instances is under the three-instances bar.)
+- **§3.2's pet thumbnails are a paw glyph for now** — same deferral as the room lobby's roster;
+  there is deliberately no lounge-scoped asset route until an owner asks for portraits here.
+- **The challenger's seat is a claim, not a push:** accept mints the room and stores the host seat
+  on the challenge; the challenger's browser claims it with their presence token the moment the
+  card turns `accepted` on their stream. Tokens ride only direct responses, never broadcasts.
+
+**Verification:** the §10 guard list is `webui/tests/test_arena_lounges.py` (13 cases), plus an
+isolated-backend HTTP E2E on :19964 (anon 401 at the real door, presence privacy on the wire,
+challenge→accept→claim→start, board truth, snapshot-first SSE, room-scoped assets for a
+lounge-minted room). Suites at build: 745 pytest / tsc clean / 114 vitest.
