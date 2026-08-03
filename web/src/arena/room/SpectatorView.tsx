@@ -20,7 +20,7 @@ import { roomPetAssetUrls } from "@/lib/api";
 import { removePet } from "@/pet";
 import ArenaTrack, { type TrackLane } from "../ArenaTrack";
 import {
-  MEDALS, SPECTATOR_RENDER_TICK_MS,
+  MEDALS, RACE_CLOCK_RENDER_TICK_MS,
 } from "../constants";
 import { loadEvent } from "../declarations";
 import type { LoadedRacer } from "../gameTypes";
@@ -66,7 +66,7 @@ export default function SpectatorView({ code }: { code: string }) {
   useEffect(() => {
     if (room?.state !== "racing") return;
     const iv = setInterval(
-      () => setRenderTick((t) => t + 1), SPECTATOR_RENDER_TICK_MS);
+      () => setRenderTick((t) => t + 1), RACE_CLOCK_RENDER_TICK_MS);
     return () => clearInterval(iv);
   }, [room?.state]);
 

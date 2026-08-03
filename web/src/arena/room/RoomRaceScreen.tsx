@@ -32,6 +32,7 @@ import {
 } from "../challenges/registry";
 import {
   CRASH_FX_MS, GATE_POLL_MS, HURDLE_CRASHES_TO_DQ, IMPULSE_BATCH_MS,
+  RACE_CLOCK_RENDER_TICK_MS,
 } from "../constants";
 import { loadEvent } from "../declarations";
 import type { LoadedRacer } from "../gameTypes";
@@ -153,6 +154,17 @@ export default function RoomRaceScreen({
     }, GATE_POLL_MS);
     return () => clearInterval(iv);
   }, [raceClock, homeMs]);
+
+  // The header clock re-derives on a slow cadence, same as the spectator's:
+  // every other setState above bails out unchanged while a player is idle,
+  // so without this the clock freezes at its mount value (staging,
+  // 2026-08-03) even as the rival lanes animate by rAF.
+  const [, setRenderTick] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(
+      () => setRenderTick((t) => t + 1), RACE_CLOCK_RENDER_TICK_MS);
+    return () => clearInterval(iv);
+  }, []);
 
   const activeDifficulty = atGate
     ? harderRung(challenge, room.difficulty) : room.difficulty;

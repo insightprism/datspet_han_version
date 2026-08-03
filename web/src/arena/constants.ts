@@ -134,9 +134,13 @@ export const MEDALS = ["🥇", "🥈", "🥉"];
  *  end time (§2.3 — the clock is the server's; this is only render cadence). */
 export const COUNTDOWN_RENDER_TICK_MS = 200;
 
-/** The spectator page re-renders on this cadence while racing — ticks feed
- *  lane adapters (refs), so nothing else advances its header clock. */
-export const SPECTATOR_RENDER_TICK_MS = 500;
+/** EVERY live race header re-renders on this cadence — player screen and
+ *  spectator page alike. Server ticks feed lane adapters (refs) and the
+ *  canvas animates by rAF, so without this interval an IDLE screen never
+ *  re-renders and the clock freezes at its mount value (found live on
+ *  staging 2026-08-03: a player who answered nothing watched "0.2 s" for a
+ *  whole race while the rival lane moved normally). */
+export const RACE_CLOCK_RENDER_TICK_MS = 500;
 
 /** The gate poll: how often a race screen reads its integrator for the
  *  parked-at-hurdle state (Rev.9's amber question). Render cadence only —
