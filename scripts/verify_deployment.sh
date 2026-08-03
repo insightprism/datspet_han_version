@@ -198,6 +198,29 @@ else
   rm -f "$STREAM_FILE"
 fi
 
+hdr "8. Arena lounges  (SPEC_PET_ARENA_LOUNGE — the standing rooms answer)"
+# The lounge router mounting is exactly the class of defect the false-green
+# table exists for: include_router once silently mounted zero routes. The
+# list is unauthenticated, so the check is one GET; the door itself must
+# 401 an unsigned walk-in (the §3.1 gate, live). Skips cleanly on a deploy
+# that predates the lounge work.
+LOUNGE_CODE=$("${CURL[@]}" -o /dev/null -m 10 -w '%{http_code}' "$BASE/api/arena/lounges" || true)
+if [ "$LOUNGE_CODE" = "404" ]; then
+  ok "lounges not deployed yet — skipped"
+else
+  LOUNGE_COUNT=$("${CURL[@]}" -m 10 "$BASE/api/arena/lounges" \
+    | python3 -c 'import sys,json; print(len(json.load(sys.stdin)["lounges"]))' 2>/dev/null || echo 0)
+  [ "$LOUNGE_COUNT" -ge 1 ] \
+    && ok "lounge list serves $LOUNGE_COUNT standing room(s)" \
+    || bad "lounge list is empty or unparseable (router mounted? lounges.json shipped?)"
+  GATE_CODE=$("${CURL[@]}" -o /dev/null -m 10 -w '%{http_code}' \
+    -X POST "$BASE/api/arena/lounges/lounge_1/enter" \
+    -H "Content-Type: application/json" -d '{"pet_id":"x"}' || true)
+  [ "$GATE_CODE" = "401" ] \
+    && ok "the signed-in gate holds — an unsigned walk-in gets 401" \
+    || bad "unsigned lounge enter returned $GATE_CODE (want 401 — §3.1's gate)"
+fi
+
 echo
 echo "=============================================================="
 printf ' %s: \033[32m%d passed\033[0m, \033[31m%d failed\033[0m\n' "$BASE" "$PASS" "$FAIL"
