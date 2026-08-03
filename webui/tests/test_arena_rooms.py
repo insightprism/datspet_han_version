@@ -506,3 +506,54 @@ def test_wedged_subscriber_is_dropped_not_grown(rooms, monkeypatch):
         finally:
             await gen.aclose()
     asyncio.run(run())
+
+
+def test_idle_room_stream_heartbeats_under_the_cliff(rooms, monkeypatch):
+    """§10 calls this 'the most valuable one here' (F9a): the ROOM stream —
+    not a probe, not a lookalike — emits a heartbeat within SSE_HEARTBEAT_S
+    on an idle room, which is the whole §5.2 defence against the outer
+    proxy's 60 s idle default."""
+    client, arena_rooms = rooms
+    monkeypatch.setattr(arena_rooms, "SSE_HEARTBEAT_S", 0.05)
+    code = make_room(client)["code"]
+
+    async def run():
+        gen = arena_rooms._room_stream(code, None)
+        first = await asyncio.wait_for(gen.__anext__(), timeout=5)
+        assert "event: snapshot" in first
+        beat = await asyncio.wait_for(gen.__anext__(), timeout=5)
+        assert beat == ": heartbeat\n\n"
+        await gen.aclose()
+    asyncio.run(run())
+
+
+def test_handicap_is_visible_before_the_gun_and_moves_the_standings(rooms):
+    """F9b / §10: the handicap is broadcast to everyone BEFORE the countdown
+    (a hidden handicap is the failure §8.3.1 forbids) and it changes the
+    AUTHORITATIVE result — same pets, same answers, the boosted lane covers
+    more ground."""
+    client, arena_rooms = rooms
+    made = make_room(client, event_key="sprint_100")
+    code, host_token = made["code"], made["host_token"]
+    j = join(client, code, "boostedpet01", pet_label="Rocket",
+             handicap_name="rocket").json()
+
+    # Visible in the lobby snapshot — pre-countdown, to every viewer.
+    snap = client.get(f"/api/arena/rooms/{code}").json()["room"]
+    assert snap["state"] == "lobby"
+    by_label = {p["pet_label"]: p["handicap_name"] for p in snap["players"]}
+    assert by_label["Rocket"] == "rocket"
+
+    _start_racing(client, arena_rooms, code, host_token, elapsed_s=60)
+    same_answers = [{"at": 1000.0 * i} for i in range(1, 11)]
+    for token in (host_token, j["player_token"]):
+        client.post(f"/api/arena/rooms/{code}/impulses",
+                    json={"token": token, "impulses": same_answers})
+    with arena_rooms.ROOMS_LOCK:
+        arena_rooms.ROOMS[code].countdown_ends_at = \
+            time.time() - arena_rooms.ROOMS[code].event["time_limit_s"] - 1
+    arena_rooms.tick_racing_rooms()
+    with arena_rooms.ROOMS_LOCK:
+        standings = arena_rooms.ROOMS[code].standings
+    assert standings[0]["pet_label"] == "Rocket"
+    assert standings[0]["distance_m"] > standings[1]["distance_m"]

@@ -158,3 +158,33 @@ def test_generate_purges_only_the_callers_draft(app_client, dpp_env, monkeypatch
     assert r.status_code == 200, r.text
     assert db.get_pet("draftB000001") is not None, "user B's draft was wrongly purged"
     assert db.get_pet("draftLocal01") is not None, "local draft was wrongly purged"
+
+
+def test_arena_room_membership_never_widens_owner_scope(app_client, dpp_env):
+    """SPEC_PET_ARENA_ROOMS §10: '_scope_clause is unchanged — extend
+    test_scoping.py rather than trusting a review.' Behaviorally: a pet
+    ENTERED in a live arena room stays exactly as invisible to other owners
+    through every owner-scoped surface as it was before. The room's OWN
+    asset routes are a separate, deliberate capability (membership + the
+    room code) and widen nothing here."""
+    import importlib
+    import arena_rooms
+    importlib.reload(arena_rooms)
+    arena_rooms.db = dpp_env["db"]
+
+    db = dpp_env["db"]
+    make_pet(db, pet_id="scopedracer1", external_user_id=ANON_OWNER, draft=False)
+
+    r = app_client.post("/api/arena/rooms", json={
+        "event_key": "sprint_100", "challenge_key": "arithmetic",
+        "difficulty": "sums_10", "pet_id": "scopedracer1"},
+        cookies=anon_cookies())
+    assert r.status_code == 200
+
+    # The OTHER owner's world is unchanged: no listing, no read, no export.
+    assert db.get_pet_for_owner("scopedracer1", ANON_OWNER_2) is None
+    listed = app_client.get("/api/pets",
+                            cookies=anon_cookies(ANON_OWNER_2)).json()
+    assert all(p["id"] != "scopedracer1" for p in listed)
+    assert app_client.get("/api/pets/scopedracer1/manifest.json",
+                          cookies=anon_cookies(ANON_OWNER_2)).status_code == 404

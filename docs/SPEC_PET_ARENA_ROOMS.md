@@ -536,7 +536,10 @@ Prove the stream survives 90 seconds on a real deployed URL before writing the g
 - **`--workers 1` is lifted** → this design breaks silently, with players landing in different rooms.
   Whoever lifts it owns moving room state out of process.
 - **Rooms outgrow one box** — measured concurrent rooms, not imagined ones. The move is a broker and
-  it is a real project.
+  it is a real project. *Measured 2026-08-03 (review follow-up): the ticker's referee pass costs
+  ~4.3 ms per room per 100 ms tick at the worst realistic log size (~900 impulses/lane × 5 unfinished
+  lanes), all under `ROOMS_LOCK` — the ceiling is therefore **~20 concurrently racing rooms** before
+  the ticker falls behind and impulse POSTs contend. That is the number that fires this tripwire.*
 - **Anyone asks for persistent results, leaderboards or records** → that is the *other* half of
   SPEC_PET_ARENA §11's tripwire, and it needs a table, a retention decision, and a fresh look at §6
   now that children's performance would be stored.
