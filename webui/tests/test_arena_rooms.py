@@ -28,25 +28,47 @@ for p in (WEBUI, REPO):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+from conftest import ANON_OWNER, anon_cookies, make_pet  # noqa: E402
+
 
 @pytest.fixture()
-def rooms():
+def rooms(dpp_env):
+    """Router-only app over the per-test DB — entering a pet is owner-scoped
+    (F1), so every create/join seeds a pet the caller can see and carries the
+    anon cookie."""
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     import arena_rooms
     importlib.reload(arena_rooms)
+    arena_rooms.db = dpp_env["db"]
+    arena_rooms.owner_scope = importlib.import_module("owner_scope")
     app = FastAPI()
     app.include_router(arena_rooms.router)
-    return TestClient(app), arena_rooms
+    client = TestClient(app, cookies=anon_cookies())
+    client._db = dpp_env["db"]
+    return client, arena_rooms
+
+
+def seed_pet(client, pet_id, owner=ANON_OWNER):
+    make_pet(client._db, pet_id=pet_id, external_user_id=owner)
+    return pet_id
 
 
 def make_room(client, max_players=3, **over):
     body = {"event_key": "hurdles", "challenge_key": "arithmetic",
-            "difficulty": "sums_10", "pet_id": "pet0",
+            "difficulty": "sums_10", "pet_id": "roomhostpet0",
             "pet_label": "Kenji Girl", "max_players": max_players, **over}
+    if not client._db.get_pet(body["pet_id"]):
+        make_pet(client._db, pet_id=body["pet_id"], external_user_id=ANON_OWNER)
     r = client.post("/api/arena/rooms", json=body)
     assert r.status_code == 200
     return r.json()
+
+
+def join(client, code, pet_id, **over):
+    seed_pet(client, pet_id)
+    return client.post(f"/api/arena/rooms/{code}/join",
+                       json={"pet_id": pet_id, **over})
 
 
 def test_create_join_capacity_and_lifecycle(rooms):
@@ -57,13 +79,13 @@ def test_create_join_capacity_and_lifecycle(rooms):
     assert made["room"]["players"][0]["is_host"] is True
 
     for i in (1, 2):
-        r = client.post(f"/api/arena/rooms/{code}/join",
-                        json={"pet_id": f"pet{i}", "pet_label": f"Pet {i}"})
+        r = join(client, code, f"seededpet{i}", pet_label=f"Pet {i}")
         assert r.status_code == 200
-    full = client.post(f"/api/arena/rooms/{code}/join", json={"pet_id": "petX"})
+    full = join(client, code, "seededpetX")
     assert full.status_code == 409
+    seed_pet(client, "seededpetN")
     assert client.post("/api/arena/rooms/nope/join",
-                       json={"pet_id": "p"}).status_code == 404
+                       json={"pet_id": "seededpetN"}).status_code == 404
 
     snap = client.get(f"/api/arena/rooms/{code}").json()["room"]
     assert [p["pet_label"] for p in snap["players"]] == \
@@ -76,8 +98,7 @@ def test_only_the_host_starts_and_lobby_closes(rooms):
     client, _ = rooms
     made = make_room(client)
     code = made["code"]
-    joined = client.post(f"/api/arena/rooms/{code}/join",
-                         json={"pet_id": "p1"}).json()
+    joined = join(client, code, "hostgatepet1").json()
 
     r = client.post(f"/api/arena/rooms/{code}/start",
                     json={"token": joined["player_token"]})
@@ -88,7 +109,7 @@ def test_only_the_host_starts_and_lobby_closes(rooms):
     assert r.json()["room"]["state"] == "countdown"
     assert r.json()["room"]["countdown_ends_at"] is not None
     # The lobby is closed to newcomers the moment the countdown exists.
-    late = client.post(f"/api/arena/rooms/{code}/join", json={"pet_id": "p2"})
+    late = join(client, code, "latepet00001")
     assert late.status_code == 409
     # And the countdown lapses into racing without any timer thread.
     _, arena_rooms = rooms
@@ -130,9 +151,8 @@ def test_fresh_subscriber_gets_snapshot_then_live_events(rooms):
         assert "event: snapshot" in first
         # A join lands from another thread while the stream is live — the
         # exact production shape (POSTs in the threadpool, stream on the loop).
-        t = threading.Thread(target=lambda: client.post(
-            f"/api/arena/rooms/{code}/join",
-            json={"pet_id": "p9", "pet_label": "Late Pet"}))
+        t = threading.Thread(target=lambda: join(
+            client, code, "streampet001", pet_label="Late Pet"))
         t.start()
         frame = await asyncio.wait_for(gen.__anext__(), timeout=5)
         t.join()
@@ -145,8 +165,8 @@ def test_fresh_subscriber_gets_snapshot_then_live_events(rooms):
 def test_reconnect_replays_the_gap_or_snapshots(rooms):
     client, arena_rooms = rooms
     code = make_room(client)["code"]           # seq 1: host joined
-    client.post(f"/api/arena/rooms/{code}/join", json={"pet_id": "p1"})  # seq 2
-    client.post(f"/api/arena/rooms/{code}/join", json={"pet_id": "p2"})  # seq 3
+    join(client, code, "replaypet001")         # seq 2
+    join(client, code, "replaypet002")         # seq 3
 
     frames = _collect(arena_rooms._room_stream(code, 1), 2)
     assert [f.splitlines()[0] for f in frames] == ["id: 2", "id: 3"]
@@ -234,8 +254,7 @@ def test_time_limit_ends_the_race_with_authoritative_standings(rooms):
     client, arena_rooms = rooms
     made = make_room(client, event_key="sprint_100")
     code, host_token = made["code"], made["host_token"]
-    j = client.post(f"/api/arena/rooms/{code}/join",
-                    json={"pet_id": "p2", "pet_label": "Rival"}).json()
+    j = join(client, code, "rivalpet0001", pet_label="Rival").json()
     _start_racing(client, arena_rooms, code, host_token)
 
     # Host covers ground; the rival never answers.
@@ -271,28 +290,66 @@ def test_rooms_host_racing_events_only(rooms):
     assert "racing events only" in r.json()["detail"]
 
 
-def test_room_assets_capability_is_membership_not_ownership(rooms, dpp_env):
+def test_room_assets_capability_is_membership_not_ownership(rooms):
     client, arena_rooms = rooms
-    arena_rooms.db = dpp_env["db"]
-    from conftest import make_pet
-    make_pet(dpp_env["db"], pet_id="roompetsheet", external_user_id="someone-else")
-
-    made = make_room(client, pet_id="roompetsheet")
+    made = make_room(client)
     code = made["code"]
-    # Entered pet serves — the caller's ownership is never consulted.
-    r = client.get(f"/api/arena/rooms/{code}/pets/roompetsheet/sheet.png")
+    # The READ is unscoped (§4.3): a caller with NO cookies at all — a link
+    # spectator — fetches an entered pet's assets.
+    from fastapi.testclient import TestClient
+    anon = TestClient(client.app)
+    r = anon.get(f"/api/arena/rooms/{code}/pets/roomhostpet0/sheet.png")
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/png"
     assert "no-cache" in r.headers["cache-control"]
-    r = client.get(f"/api/arena/rooms/{code}/pets/roompetsheet/manifest.json")
+    r = anon.get(f"/api/arena/rooms/{code}/pets/roomhostpet0/manifest.json")
     assert r.status_code == 200
-    # A pet NOT entered 404s — even one that exists.
-    make_pet(dpp_env["db"], pet_id="notinroom001")
-    assert client.get(
+    # A pet NOT entered 404s — even one that exists and the caller owns.
+    seed_pet(client, "notinroom001")
+    assert anon.get(
         f"/api/arena/rooms/{code}/pets/notinroom001/sheet.png").status_code == 404
     # And there is NO zip route — watching a race is not taking the pet.
-    assert client.get(
-        f"/api/arena/rooms/{code}/pets/roompetsheet/zip").status_code == 404
+    assert anon.get(
+        f"/api/arena/rooms/{code}/pets/roomhostpet0/zip").status_code == 404
+
+
+def test_entering_a_pet_you_cannot_see_404s(rooms):
+    """F1 — the capability is closed at the ENTRANCE: naming someone else's
+    pet id (published to every spectator) must not seat it, on create or on
+    join, so a room can never launder asset access to a pet the caller could
+    not already fetch."""
+    client, arena_rooms = rooms
+    make_pet(client._db, pet_id="victimpet001", external_user_id="user-victim")
+
+    r = client.post("/api/arena/rooms", json={
+        "event_key": "sprint_100", "challenge_key": "arithmetic",
+        "difficulty": "sums_10", "pet_id": "victimpet001"})
+    assert r.status_code == 404
+
+    code = make_room(client)["code"]
+    r = client.post(f"/api/arena/rooms/{code}/join",
+                    json={"pet_id": "victimpet001"})
+    assert r.status_code == 404
+
+    # A cookie-less caller cannot enter ANY owned pet.
+    from fastapi.testclient import TestClient
+    anon = TestClient(client.app)
+    r = anon.post("/api/arena/rooms", json={
+        "event_key": "sprint_100", "challenge_key": "arithmetic",
+        "difficulty": "sums_10", "pet_id": "roomhostpet0"})
+    assert r.status_code == 404
+
+
+def test_room_records_its_host_owner_and_never_serializes_it(rooms):
+    """Lounge seam (§2.2 there): the room knows who opened it, for scoping
+    admin-ish actions — and no public view ever carries it."""
+    client, arena_rooms = rooms
+    made = make_room(client)
+    with arena_rooms.ROOMS_LOCK:
+        assert arena_rooms.ROOMS[made["code"]].host_owner == ANON_OWNER
+    assert "host_owner" not in json.dumps(made["room"])
+    assert arena_rooms.room_is_alive(made["code"]) is True
+    assert arena_rooms.room_is_alive("nope") is False
 
 
 def test_late_arrival_sees_standings_in_the_snapshot(rooms):

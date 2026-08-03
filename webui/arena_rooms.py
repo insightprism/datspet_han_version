@@ -34,6 +34,7 @@ from fastapi import APIRouter, Body, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 import db
+import owner_scope
 from pet_factory import athletics
 
 router = APIRouter(prefix="/api/arena")
@@ -103,6 +104,10 @@ class RoomPlayer:
 class Room:
     code: str
     host_token: str
+    # The DatsMe user (or anon owner) who opened the room — §2.2. Scoping for
+    # admin-ish actions only, and the seam the lounge's server-side minting
+    # needs; never serialized (players are their pets, §6).
+    host_owner: Optional[str]
     event_key: str             # validated Tier-1 at create; dict cached below
     challenge_key: str
     difficulty: str
@@ -188,20 +193,30 @@ def _get_room(code: str) -> Room:
     return room
 
 
-def _resolve_entrant(pet_id: str, handicap_name: str) -> tuple[dict, float]:
-    """The referee's inputs, resolved from the SERVER's copy of the pet
-    (§3.4). A pet id the server does not hold gets default stats rather than
-    an error — a race is a family game, not a registry audit."""
-    row = db.get_pet(pet_id)
-    manifest = {}
-    if row is not None:
-        try:
-            manifest = json.loads(row["manifest_json"])
-        except (TypeError, ValueError):
-            manifest = {}
+def _seat_entrant(request: Request, payload: dict) -> tuple[str, dict, float, Optional[str]]:
+    """Entering a pet requires being able to SEE it (§4.3's capability model,
+    closed at the entrance): the entrant is read through the caller's own
+    owner scope, exactly like keep/delete/store-intake. Without this, naming
+    any pet id would launder the room-asset capability — a room is one
+    unauthenticated POST away, and pet ids are published to every spectator.
+    The room-scoped READ routes stay unscoped by design; the gate is here.
+
+    Returns (pet_id, stats, handicap, owner_id). Stats resolve from the
+    server's own copy of the pet (§3.4) — the same resolve_athletics that
+    stamps solo results."""
+    pet_id = str(payload["pet_id"])
+    owner = owner_scope.resolve_owner_scope(request)
+    row = db.get_pet_for_owner(pet_id, owner.owner_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="that pet is not in your house")
+    try:
+        manifest = json.loads(row["manifest_json"])
+    except (TypeError, ValueError):
+        manifest = {}
     stats = athletics.resolve_athletics(manifest, pet_id)
+    handicap_name = str(payload.get("handicap_name") or "none")
     handicap = float(athletics.handicap_ladder().get(handicap_name, 1.0))
-    return stats, handicap
+    return pet_id, stats, handicap, owner.owner_id
 
 
 def _clean_label(label: object) -> str:
@@ -234,8 +249,41 @@ def sweep_rooms(now: Optional[float] = None) -> int:
 # R1 routes (§4.1)
 # ---------------------------------------------------------------------------
 
+def mint_room(*, event: dict, event_key: str, challenge_key: str,
+              difficulty: str, max_players: int, host: Optional[RoomPlayer],
+              host_owner: Optional[str]) -> Room:
+    """The service seam the routes (and one day the lounge, §4.2 there) mint
+    rooms through. `host` may be None for a hostless utility room — the
+    deploy gate's probe room enters through here too."""
+    room = Room(
+        code=secrets.token_urlsafe(ROOM_CODE_BYTES),
+        host_token=secrets.token_urlsafe(16),
+        host_owner=host_owner,
+        event_key=event_key, event=event,
+        challenge_key=challenge_key, difficulty=difficulty,
+        question_seed=secrets.randbits(31),
+        max_players=max_players,
+        created_at=_now(), last_activity_at=_now())
+    if host is not None:
+        host.token = room.host_token
+        room.players[room.host_token] = host
+    with ROOMS_LOCK:
+        ROOMS[room.code] = room
+        if host is not None:
+            _broadcast(room, "player_joined",
+                       {"pet_label": host.pet_label, "room": _snapshot(room)})
+    return room
+
+
+def room_is_alive(code: str) -> bool:
+    """The accessor a future lounge board reads instead of reaching into
+    ROOMS under ROOMS_LOCK (lounge spec §2.3)."""
+    with ROOMS_LOCK:
+        return code in ROOMS
+
+
 @router.post("/rooms")
-def create_room(payload: dict = Body(...)):
+def create_room(request: Request, payload: dict = Body(...)):
     """Create a room and enter it as host. Returns the code friends share and
     the host's token (which IS their player token)."""
     max_players = payload.get("max_players", ROOM_MAX_PLAYERS)
@@ -253,37 +301,29 @@ def create_room(payload: dict = Body(...)):
         raise HTTPException(status_code=422,
                             detail="rooms host racing events only")
 
-    code = secrets.token_urlsafe(ROOM_CODE_BYTES)
-    host_token = secrets.token_urlsafe(16)
-    now = _now()
-    host_stats, host_handicap = _resolve_entrant(
-        str(payload["pet_id"]), str(payload.get("handicap_name") or "none"))
+    pet_id, stats, handicap, owner_id = _seat_entrant(request, payload)
     host = RoomPlayer(
-        token=host_token, pet_id=str(payload["pet_id"]),
+        token="",  # mint_room assigns the room's host token
+        pet_id=pet_id,
         pet_label=_clean_label(payload.get("pet_label")),
         handicap_name=str(payload.get("handicap_name") or "none"),
-        is_host=True, joined_at=now,
-        stats=host_stats, handicap=host_handicap)
-    room = Room(
-        code=code, host_token=host_token,
-        event_key=str(payload["event_key"]), event=event,
-        challenge_key=str(payload["challenge_key"]),
-        difficulty=str(payload["difficulty"]),
-        question_seed=secrets.randbits(31),
-        max_players=max_players,
-        created_at=now, last_activity_at=now)
-    room.players[host_token] = host
+        is_host=True, joined_at=_now(),
+        stats=stats, handicap=handicap)
+    room = mint_room(event=event, event_key=str(payload["event_key"]),
+                     challenge_key=str(payload["challenge_key"]),
+                     difficulty=str(payload["difficulty"]),
+                     max_players=max_players, host=host, host_owner=owner_id)
     with ROOMS_LOCK:
-        ROOMS[code] = room
-        _broadcast(room, "player_joined",
-                   {"pet_label": host.pet_label, "room": _snapshot(room)})
-    return {"code": code, "host_token": host_token, "room": _snapshot(room)}
+        return {"code": room.code, "host_token": room.host_token,
+                "room": _snapshot(room)}
 
 
 @router.post("/rooms/{code}/join")
-def join_room(code: str, payload: dict = Body(...)):
+def join_room(request: Request, code: str, payload: dict = Body(...)):
     if not payload.get("pet_id"):
         raise HTTPException(status_code=422, detail="pet_id is required")
+    # Seat OUTSIDE the lock — it reads the DB.
+    pet_id, stats, handicap, _owner_id = _seat_entrant(request, payload)
     with ROOMS_LOCK:
         room = _get_room(code)
         _advance_state(room)
@@ -292,10 +332,8 @@ def join_room(code: str, payload: dict = Body(...)):
         if len(room.players) >= room.max_players:
             raise HTTPException(status_code=409, detail="room is full")
         token = secrets.token_urlsafe(16)
-        stats, handicap = _resolve_entrant(
-            str(payload["pet_id"]), str(payload.get("handicap_name") or "none"))
         player = RoomPlayer(
-            token=token, pet_id=str(payload["pet_id"]),
+            token=token, pet_id=pet_id,
             pet_label=_clean_label(payload.get("pet_label")),
             handicap_name=str(payload.get("handicap_name") or "none"),
             is_host=False, joined_at=_now(),
