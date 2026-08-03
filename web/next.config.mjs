@@ -25,6 +25,12 @@ const nextConfig = isStaticExport
   ? { output: "export", ...(distDir ? { distDir } : {}) }
   : {
       ...(distDir ? { distDir } : {}),
+      // SSE must flow through the dev proxy unbuffered: Next's built-in
+      // compression holds event-stream bytes until the buffer fills, so the
+      // arena room stream (SPEC_PET_ARENA_ROOMS §3.2) delivers nothing and
+      // the lobby looks frozen — dev-only, and invisible in prod, where the
+      // static export has no Node server and nginx owns buffering (§5.1).
+      compress: false,
       async rewrites() {
         const api = process.env.DATSPET_API_ORIGIN || "http://localhost:19954";
         // Proxy BOTH the XHR API (/api/*) and the browser-navigated backend
