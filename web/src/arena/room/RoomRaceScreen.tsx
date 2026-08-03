@@ -80,6 +80,11 @@ export default function RoomRaceScreen({
   const [typed, setTyped] = useState("");
   const [atGate, setAtGate] = useState(false);
   const [homeMs, setHomeMs] = useState<number | null>(null);
+  // F3 — the screen must never silently diverge from the referee: when the
+  // server holds fewer impulses than we sent (rate ceiling, lost batches),
+  // say so instead of letting the child watch a win the referee scores as a
+  // loss.
+  const [refereeGap, setRefereeGap] = useState(0);
 
   // Load every lane's pet — mine through the owner routes, the others
   // through the room-scoped routes (§4.3).
@@ -127,8 +132,12 @@ export default function RoomRaceScreen({
       if (pendingRef.current.length === 0) return;
       const batch = pendingRef.current.splice(0, pendingRef.current.length);
       try {
-        await postArenaImpulses(code, token,
+        const resp = await postArenaImpulses(code, token,
           batch.map((i) => ({ at: i.at, quality: i.quality ?? 1 })));
+        // Everything sent minus everything still pending should be on the
+        // server; any shortfall is answers the referee will never count.
+        const delivered = myLogRef.current.length - pendingRef.current.length;
+        setRefereeGap(Math.max(0, delivered - resp.total));
       } catch {
         pendingRef.current.unshift(...batch);
       }
@@ -208,6 +217,13 @@ export default function RoomRaceScreen({
 
       <ArenaTrack lanes={trackLanes} distanceM={event.distance_m}
         hurdlesEveryM={event.hurdles_every_m} raceClock={raceClock} />
+
+      {refereeGap > 0 && (
+        <div className="text-center text-xs" style={{ color: "#fbbf24" }}>
+          ⚠ {refereeGap} of your answers didn&apos;t reach the referee — the
+          standings come from what the referee saw.
+        </div>
+      )}
 
       {homeMs !== null ? (
         <div className="card p-4 text-center">

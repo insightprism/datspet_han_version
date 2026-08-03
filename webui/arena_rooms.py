@@ -22,6 +22,7 @@ why `--workers 1` stays load-bearing (§0.10.3, pinned by test).
 from __future__ import annotations
 
 import asyncio
+import bisect
 import json
 import secrets
 import threading
@@ -48,8 +49,17 @@ ROOM_IDLE_TTL_S = 900
 ROOM_RESULT_TTL_S = 300
 ROOM_TICK_HZ = 10              # broadcast rate (§3.2)
 ROOM_REPLAY_BUFFER_EVENTS = 600  # Last-Event-ID ring buffer (§3.2)
-IMPULSE_BATCH_MS = 200         # client-side batching (§3.3)
-MAX_IMPULSE_RATE_HZ = 10       # the plausible-rate clamp (§7)
+# §7 — the plausible-rate clamp, sized for the one challenge where rate IS
+# the game: tap (SPEC_PET_ARENA §8.6 — a fast tapper beating a slow
+# multiplier is a legitimate outcome). The bound is a COUNT IN A WINDOW,
+# never a pairwise gap: bursts are how humans tap, and batches may arrive
+# out of order or resent. 15/s sustained sits above any child's arithmetic
+# and at the top of genuine tapping.
+MAX_IMPULSE_RATE_HZ = 15
+IMPULSE_RATE_WINDOW_MS = 1000
+# Flagging is for scripts, not fast fingers: only a batch attempting more
+# than FLAG_FACTOR x the ceiling inside one window marks the player.
+IMPULSE_RATE_FLAG_FACTOR = 2
 
 # §5.2 — MUST stay under the outer proxy's 60 s idle default. This value is
 # set by infrastructure, not taste: the outer nginx-proxy vhost has no
@@ -96,7 +106,9 @@ class RoomPlayer:
     stats: dict = field(default_factory=dict)
     handicap: float = 1.0
     impulses: list = field(default_factory=list)
-    last_accepted_at_ms: float = -1e12   # §7 rate clamp bookkeeping
+    # Sorted accepted timestamps — the window clamp's index and the retry
+    # dedupe's membership check (§7). Same content as impulses' at-values.
+    accepted_ats: list = field(default_factory=list)
     rate_flagged: bool = False
 
 
@@ -412,9 +424,12 @@ def post_impulses(code: str, payload: dict = Body(...)):
         elapsed_ms = (_now() - _gun_epoch(room)) * 1000.0
         limit_ms = float(room.event.get("time_limit_s", 600)) * 1000.0
         window_hi = min(elapsed_ms + IMPULSE_FUTURE_SLACK_MS, limit_ms)
-        min_gap_ms = 1000.0 / MAX_IMPULSE_RATE_HZ
 
-        accepted = 0
+        # Parse, then SORT: the clamp reasons in timestamp order exactly like
+        # the referee does — arrival order is transport trivia. A resent
+        # batch (the client's retry path) dedupes silently: idempotence is
+        # not cheating.
+        candidates = []
         for imp in impulses:
             if not isinstance(imp, dict):
                 continue
@@ -424,20 +439,47 @@ def post_impulses(code: str, payload: dict = Body(...)):
                 continue
             if not 0.0 <= at <= window_hi:
                 continue
-            if at - player.last_accepted_at_ms < min_gap_ms:
-                player.rate_flagged = True
-                continue
             quality = imp.get("quality", 1.0)
             try:
                 quality = min(max(float(quality), 0.0), 1.0)
             except (TypeError, ValueError):
                 quality = 1.0
+            candidates.append((at, quality))
+        candidates.sort(key=lambda c: c[0])
+
+        # Script detection BEFORE the acceptance cap: more attempts inside
+        # one window than any human produces marks the player; a fast tapper
+        # bumping the ceiling merely loses the excess.
+        flag_threshold = MAX_IMPULSE_RATE_HZ * IMPULSE_RATE_FLAG_FACTOR
+        fresh = [c for c in candidates
+                 if not _already_accepted(player.accepted_ats, c[0])]
+        for i in range(len(fresh)):
+            j = bisect.bisect_right(
+                [c[0] for c in fresh],
+                fresh[i][0] + IMPULSE_RATE_WINDOW_MS)
+            if j - i > flag_threshold:
+                player.rate_flagged = True
+                break
+
+        accepted = 0
+        for at, quality in fresh:
+            lo = bisect.bisect_right(player.accepted_ats,
+                                     at - IMPULSE_RATE_WINDOW_MS)
+            hi = bisect.bisect_right(player.accepted_ats, at)
+            if hi - lo >= MAX_IMPULSE_RATE_HZ:
+                continue   # window full — the ceiling, not a verdict
             player.impulses.append({"at": at, "quality": quality})
-            player.last_accepted_at_ms = at
+            bisect.insort(player.accepted_ats, at)
             accepted += 1
         room.last_activity_at = _now()
         return {"accepted": accepted, "total": len(player.impulses),
                 "rate_flagged": player.rate_flagged}
+
+
+def _already_accepted(accepted_ats: list, at: float) -> bool:
+    """Exact-timestamp membership — the retry dedupe."""
+    idx = bisect.bisect_left(accepted_ats, at)
+    return idx < len(accepted_ats) and accepted_ats[idx] == at
 
 
 def _referee(room: Room) -> list[dict]:

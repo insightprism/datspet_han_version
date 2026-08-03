@@ -198,11 +198,14 @@ def test_idle_rooms_are_reaped_and_streams_told(rooms):
 # R2 — racing (§3.3, §3.4, §7) and the room-scoped assets (§4.3)
 # ---------------------------------------------------------------------------
 
-def _start_racing(client, arena_rooms, code, host_token):
+def _start_racing(client, arena_rooms, code, host_token, elapsed_s=0.001):
+    """elapsed_s matters: impulse timestamps are clamped against the server's
+    REAL race clock (window_hi = elapsed + slack), so a test posting at t=14s
+    must make the race 14s old."""
     r = client.post(f"/api/arena/rooms/{code}/start", json={"token": host_token})
     assert r.status_code == 200
     with arena_rooms.ROOMS_LOCK:
-        arena_rooms.ROOMS[code].countdown_ends_at = time.time() - 0.001
+        arena_rooms.ROOMS[code].countdown_ends_at = time.time() - elapsed_s
     snap = client.get(f"/api/arena/rooms/{code}").json()["room"]
     assert snap["state"] == "racing"
 
@@ -222,16 +225,15 @@ def test_impulses_gate_clamps_and_referee_ticks(rooms):
     assert client.post(f"/api/arena/rooms/{code}/impulses",
                        json={"token": "nope", "impulses": []}).status_code == 403
 
-    # §7: impulses spaced under 1/MAX_IMPULSE_RATE_HZ are discarded and the
-    # player flagged; out-of-window timestamps never count.
-    gap = 1000.0 / arena_rooms.MAX_IMPULSE_RATE_HZ
-    batch = [{"at": 0.0}, {"at": gap / 4}, {"at": gap + 1},
+    # §7: out-of-window timestamps never count; honest bursts inside the
+    # window ceiling all land, unflagged.
+    batch = [{"at": 0.0}, {"at": 250.0}, {"at": 500.0},
              {"at": -50.0}, {"at": 10_000_000.0}]
     r = client.post(f"/api/arena/rooms/{code}/impulses",
                     json={"token": host_token, "impulses": batch})
     body = r.json()
-    assert body["accepted"] == 2          # 0.0 and gap+1
-    assert body["rate_flagged"] is True
+    assert body["accepted"] == 3          # the three in-window ones
+    assert body["rate_flagged"] is False
 
     # The tick broadcasts referee positions computed by the AUTHORITATIVE
     # integrator — bit-identical to calling it directly.
@@ -247,7 +249,74 @@ def test_impulses_gate_clamps_and_referee_ticks(rooms):
             room.players[host_token].impulses, room.question_seed, 0)
     pos = payload["positions"][0]
     assert pos["distance_m"] == round(expected["distance_m"], 2)
-    assert pos["rate_flagged"] is True
+    assert pos["rate_flagged"] is False
+
+
+def test_clamp_reasons_in_timestamp_order_and_retries_are_idempotent(rooms):
+    """F4 — the clamp must read the batch the way the referee does: sorted by
+    timestamp. An out-of-order in-window batch all lands; an identical resend
+    (the client's failed-POST retry) dedupes silently — one lost HTTP
+    response must never brand a child a cheat."""
+    client, arena_rooms = rooms
+    made = make_room(client, event_key="sprint_100")
+    code, tok = made["code"], made["host_token"]
+    _start_racing(client, arena_rooms, code, tok, elapsed_s=60)
+
+    ooo = client.post(f"/api/arena/rooms/{code}/impulses",
+                      json={"token": tok,
+                            "impulses": [{"at": 3564.0}, {"at": 1564.0},
+                                         {"at": 2564.0}]}).json()
+    assert ooo["accepted"] == 3
+    assert ooo["rate_flagged"] is False
+
+    batch = [{"at": t} for t in (11000.0, 12000.0, 13000.0, 14000.0)]
+    first = client.post(f"/api/arena/rooms/{code}/impulses",
+                        json={"token": tok, "impulses": batch}).json()
+    assert first["accepted"] == 4
+    resend = client.post(f"/api/arena/rooms/{code}/impulses",
+                         json={"token": tok, "impulses": batch}).json()
+    assert resend["accepted"] == 0
+    assert resend["total"] == first["total"]
+    assert resend["rate_flagged"] is False
+
+
+def test_rate_ceiling_admits_real_tapping_and_flags_scripts(rooms):
+    """F3 — tap rate IS the game (SPEC_PET_ARENA §8.6), so a 12 Hz tapper
+    keeps every answer; the window ceiling trims a hail of impulses without a
+    verdict; only script-grade excess flags."""
+    client, arena_rooms = rooms
+
+    def run_batch(batch):
+        made = make_room(client, event_key="sprint_100", challenge_key="tap",
+                         difficulty="tap")
+        _start_racing(client, arena_rooms, made["code"], made["host_token"],
+                      elapsed_s=60)
+        return client.post(f"/api/arena/rooms/{made['code']}/impulses",
+                           json={"token": made["host_token"],
+                                 "impulses": batch}).json()
+
+    hz12 = run_batch([{"at": 1000.0 + i * (1000.0 / 12)} for i in range(10)])
+    assert hz12["accepted"] == 10
+    assert hz12["rate_flagged"] is False
+
+    # 20 Hz for a second: above the ceiling, below script-grade — the window
+    # keeps MAX_IMPULSE_RATE_HZ of them and nobody is branded.
+    hz20 = run_batch([{"at": 1000.0 + i * 50.0} for i in range(20)])
+    assert hz20["accepted"] == arena_rooms.MAX_IMPULSE_RATE_HZ
+    assert hz20["rate_flagged"] is False
+
+    # 40 in 0.8 s is nothing human — flagged, still capped, and the flag
+    # rides the referee's positions.
+    script = run_batch([{"at": 1000.0 + i * 20.0} for i in range(40)])
+    assert script["accepted"] == arena_rooms.MAX_IMPULSE_RATE_HZ
+    assert script["rate_flagged"] is True
+    arena_rooms.tick_racing_rooms()
+    with arena_rooms.ROOMS_LOCK:
+        flagged_rooms = [r for r in arena_rooms.ROOMS.values()
+                         if any(p.rate_flagged for p in r.players.values())]
+        frame = [f for _, f in flagged_rooms[-1].events
+                 if "event: tick" in f][-1]
+    assert json.loads(frame.split("data: ", 1)[1])["positions"][0]["rate_flagged"] is True
 
 
 def test_time_limit_ends_the_race_with_authoritative_standings(rooms):
