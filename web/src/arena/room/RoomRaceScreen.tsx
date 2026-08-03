@@ -67,7 +67,7 @@ export default function RoomRaceScreen({
 }: Props) {
   const event = useMemo(() => loadEvent(room.event_key), [room.event_key]);
   const challenge = CHALLENGES[room.challenge_key];
-  const [racers, setRacers] = useState<LoadedRacer[] | null>(null);
+  const [racers, setRacers] = useState<(LoadedRacer | null)[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const myLogRef = useRef<Impulse[]>([]);
@@ -88,6 +88,10 @@ export default function RoomRaceScreen({
     (async () => {
       if (!event) return;
       try {
+        // A REMOTE lane whose assets fail (pet deleted mid-race, a flaky
+        // fetch) must not kill the race: it just isn't drawn — the server
+        // still scores it and it appears in the result. MY lane failing is
+        // fatal: there is no race to run without my own pet.
         const loaded = await Promise.all(room.players.map((p, i) => loadRacer({
           petId: p.pet_id,
           storeId: `${p.pet_id}#room${i}`,
@@ -95,14 +99,18 @@ export default function RoomRaceScreen({
           kind: i === myLane ? "human" : "ghost",
           handicapName: p.handicap_name,
           roomCode: i === myLane ? undefined : code,
-        }, event)));
+        }, event).catch(() => null)));
         if (cancelled) return;
+        const mine = loaded[myLane];
+        if (!mine) {
+          setLoadError("Could not fetch your pet's sprite sheet.");
+          return;
+        }
         myIntegratorRef.current = new LaneIntegrator(
-          event, loaded[myLane].stats, loaded[myLane].handicap,
-          room.question_seed, myLane);
+          event, mine.stats, mine.handicap, room.question_seed, myLane);
         setRacers(loaded);
       } catch {
-        if (!cancelled) setLoadError("Could not fetch a racer's sprite sheet.");
+        if (!cancelled) setLoadError("Could not fetch your pet's sprite sheet.");
       }
     })();
     return () => {
@@ -168,7 +176,7 @@ export default function RoomRaceScreen({
 
   const trackLanes: TrackLane[] = useMemo(() => {
     if (!racers) return [];
-    return racers.map((racer, i) => ({
+    return racers.flatMap((racer, i) => racer === null ? [] : [{
       storeId: racer.storeId,
       label: racer.label,
       handicapName: racer.handicapName,
@@ -178,7 +186,7 @@ export default function RoomRaceScreen({
         ? myIntegratorRef.current!
         : (remoteLanes.get(i) ?? new RemoteLane()),
       log: i === myLane ? myLogRef.current : [],
-    }));
+    }]);
   }, [racers, myLane, remoteLanes]);
 
   if (!event) return <div className="card p-4">Unknown event.</div>;
