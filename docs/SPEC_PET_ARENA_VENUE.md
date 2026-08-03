@@ -1,8 +1,38 @@
 # SPEC_PET_ARENA_VENUE — the arena as a sports venue: who's here, who competes, who talks
 
-**Status: Rev.1 (2026-08-03) — DRAFT FOR OWNER REVIEW; NOTHING BUILT.** §14 lists the calls that
+**Status: Rev.2 (2026-08-03) — DRAFT FOR OWNER REVIEW; NOTHING BUILT.** §14 lists the calls that
 are the owner's. Phase A is in-app; Phase B is a joint build with the DatsMe host and executes
 only after its own cross-repo review.
+
+> ### Rev.2 — friends on the floor, and a claim Rev.1 got wrong
+>
+> The owner: *"when someone goes into the arena, they will see everyone that is in the arena. will
+> you also highlight which ones are your friends, and list them first."*
+>
+> Answering it turned up an error in Rev.1. §5 said a partner *"cannot query friendship… by
+> design"* and §12 turned that into *"no friend list inside DatsPet."* Checked against the host's
+> code rather than its prose: the capability registry ships nine capabilities, none reads
+> connections, and the only partner read route is the profile one — so **the "cannot" was true, but
+> "by design" was not.** The host's protocol §12.2 explicitly anticipates additive scopes, and
+> `groups.read_memberships` already grants a partner a low-risk read on the user's own social
+> memberships. The scope had simply never been defined.
+>
+> Three changes: §2.5 specifies **floor ordering**, which Rev.1 omitted and which is a live defect
+> at floor scale (the shipped lounge sort reshuffles on every heartbeat); §5 and §12 are corrected
+> to say *not yet scoped* rather than *never*, with the ids-only line kept permanent; §14.6 puts
+> the friend tier to the owner. The capability itself is drafted for the host as
+> [`PROPOSAL_DPP_PARTNER_READS`](../../datsme_me/docs/PROPOSAL_DPP_PARTNER_READS.md).
+>
+> **Nothing in Phase A depends on any of it.** V0 ordering needs no host data, and the friend tier
+> is `required: false` — ungranted, the floor behaves exactly as Rev.1 described.
+
+> **⚠ PLACEMENT PENDING — see [`SPEC_ARENA_MIGRATION`](SPEC_ARENA_MIGRATION.md).** The arena may
+> move out of DatsPet and into DatsMe as an internal service. **The product design in this spec is
+> unaffected** — the venue model, the floor, canned signals, the 🤝 bridge and §2.5's ordering all
+> stand. What changes is the *mechanism*: friends come from PostgreSQL rather than a capability, so
+> §5's `connections.read` discussion and §12's ids-only rule become moot, and §6's host-delivered
+> invites stop being a cross-repo build. **§1.3 is RETIRED** (owner, 2026-08-03): playing requires a
+> DatsMe account and a pet; watching requires nothing (migration §5.2, §5.2.1).
 
 **Companion to `SPEC_PET_ARENA_LOUNGE` (the named rooms) and `SPEC_PET_ARENA_ROOMS` (the
 ephemeral contest), built beside them, replacing neither.** This spec owns the venue's SOCIAL
@@ -55,10 +85,15 @@ Three consequences, each load-bearing:
   about the race (on DatsMe), and summoning a friend who is not here (§6). The owner's
   "positive" — races turning into friendships — survives as the 🤝 bridge (§5), offered at
   exactly the moment two strangers have just had a good race.
-- **1.3 The anonymous couch player keeps the code room.** A shared room code is already a
-  private channel between people who know each other; it stays open to anonymous players
-  (owner call, 2026-08-03). Every DISCOVERY surface — the floor, the named rooms — remains
-  signed-in-only: nobody can be *found* who hasn't signed in.
+- **1.3 ~~The anonymous couch player keeps the code room.~~ RETIRED 2026-08-03** — reversed the
+  same day it was made, once the arena's placement changed. **Owner:** *"you need a DatsMe account
+  in order to play, just like you need a datsme account to design and buy pets. if you don't have a
+  datsme pet, it is not possible for you to play."* The original call was made about a **partner**
+  surface; on `datsme.me` the platform's own rule governs, and racing is gated exactly as designing
+  and buying are. **Playing requires an account and a pet; watching requires nothing** — the public
+  spectator link is deliberate, and is how someone who watched a race becomes someone who plays one
+  (`SPEC_ARENA_MIGRATION` §5.2, §5.2.1). Every DISCOVERY surface — the floor, the named rooms —
+  remains signed-in-only, unchanged: nobody can be *found* who hasn't signed in.
 
 ---
 
@@ -119,6 +154,34 @@ won. The floor also carries the venue's "🏁 Racing now" rail: races minted fro
 challenges are tagged `floor` the same way lounge races are tagged with their lounge — watchable
 by anyone (observer layer), listing pet names and the event only.
 
+### 2.5 Ordering — and why it is a V0 item, not a polish item
+
+Rev.1 never said how the list is ordered, and what shipped for lounges sorts by `last_seen_at`
+(`webui/arena_lounges.py:175`). **Every heartbeat therefore reshuffles the list.** On a five-person
+lounge nobody notices; on a floor of `FLOOR_MAX_PRESENT` = 100 it is a list that churns under your
+thumb while you reach for a ⚔️ button. Ordering is load-bearing the moment the list is long.
+
+**The V0 rule, needing no host data:**
+
+1. **People you have raced this visit**, most recent first. DatsPet already owns this relationship —
+   it is what "Rematch?" (§3) rides on — and it is the best available answer to *"who would I
+   actually want to challenge."*
+2. **Everyone else**, by arrival order, stable. A pet that is already on the floor never moves
+   because it heartbeated.
+
+Sort keys must be stable across snapshots: a row may only move when someone joins, leaves, or
+becomes rematch-eligible — never on a heartbeat.
+
+**The V2 rule, if `connections.read` is granted (§5):** friends rank above strangers within each
+group, and a friend's row carries a **⭐ badge and no name**. A badge keeps §2.4 intact; a name
+would break the pet-is-the-identity rule for the *whole* list, since once names appear for friends
+the pet-only rows read as second-class. The owner call is §14.6; the capability is
+[`PROPOSAL_DPP_PARTNER_READS`](../../datsme_me/docs/PROPOSAL_DPP_PARTNER_READS.md).
+
+**The friend set is fetched once per launch and cached for the launch lifetime** (≤60 min), never
+per snapshot — a presence surface re-renders continuously and must never become a per-frame host
+query. This is a commitment the proposal makes on DatsPet's behalf (§4.4 there).
+
 ---
 
 ## §3 Challenging from the floor
@@ -166,13 +229,31 @@ What the host exploration (2026-08-03) established, and what this spec builds on
   (`/api/connections/*`), and **one canonical gate** — `are_friends()` (`api/helpers.py`) —
   already enforces friends-only on chat, calls, group membership, sharing, photo tags, credit
   gifts, and **pet gifting**.
-- A partner cannot query friendship, cannot learn another user's id, and cannot message
-  anyone — by design. The host's partner-protocol spec (§11.4 there) already states the
-  intended division: where a partner capability touches messaging, **the host enforces
-  `are_friends` at dispatch**, so the partner never needs (and never sees) the friend list.
+- A partner cannot query friendship and cannot message anyone. The host's partner-protocol spec
+  (§11.4 there) states the division for *messaging*: where a partner capability touches it,
+  **the host enforces `are_friends` at dispatch**, so the partner never needs the friend list.
 
-DatsPet therefore never asks "are these two users friends" — it doesn't need to. Competing is
-open (§1); everything friendship-gated *happens on the host*:
+**Rev.2 correction — "cannot" is a gap, not a prohibition.** Rev.1 recorded the messaging rule
+and then generalized it into a principle, which the host's protocol does not state. Verified
+against the host code, not its spec: the registry (`api/apps/dpp/capabilities.py`) ships nine
+capabilities and **none of them reads connections**, so today the answer is still no. But the
+protocol's §12.2 anticipates exactly this — *"if richer access patterns prove necessary, a
+capability can be added post-v1.0 as an additive change"* — and `groups.read_memberships`
+(risk tier **low**) is shipping precedent for a partner reading the launch user's *own* social
+memberships. The scope was never defined; it was not refused.
+
+The dispatch-enforcement pattern genuinely does not transfer to the floor, and that is the real
+finding: the host can enforce `are_friends` when the *host* does the sending, but the floor is a
+DatsPet surface that DatsPet renders. Any friendship answer DatsPet can render is one DatsPet has
+received — and it cannot be hashed around, because DatsPet already holds every present user's
+`external_user_id` and can invert any fingerprint scheme it is handed.
+
+So friends-first (§2.5) is blocked on a capability, and the capability is drafted:
+[`PROPOSAL_DPP_PARTNER_READS`](../../datsme_me/docs/PROPOSAL_DPP_PARTNER_READS.md) —
+`connections.read`, ids only and never names, `required: false` so this app degrades to Rev.1
+behavior without it. Until the host owner accepts it, everything below stands unchanged.
+
+Competing stays open (§1) regardless; everything friendship-gated still *happens on the host*:
 
 - **Talk**: two contestants who want to talk do it in DatsMe chat, which requires friendship,
   exactly as DatsMe already enforces. DatsPet adds nothing and bypasses nothing.
@@ -286,6 +367,12 @@ tighter, not looser:
   a departed presence drops silently; nothing is stored after `SIGNAL_TTL_S`.
 - Rematch: the results-screen rematch produces a byte-identical challenge card (same picks).
 - The anonymous 401 guard extends to the floor: an anon cookie cannot stand on it.
+- **Ordering is stable across a heartbeat** (§2.5): a snapshot taken before and after every present
+  pet heartbeats yields the same row order. This is the churn defect, and it is the one a unit test
+  catches trivially and a human never notices until the list is 100 long.
+- **If the friend tier ships:** a friend row serializes the ⭐ flag and **no name field** — the same
+  assertion the host-side proposal makes (§4.2 there), duplicated deliberately on this side of the
+  wire, because it is the boundary and each repo should fail its own build on losing it.
 
 ---
 
@@ -293,9 +380,10 @@ tighter, not looser:
 
 | Phase | Ships | Depends on |
 |---|---|---|
-| **V0** | registry rule fields (`kind`/`exclusive`/`max_present`) + the floor entry + the "Play with someone" front door + floor presence/challenge | nothing new — lounge machinery |
+| **V0** | registry rule fields (`kind`/`exclusive`/`max_present`) + the floor entry + the "Play with someone" front door + floor presence/challenge + **§2.5 stable ordering** | nothing new — lounge machinery |
+| **GATE** | **"a user may only compete with pets they own"** (owner, 2026-08-03) is not implementable on any arena surface until ownership is borrowed from the host — [`SPEC_PET_OWNERSHIP`](SPEC_PET_OWNERSHIP.md) O2/O4. Until then every arena surface seats DatsPet-scoped pets and cannot honor the rule. | that spec, not this one |
 | **V1** | `signals.json` + signal cards + Rematch on results | V0 |
-| **V2** (= lounge L3) | host ChallengeOffer + friend picker surface + `extra_claims` seat landing + the 🤝 bridge | its own joint spec + two-repo E2E |
+| **V2** (= lounge L3) | host ChallengeOffer + friend picker surface + `extra_claims` seat landing + the 🤝 bridge + **the ⭐ friend tier on the floor** | its own joint spec + two-repo E2E; the friend tier additionally needs `connections.read` granted (§5) |
 
 ---
 
@@ -303,7 +391,13 @@ tighter, not looser:
 
 - **No free text, anywhere, ever** (the standing tripwire).
 - **No presence history, no online-status storage, no "last seen".**
-- **No friend list inside DatsPet** — not even names; the picker and the list are host surfaces.
+- **No friend NAMES inside DatsPet, ever** — the picker and any named list are host surfaces.
+  *Rev.2 narrows this from Rev.1's "no friend list at all", which overstated a missing capability
+  as a rule (§5).* If `connections.read` is granted, DatsPet holds a set of opaque host user ids
+  for the launch's lifetime and nothing else: enough to mark a row ⭐, never enough to build a
+  contact list. The ids-only line is the boundary that stays permanent — it is what keeps the
+  proposal at risk tier `low`, and it is what keeps §2.4's "the pet is the whole identity" true
+  for every row in the list.
 - **No leaderboards on the floor** (SPEC_PET_ARENA §11's tripwire still stands).
 - **No spectator counts** (lounge §14.5's answer carries over).
 
@@ -337,3 +431,11 @@ decide.
 
 **14.5 The 🤝 bridge timing.** Offer "Add as friend on DatsMe" only after a completed race
 (recommended — shared context first), or also directly from the floor list?
+
+**14.6 Friends first on the floor?** (Owner ask, 2026-08-03 — *"will you also highlight which ones
+are your friends, and list them first"*.) Recommend **yes, in two steps**: §2.5's V0 ordering ships
+now and needs nothing from the host; the ⭐ friend tier waits on the host owner accepting
+`connections.read`. Two things to confirm — that DatsPet holding a set of your friends' opaque host
+ids for one launch is acceptable at all (it is the first time any DatsMe social edge reaches this
+app), and that **badge-only, no names** is the right stopping point. If the answer to the first is
+no, §2.5's V0 rule still stands on its own and the floor is still a large improvement on Rev.1.

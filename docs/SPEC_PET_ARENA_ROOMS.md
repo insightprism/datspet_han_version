@@ -1,6 +1,6 @@
-# SPEC_PET_ARENA_ROOMS — a room five children can race in, and anyone can watch
+# SPEC_PET_ARENA_ROOMS — a room five players can race in, and anyone can watch
 
-**Status: Rev.4 (2026-08-03) — R0–R3 BUILT, DEPLOYED TO STAGING, VERIFIED E2E.** R0: transport
+**Status: Rev.5 (2026-08-03) — R0–R3 BUILT, DEPLOYED TO STAGING, VERIFIED E2E.** R0: transport
 proven (stream survives both proxies 95 s; verify_deployment §7 is the permanent gate). R1:
 create/join/lobby — lobbies fill live across devices. R2: the race — batched impulses up, 10 Hz
 authoritative ticks down, the server referee (`simulate_entrant`, fixture-pinned) publishes
@@ -13,6 +13,25 @@ spectated anonymously on staging start to standings. Remaining: R4 (team events 
 owner calls (14.4 spectator questions — currently NOT shown), and the prod deploy on request.
 The venue's SOCIAL layer — who is visible/challengeable, and where communication lives — is
 `SPEC_PET_ARENA_VENUE` (Rev.1); rooms stay the contest it mints.
+
+> ### Rev.5 — the players are any DatsMe user, not only children
+>
+> The owner, correcting the framing Rev.1–Rev.4 carried: the field of five is **any DatsMe users —
+> adults, teenagers, children, anyone**. This spec was written as though every racer were a child,
+> and that was never the product. Two friends agreeing on a room code over a DatsMe call (Rev.3)
+> are as likely to be adults as kids.
+>
+> **What changed: the prose, and nothing else.** No constant moves. The two numbers that read as
+> though they had been tuned for children were not: `MAX_IMPULSE_RATE_HZ` (§7, §8) is sized by the
+> top of genuine *tapping* (SPEC_PET_ARENA §8.6), which no adult exceeds either, and the §8.5 mash
+> guard only gets safer as the knowing player gets faster.
+>
+> **What did NOT change: §6.** The safety floor stays exactly as written — unguessable codes, no
+> listing, no player names, no chat. Only its justification moves: from *"the players are
+> children"* to *"the room mints a link anyone can forward, and nothing on the server knows how old
+> the person opening it is."* A surface that may seat a nine-year-old is designed for the
+> nine-year-old regardless of who else is in the lobby, so a wider audience is a reason to keep
+> that floor rather than to loosen it. §13's tripwires stand unchanged.
 
 > ### Rev.3 — the owner's go, and the story the product is for
 >
@@ -79,7 +98,7 @@ project a day (§5). Read §5 before estimating this.
 | 0.5 | Spectators | **Read-only, by unguessable URL, no account** (§4). They receive the same stream players do, minus the ability to send. |
 | 0.6 | Asset access for pets you do not own | **A room-scoped route**, alive only while the room is (§4.3). `_scope_clause` is not widened. |
 | 0.7 | Room lifetime | **Ephemeral.** A room dies with the process and on idle timeout. Nothing is persisted, so nothing is lost (§2.4). |
-| 0.8 | Child safety | **Unguessable codes, no listing, no player names by default, short lifetimes** (§6). |
+| 0.8 | Safety on a shareable link | **Unguessable codes, no listing, no player names by default, short lifetimes** (§6). Players are any DatsMe user; the floor is set by the youngest one who could be in the room, not the average one. |
 | 0.9 | Cheating | **Bounded, not eliminated** — the no-DRM posture, plus a plausible-rate clamp (§7). |
 
 ### 0.10 The posture that must not change
@@ -87,8 +106,8 @@ project a day (§5). Read §5 before estimating this.
 1. **The game does not learn about rooms.** Events, challenges and stats consume an impulse stream
    (SPEC_PET_ARENA §7.1) and must never ask whether it came from a local player, a bot, or the
    network. If an event file ever imports anything from this spec's modules, the boundary has broken.
-2. **Solo and hot-seat play keep working with the server switched off.** Rooms are additive; a family
-   on one sofa needs no network.
+2. **Solo and hot-seat play keep working with the server switched off.** Rooms are additive; players
+   sharing one sofa and one device need no network.
 3. **`--workers 1` is a load-bearing precondition**, not an implementation detail (§2.1).
 4. **No new SQLite table.** A room is transient state, and the store is for things that outlive a
    request.
@@ -138,8 +157,8 @@ guard already written down. A room is `JOBS` with more members.
 and a race that reads and writes state in microseconds.
 
 **What it costs, stated plainly:** a backend restart ends every live race, and the design cannot
-scale past one box. Both are acceptable for a family game and both are recorded in §13 as the
-tripwire for revisiting.
+scale past one box. Both are acceptable for a room that exists for the length of one race, and both
+are recorded in §13 as the tripwire for revisiting.
 
 **If `--workers 1` is ever lifted, this design breaks silently** — two workers means two `ROOMS`
 dicts and players randomly landing in different rooms. That constraint is already load-bearing for
@@ -177,7 +196,7 @@ worth stating because they are where this kind of thing goes wrong:
 
 - **The countdown is server-timed and broadcast**, never client-timed. Five devices starting on their
   own clocks is five different races.
-- **A race ends when every player finishes or the event's time limit expires.** A child who wanders
+- **A race ends when every player finishes or the event's time limit expires.** A player who wanders
   off must not hold four others hostage; the event declares the limit and the room enforces it.
 
 ### 2.4 Death
@@ -226,7 +245,7 @@ POST. Events carry the room's monotonic `seq` as the SSE event id, so a reconnec
 
 **Broadcast at a fixed tick (`ROOM_TICK_HZ`, default 10), not per impulse.** Five players answering
 three times a second is 15 events/s; a 10 Hz tick carrying every position is smaller, smoother, and
-bounded regardless of how fast the children get.
+bounded regardless of how fast the players get.
 
 **Heartbeats every `SSE_HEARTBEAT_S` (default 15) are not optional** — they are what keeps the outer
 proxy from killing the stream (§5.2). A comment line is enough.
@@ -250,7 +269,7 @@ window. **Each impulse carries its own client timestamp**, which SPEC_PET_ARENA 
 requires for replay — so batching costs no fidelity: the server reconstructs the true timeline from
 the timestamps, not from arrival order.
 
-This matters more than it sounds. Un-batched, five children answering fast is ~15 requests/second
+This matters more than it sounds. Un-batched, five players answering fast is ~15 requests/second
 through a rate-limited nginx location (§5.3), and the game would degrade exactly when it got
 exciting.
 
@@ -324,7 +343,7 @@ capability, exactly as `bundle_tokens` makes a one-time download the capability 
 Two rules:
 
 - **Sheet and manifest only.** Never `bundle_zip` — watching a race is not a licence to take the pet.
-- **Dies with the room.** No lingering public URL for a child's pet after the race.
+- **Dies with the room.** No lingering public URL for anyone's pet after the race.
 
 ---
 
@@ -374,18 +393,24 @@ the gate that counts.
 
 ---
 
-## §6 Children, and a public URL
+## §6 A link anyone can open, and the floor that sets
 
-The players are named as children, and the room produces a link anyone can open. That deserves
-concrete rules rather than a disclaimer.
+Players are **any DatsMe user** — adults, teenagers, children, whoever holds the code. The room
+cannot tell which, and it produces a link that can be forwarded past everyone who was meant to have
+it. Those two facts together, not an assumption about anyone's age, are what these rules answer.
+
+**The floor is set by the youngest player who could be in the room.** A surface that may seat a
+nine-year-old is designed for the nine-year-old regardless of who else is in the lobby — so a wider
+audience is a reason to keep every rule below, never a reason to relax one. Nothing here costs an
+adult anything.
 
 - **Codes are unguessable** — `secrets.token_urlsafe`, ≥ 64 bits, never sequential, never derived
   from a pet id, an owner id or a timestamp. A guessable code is a stranger in the room.
 - **Rooms are never listed.** No index, no directory, no "public rooms" surface, no search. The only
   way in is a link somebody chose to share.
 - **No player names by default.** A player is their pet. If a display name is ever added it is
-  chosen per room, not drawn from the DatsMe profile, and never persisted — a child's real name
-  should not be reachable from a link forwarded to a group chat.
+  chosen per room, not drawn from the DatsMe profile, and never persisted — nobody's real name
+  should be reachable from a link forwarded to a group chat, and least of all a minor's.
 - **Rooms are short-lived** (§2.4). A shared link stops working, which is the correct default for
   something forwarded to people the host did not choose.
 - **Spectators cannot act.** No sending, no joining mid-race without the code, no chat. **There is no
@@ -401,18 +426,19 @@ Each one changes what this feature is, and none should be added by extension.
 
 ## §7 Cheating, bounded
 
-The no-DRM posture holds (SPEC_PET_ARENA §11): a child can edit their own bundle's stats, and the
+The no-DRM posture holds (SPEC_PET_ARENA §11): a player can edit their own bundle's stats, and the
 server reads the stats their device sent.
 
 Two cheap bounds, and deliberately nothing more:
 
 - **A plausible-rate clamp.** Impulses arriving faster than `MAX_IMPULSE_RATE_HZ` (default 10/s — far
-  above any child answering arithmetic) are discarded, and the player is flagged in the room's own
-  state. This catches the obvious script without pretending to be anti-cheat.
+  above any human answering arithmetic, and at the top of genuine tapping) are discarded, and the
+  player is flagged in the room's own state. This catches the obvious script without pretending to
+  be anti-cheat.
 - **Timestamps are clamped to the race window.** An impulse dated before the start or after the
   finish does not count.
 
-**Do not build more.** The value being protected is a family race; the cost of real integrity
+**Do not build more.** The value being protected is a friendly race; the cost of real integrity
 (server-side stat resolution, signed bundles, replay validation) exceeds it by a wide margin, and
 SPEC_PET_OWNER_FIELD §0.1 already made this argument once for a thing worth actual money.
 
@@ -522,7 +548,7 @@ Prove the stream survives 90 seconds on a real deployed URL before writing the g
 - **No Redis, no external broker, no second process.** In-memory on one worker (§2.1) until a
   measured reason exists.
 - **No persisted rooms, results, records or history.** Nothing survives a restart, on purpose. This
-  is also what keeps §6 simple: there is no archive of children's races to protect.
+  is also what keeps §6 simple: there is no archive of anyone's races to protect.
 - **No chat, no reactions, no emoji, no room listing** (§6). Each is a different product with a
   different duty of care.
 - **No cross-household pet borrowing.** A player enters pets from their own house; the store adopt
@@ -544,7 +570,8 @@ Prove the stream survives 90 seconds on a real deployed URL before writing the g
   the ticker falls behind and impulse POSTs contend. That is the number that fires this tripwire.*
 - **Anyone asks for persistent results, leaderboards or records** → that is the *other* half of
   SPEC_PET_ARENA §11's tripwire, and it needs a table, a retention decision, and a fresh look at §6
-  now that children's performance would be stored.
+  now that named players' performance would be stored — including minors', which is the case that
+  sets the retention answer.
 - **The first request for chat or public room listings** (§6). *Fired 2026-08-02 — the owner asked
   for permanent listed rooms with presence and invitations. Answered as the tripwire demands: a
   separate product with its own duty-of-care review, [`SPEC_PET_ARENA_LOUNGE`](SPEC_PET_ARENA_LOUNGE.md)
@@ -561,18 +588,18 @@ what makes §4.3's room-scoped asset route necessary. Confirm, because "signed-i
 simplify it considerably.
 
 **14.2 Who may start a race — the host only, or a ready-check?** Recommend **host only** for v1: one
-child opens the room and starts it, which matches how children actually organise a game and needs no
-consensus protocol. A ready-check is nicer and can come later.
+player opens the room and starts it, which matches how people actually organise a game among friends
+and needs no consensus protocol. A ready-check is nicer and can come later.
 
-**14.3 What happens when a child disconnects mid-race?** Recommend their pet **stops where it is** and
-the race continues; they can rejoin with the same token and resume answering. The alternatives —
+**14.3 What happens when a player disconnects mid-race?** Recommend their pet **stops where it is**
+and the race continues; they can rejoin with the same token and resume answering. The alternatives —
 pausing everyone, or pretending they are still answering — are worse for the other four. Worth
-confirming, since it is visible and will happen constantly on children's devices.
+confirming, since it is visible and will happen constantly on phones and tablets.
 
 **14.4 Should a spectator see the questions?** Showing them makes watching genuinely fun — a
-grandparent can play along, and it is the part that makes this look educational to a parent glancing
-over. Recommend **yes**, with the answers hidden until someone gets one. This is a small feature with
-a large effect on what the room feels like from outside.
+spectator can play along from the sofa instead of just watching bars move, and it is what makes the
+room worth opening a link for. Recommend **yes**, with the answers hidden until someone gets one.
+This is a small feature with a large effect on what the room feels like from outside.
 
-**14.5 One room per family, or many?** No limit is proposed. If rooms are ever abused as free hosting
+**14.5 One room per user, or many?** No limit is proposed. If rooms are ever abused as free hosting
 this becomes a rate-limit question, but there is no reason to solve it before it exists.
