@@ -11,6 +11,8 @@ standings ride every snapshot for the RESULT_TTL window so late arrivals see who
 browser player raced a scripted rival and lost fairly (referee-scored); two scripted racers were
 spectated anonymously on staging start to standings. Remaining: R4 (team events in rooms), §14
 owner calls (14.4 spectator questions — currently NOT shown), and the prod deploy on request.
+The venue's SOCIAL layer — who is visible/challengeable, and where communication lives — is
+`SPEC_PET_ARENA_VENUE` (Rev.1); rooms stay the contest it mints.
 
 > ### Rev.3 — the owner's go, and the story the product is for
 >

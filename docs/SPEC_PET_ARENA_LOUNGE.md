@@ -1,8 +1,12 @@
 # SPEC_PET_ARENA_LOUNGE — permanent rooms where pets find their next race
 
-**Status: Rev.2 (2026-08-03) — L0–L2 BUILT (local, not deployed); L3 unbuilt.** Built on "proceed"
-with the §14 *recommended* answers as defaults — every one of them is content or a one-line change,
-so the owner's review can still revise them cheaply. §15 records the as-built notes.
+**Status: Rev.2 (2026-08-03) — L0–L2 BUILT (deployed to staging 2026-08-03); L3 unbuilt.** Built
+on "proceed" with the §14 *recommended* answers as defaults — every one of them is content or a
+one-line change, so the owner's review can still revise them cheaply. §15 records the as-built
+notes. **See `SPEC_PET_ARENA_VENUE` (Rev.1)** for the venue's social layer — the arena floor
+(availability), canned signals, and the friendship bridge; it absorbs §4.3 (host-delivered
+invites, = L3 here) and, when it executes, widens §14.4's one-lounge rule to one-EXCLUSIVE-
+lounge (the floor coexists with rooms).
 
 **Companion to `SPEC_PET_ARENA_ROOMS`, built on top of it, never instead of it.** That spec owns the
 *contest* — an ephemeral race room that lives exactly as long as the game. This one owns the *front
@@ -195,7 +199,12 @@ That is the whole §6 posture: everything a child can transmit is chosen from me
 The race room neither knows nor cares that a challenge minted it (§0.10.1) — it sees a create and two
 joins.
 
-### 4.3 The flow (friend not present — deferred, and why honestly)
+### 4.3 The flow (friend not present — SUPERSEDED by SPEC_PET_ARENA_VENUE §6)
+
+> **2026-08-03:** the host-delivered invitation is now specced in `SPEC_PET_ARENA_VENUE` §6
+> (ChallengeOffer on the host's own gift-offer pattern, friend-gated host-side, `extra_claims`
+> seat landing). The reasoning below stands as the record of WHY it is a separate cross-repo
+> phase; the design lives there.
 
 "Invite my friend who isn't on DatsPet right now" requires delivering a message to a user who has no
 open connection to this app — that is a **host-side channel** (a DatsMe chat message or notification
