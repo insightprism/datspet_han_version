@@ -1473,3 +1473,127 @@ export function arenaWatchUrl(code: string): string {
   }
   return `/arena/${encodeURIComponent(code)}`;
 }
+
+// ---------------------------------------------------------------------------
+// Arena lounges (SPEC_PET_ARENA_LOUNGE) — the permanent front door. Signed-in
+// DatsMe users only; the pet is the identity (§3.2), so nothing here ever
+// carries a person's name. Accepting a challenge hands back an ordinary room
+// seat — from there the room adapter above takes over.
+// ---------------------------------------------------------------------------
+
+export interface ArenaLoungeListEntry {
+  id: string;
+  label: string;
+  emoji: string;
+  present: number;
+}
+
+export interface ArenaLoungePresence {
+  presence_id: string;
+  pet_id: string;
+  pet_label: string;
+}
+
+export interface ArenaLoungeChallenge {
+  id: string;
+  from_presence: string;
+  to_presence: string;
+  event_key: string;
+  challenge_key: string;
+  difficulty: string;
+  accepted: boolean;
+  expires_at: number;
+}
+
+export interface ArenaLoungeBoardEntry {
+  room_code: string;
+  event_key: string;
+  state: string;
+  pet_labels: string[];
+}
+
+export interface ArenaLoungeSnapshot {
+  id: string;
+  label: string;
+  emoji: string;
+  present: ArenaLoungePresence[];
+  challenges: ArenaLoungeChallenge[];
+  racing: ArenaLoungeBoardEntry[];
+  server_now: number;
+}
+
+/** A seat in a minted race room — accept and claim both return one, shaped
+ *  so the caller can drop straight into the room phase. */
+export interface ArenaLoungeRoomSeat {
+  code: string;
+  player_token: string;
+  my_lane: number;
+  room: ArenaRoomSnapshot;
+}
+
+async function arenaLoungePost(path: string, body: unknown): Promise<any> {
+  const r = await apiFetch(`${API_URL}/api/arena/lounges${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.detail || "The lounge did not answer");
+  }
+  return r.json();
+}
+
+export async function listArenaLounges(): Promise<ArenaLoungeListEntry[]> {
+  const r = await apiFetch(`${API_URL}/api/arena/lounges`);
+  if (!r.ok) return [];
+  const data = await r.json().catch(() => ({ lounges: [] }));
+  return data.lounges ?? [];
+}
+
+export async function enterArenaLounge(
+  loungeId: string, pet: { pet_id: string; pet_label: string },
+): Promise<{ presence_token: string; presence_id: string; lounge: ArenaLoungeSnapshot }> {
+  return arenaLoungePost(`/${encodeURIComponent(loungeId)}/enter`, pet);
+}
+
+export async function heartbeatArenaLounge(
+  loungeId: string, token: string,
+): Promise<void> {
+  await arenaLoungePost(`/${encodeURIComponent(loungeId)}/presence`, { token });
+}
+
+export async function leaveArenaLounge(
+  loungeId: string, token: string,
+): Promise<void> {
+  await arenaLoungePost(`/${encodeURIComponent(loungeId)}/leave`, { token });
+}
+
+export function arenaLoungeStreamUrl(loungeId: string): string {
+  return `${API_URL}/api/arena/lounges/${encodeURIComponent(loungeId)}/stream`;
+}
+
+export async function createLoungeChallenge(
+  loungeId: string,
+  card: { token: string; to: string; event_key: string;
+          challenge_key: string; difficulty: string },
+): Promise<{ challenge_id: string; lounge: ArenaLoungeSnapshot }> {
+  return arenaLoungePost(`/${encodeURIComponent(loungeId)}/challenge`, card);
+}
+
+export async function acceptLoungeChallenge(
+  loungeId: string, challengeId: string, token: string,
+): Promise<ArenaLoungeRoomSeat> {
+  return arenaLoungePost(
+    `/${encodeURIComponent(loungeId)}/challenge/${encodeURIComponent(challengeId)}/accept`,
+    { token });
+}
+
+export async function claimLoungeChallenge(
+  loungeId: string, challengeId: string, token: string,
+): Promise<ArenaLoungeRoomSeat> {
+  return arenaLoungePost(
+    `/${encodeURIComponent(loungeId)}/challenge/${encodeURIComponent(challengeId)}/claim`,
+    { token });
+}

@@ -14,7 +14,10 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { listPets, petManifestUrl } from "@/lib/api";
+import {
+  listArenaLounges, listPets, petManifestUrl,
+  type ArenaLoungeListEntry,
+} from "@/lib/api";
 import { composePetName } from "@/lib/petName";
 import PetThumbnail from "@/components/PetThumbnail";
 import {
@@ -49,6 +52,8 @@ interface Props {
    *  screen still renders in surfaces that have no room transport. */
   onCreateRoom?: (choice: RaceSetupChoice, pets: ArenaPetInfo[]) => void;
   onJoinRoom?: (code: string, choice: RaceSetupChoice, pets: ArenaPetInfo[]) => void;
+  /** SPEC_PET_ARENA_LOUNGE — walk into a standing lounge with these picks. */
+  onEnterLounge?: (loungeId: string, choice: RaceSetupChoice, pets: ArenaPetInfo[]) => void;
 }
 
 function clauseText(clause: string[]): string {
@@ -71,6 +76,7 @@ const SETUP_STEP_HUES = [
   { accent: "#a78bfa", tint: "rgba(167,139,250,0.08)" },  // 4 · race type — purple
   { accent: "#f472b6", tint: "rgba(244,114,182,0.08)" },  // 5 · head start — pink
   { accent: "#22d3ee", tint: "rgba(34,211,238,0.08)" },   // 6 · online — cyan
+  { accent: "#f59e0b", tint: "rgba(245,158,11,0.08)" },   // 7 · lounges — amber
 ];
 
 function SetupSection({ step, title, children }: {
@@ -93,10 +99,15 @@ function SetupSection({ step, title, children }: {
 }
 
 
-export default function SetupScreen({ onStart, onCreateRoom, onJoinRoom }: Props) {
+export default function SetupScreen({
+  onStart, onCreateRoom, onJoinRoom, onEnterLounge,
+}: Props) {
   const [joinCode, setJoinCode] = useState("");
   const [pets, setPets] = useState<ArenaPetInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // The standing lounges (SPEC_PET_ARENA_LOUNGE §2.1) with head-counts —
+  // fetched once per setup visit; the live count belongs to the lounge view.
+  const [lounges, setLounges] = useState<ArenaLoungeListEntry[]>([]);
 
   const [eventKey, setEventKey] = useState("racewalk");
   const [challengeKey, setChallengeKey] = useState("arithmetic");
@@ -144,6 +155,16 @@ export default function SetupScreen({ onStart, onCreateRoom, onJoinRoom }: Props
       }
     })();
     return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!onEnterLounge) return;
+    let cancelled = false;
+    listArenaLounges().then((entries) => {
+      if (!cancelled) setLounges(entries);
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const profilePet = pets?.find((p) => p.id === profilePetId) ?? null;
@@ -406,6 +427,35 @@ export default function SetupScreen({ onStart, onCreateRoom, onJoinRoom }: Props
               }}>
               Join →
             </button>
+          </div>
+        </SetupSection>
+      )}
+
+      {/* SPEC_PET_ARENA_LOUNGE — the standing rooms: walk in with your
+          athlete and the picks above, see who's around, challenge someone.
+          Signed-in DatsMe users only (§3.1); the door itself says so. */}
+      {onEnterLounge && lounges.length > 0 && (
+        <SetupSection step={7} title="Meet friends in the lounge">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            {lounges.map((lounge) => (
+              <button key={lounge.id} type="button" className="btn"
+                disabled={playerOnePetId === null}
+                onClick={() => {
+                  if (playerOnePetId === null) return;
+                  onEnterLounge(lounge.id, {
+                    eventKey, challengeKey, difficulty, mode: "bot",
+                    botRung, playerOnePetId, playerOneHandicap,
+                    playerTwoPetId: null, playerTwoHandicap, botPetId: null,
+                  }, pets);
+                }}>
+                {lounge.emoji} {lounge.label}
+                {lounge.present > 0 ? ` · ${lounge.present} here` : ""}
+              </button>
+            ))}
+            <span style={{ color: "var(--muted)" }}>
+              Hang out, see who&apos;s racing, challenge anyone here — DatsMe
+              sign-in required.
+            </span>
           </div>
         </SetupSection>
       )}

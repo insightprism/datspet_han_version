@@ -14,8 +14,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  createArenaRoom, getArenaRoom, joinArenaRoom, petAssetUrls,
-  type ArenaRoomSnapshot,
+  createArenaRoom, enterArenaLounge, getArenaRoom, joinArenaRoom,
+  petAssetUrls, type ArenaRoomSnapshot,
 } from "@/lib/api";
 import { removePet } from "@/pet";
 import { botImpulseLog } from "./bot";
@@ -26,6 +26,7 @@ import type { ArenaPetInfo, LoadedRacer, RacerConfig, RunAccuracy } from "./game
 import { jumpEventDurationMs } from "./fieldJump";
 import JumpResultsScreen from "./JumpResultsScreen";
 import JumpScreen from "./JumpScreen";
+import LoungeView, { type LoungeSeatHandoff } from "./lounge/LoungeView";
 import { loadRacer } from "./petLoader";
 import type { Impulse } from "./raceEngine";
 import { mintRaceSeed } from "./rng";
@@ -46,7 +47,11 @@ type Phase =
   // SPEC_PET_ARENA_ROOMS R1 — the online lobby. The room replaces the local
   // flow entirely; leaving returns to setup.
   | { kind: "room"; code: string; token: string; isHost: boolean;
-      myLane: number; room: ArenaRoomSnapshot };
+      myLane: number; room: ArenaRoomSnapshot }
+  // SPEC_PET_ARENA_LOUNGE — standing in a lounge with one pet and the
+  // current picks; a challenge hands off to the room phase above.
+  | { kind: "lounge"; loungeId: string; token: string; presenceId: string;
+      picks: { eventKey: string; challengeKey: string; difficulty: string } };
 
 function buildLaneConfigs(
   choice: RaceSetupChoice, pets: ArenaPetInfo[],
@@ -181,6 +186,34 @@ export default function ArenaGame() {
     }
   }, []);
 
+  const enterLounge = useCallback(async (
+    loungeId: string, setup: RaceSetupChoice, pets: ArenaPetInfo[],
+  ) => {
+    const me = pets.find((p) => p.id === setup.playerOnePetId);
+    if (!me) return;
+    setLoadError(null);
+    try {
+      const entered = await enterArenaLounge(
+        loungeId, { pet_id: me.id, pet_label: me.label });
+      setPhase({
+        kind: "lounge", loungeId,
+        token: entered.presence_token, presenceId: entered.presence_id,
+        picks: { eventKey: setup.eventKey, challengeKey: setup.challengeKey,
+                 difficulty: setup.difficulty },
+      });
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "The lounge did not answer");
+    }
+  }, []);
+
+  // A lounge challenge resolves into an ordinary room seat (§4.2) — same
+  // phase, same sessionStorage rejoin, as a code-shared race.
+  const enterRoomFromLounge = useCallback((seat: LoungeSeatHandoff) => {
+    const { room, ...persisted } = seat;
+    saveRoomSeat(window.sessionStorage, persisted);
+    setPhase({ kind: "room", ...persisted, room });
+  }, []);
+
   const onRunDone = useCallback((run: 0 | 1, humanLaneIndex: number,
                                  log: Impulse[], accuracy: RunAccuracy) => {
     humanLogsRef.current[humanLaneIndex] = log;
@@ -195,8 +228,18 @@ export default function ArenaGame() {
         {loadError && <div className="card mb-3 p-3" style={{ color: "#f87171" }}>{loadError}</div>}
         <SetupScreen onStart={beginRace}
           onCreateRoom={(setup, pets) => enterRoom(setup, pets, null)}
-          onJoinRoom={(code, setup, pets) => enterRoom(setup, pets, code)} />
+          onJoinRoom={(code, setup, pets) => enterRoom(setup, pets, code)}
+          onEnterLounge={enterLounge} />
       </>
+    );
+  }
+
+  if (phase.kind === "lounge") {
+    return (
+      <LoungeView loungeId={phase.loungeId} presenceToken={phase.token}
+        presenceId={phase.presenceId} picks={phase.picks}
+        onEnterRoom={enterRoomFromLounge}
+        onLeave={() => setPhase({ kind: "setup" })} />
     );
   }
 

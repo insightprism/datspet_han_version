@@ -145,3 +145,8 @@ export const GATE_POLL_MS = 100;
 
 /** How long the 📋 Copy button says ✓ Copied. */
 export const CLIPBOARD_FEEDBACK_MS = 1500;
+
+/** SPEC_PET_ARENA_LOUNGE §3.1 — the presence heartbeat cadence. Client-owned
+ *  twin of the server's LOUNGE_HEARTBEAT_S=30: the server reaps at 90 s, so
+ *  three missed beats mean you have left. */
+export const LOUNGE_HEARTBEAT_MS = 30_000;
