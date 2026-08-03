@@ -45,6 +45,10 @@ export interface RaceSetupChoice {
 
 interface Props {
   onStart: (choice: RaceSetupChoice, pets: ArenaPetInfo[]) => void;
+  /** SPEC_PET_ARENA_ROOMS R1 — the online doors. Optional so the setup
+   *  screen still renders in surfaces that have no room transport. */
+  onCreateRoom?: (choice: RaceSetupChoice, pets: ArenaPetInfo[]) => void;
+  onJoinRoom?: (code: string, choice: RaceSetupChoice, pets: ArenaPetInfo[]) => void;
 }
 
 function clauseText(clause: string[]): string {
@@ -66,6 +70,7 @@ const SETUP_STEP_HUES = [
   { accent: "#fb923c", tint: "rgba(251,146,60,0.08)" },   // 3 · athlete — orange
   { accent: "#a78bfa", tint: "rgba(167,139,250,0.08)" },  // 4 · race type — purple
   { accent: "#f472b6", tint: "rgba(244,114,182,0.08)" },  // 5 · head start — pink
+  { accent: "#22d3ee", tint: "rgba(34,211,238,0.08)" },   // 6 · online — cyan
 ];
 
 function SetupSection({ step, title, children }: {
@@ -88,7 +93,8 @@ function SetupSection({ step, title, children }: {
 }
 
 
-export default function SetupScreen({ onStart }: Props) {
+export default function SetupScreen({ onStart, onCreateRoom, onJoinRoom }: Props) {
+  const [joinCode, setJoinCode] = useState("");
   const [pets, setPets] = useState<ArenaPetInfo[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -366,6 +372,43 @@ export default function SetupScreen({ onStart }: Props) {
 
       <PetProfileModal pet={profilePet} onClose={() => setProfilePetId(null)}
         onRenamed={applyRename} />
+
+      {/* SPEC_PET_ARENA_ROOMS R1 — race a friend on their own device. Create
+          uses the picks above; join needs only the code and your athlete. */}
+      {onCreateRoom && onJoinRoom && (
+        <SetupSection step={6} title="Race a friend online (beta)">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <button type="button" className="btn"
+              disabled={playerOnePetId === null}
+              onClick={() => {
+                if (playerOnePetId === null) return;
+                onCreateRoom({
+                  eventKey, challengeKey, difficulty, mode: "bot",
+                  botRung, playerOnePetId, playerOneHandicap,
+                  playerTwoPetId: null, playerTwoHandicap, botPetId: null,
+                }, pets);
+              }}>
+              🌐 Create a room with these picks
+            </button>
+            <span style={{ color: "var(--muted)" }}>or join a friend's:</span>
+            <input className="input mono w-36 text-sm" placeholder="room code"
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value)} />
+            <button type="button" className="btn-ghost"
+              disabled={playerOnePetId === null || joinCode.trim() === ""}
+              onClick={() => {
+                if (playerOnePetId === null) return;
+                onJoinRoom(joinCode, {
+                  eventKey, challengeKey, difficulty, mode: "bot",
+                  botRung, playerOnePetId, playerOneHandicap,
+                  playerTwoPetId: null, playerTwoHandicap, botPetId: null,
+                }, pets);
+              }}>
+              Join →
+            </button>
+          </div>
+        </SetupSection>
+      )}
 
       <button type="button" className="btn self-start px-8 py-3 text-lg"
         disabled={!startable}

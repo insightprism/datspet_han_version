@@ -1347,3 +1347,72 @@ export async function listMyDonations(): Promise<Donation[]> {
   const data = await r.json().catch(() => ({ donations: [] }));
   return data.donations ?? [];
 }
+
+// ---------------------------------------------------------------------------
+// Arena rooms (SPEC_PET_ARENA_ROOMS §4.2) — live multi-device racing. Every
+// room URL is minted HERE, the one-adapter rule; the transport client in
+// web/src/arena/room/ owns lifecycle (EventSource, reconnection), never URLs.
+// ---------------------------------------------------------------------------
+
+export interface ArenaRoomPlayer {
+  pet_id: string;
+  pet_label: string;
+  handicap_name: string;
+  is_host: boolean;
+}
+
+export interface ArenaRoomSnapshot {
+  code: string;
+  state: "lobby" | "countdown" | "racing" | "finished";
+  event_key: string;
+  challenge_key: string;
+  difficulty: string;
+  question_seed: number;
+  max_players: number;
+  countdown_ends_at: number | null;
+  server_now: number;
+  players: ArenaRoomPlayer[];
+}
+
+export interface ArenaRoomEntrant {
+  pet_id: string;
+  pet_label: string;
+  handicap_name: string;
+}
+
+async function arenaRoomPost(path: string, body: unknown): Promise<any> {
+  const r = await apiFetch(`${API_URL}/api/arena/rooms${path}`, {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) {
+    const data = await r.json().catch(() => ({}));
+    throw new Error(data.detail || "The room did not answer");
+  }
+  return r.json();
+}
+
+export async function createArenaRoom(setup: {
+  event_key: string; challenge_key: string; difficulty: string;
+  max_players?: number;
+} & ArenaRoomEntrant): Promise<{ code: string; host_token: string; room: ArenaRoomSnapshot }> {
+  return arenaRoomPost("", setup);
+}
+
+export async function joinArenaRoom(
+  code: string, entrant: ArenaRoomEntrant,
+): Promise<{ player_token: string; room: ArenaRoomSnapshot }> {
+  return arenaRoomPost(`/${encodeURIComponent(code)}/join`, entrant);
+}
+
+export async function startArenaRoom(
+  code: string, token: string,
+): Promise<{ room: ArenaRoomSnapshot }> {
+  return arenaRoomPost(`/${encodeURIComponent(code)}/start`, { token });
+}
+
+export function arenaRoomStreamUrl(code: string): string {
+  return `${API_URL}/api/arena/rooms/${encodeURIComponent(code)}/stream`;
+}

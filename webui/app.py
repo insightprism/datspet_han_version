@@ -1955,6 +1955,14 @@ def _maintenance_loop() -> None:
                     print(f"[webui] transient sweep removed {n} item(s)", flush=True)
             except Exception as e:
                 print(f"[webui] transient sweep failed: {e}", flush=True)
+        # Arena room reaping (SPEC_PET_ARENA_ROOMS §2.4) rides every tick —
+        # the TTLs are minutes, so the hourly transient cadence is too slow.
+        try:
+            n = arena_rooms.sweep_rooms()
+            if n:
+                print(f"[webui] arena sweep reaped {n} room(s)", flush=True)
+        except Exception as e:
+            print(f"[webui] arena sweep failed: {e}", flush=True)
         time.sleep(MAINTENANCE_TICK_S)
 
 

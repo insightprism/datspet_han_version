@@ -13,6 +13,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  createArenaRoom, joinArenaRoom, type ArenaRoomSnapshot,
+} from "@/lib/api";
 import { removePet } from "@/pet";
 import { botImpulseLog } from "./bot";
 import { CHALLENGES } from "./challenges/registry";
@@ -27,6 +30,7 @@ import type { Impulse } from "./raceEngine";
 import { mintRaceSeed } from "./rng";
 import RaceScreen from "./RaceScreen";
 import ResultsScreen from "./ResultsScreen";
+import RoomLobby from "./room/RoomLobby";
 import SetupScreen, { type RaceSetupChoice } from "./SetupScreen";
 
 type Phase =
@@ -34,7 +38,11 @@ type Phase =
   | { kind: "loading" }
   | { kind: "race"; run: 0 | 1 }
   | { kind: "handoff" }
-  | { kind: "results" };
+  | { kind: "results" }
+  // SPEC_PET_ARENA_ROOMS R1 — the online lobby. The room replaces the local
+  // flow entirely; leaving returns to setup.
+  | { kind: "room"; code: string; token: string; isHost: boolean;
+      room: ArenaRoomSnapshot };
 
 function buildLaneConfigs(
   choice: RaceSetupChoice, pets: ArenaPetInfo[],
@@ -117,6 +125,34 @@ export default function ArenaGame() {
     }
   }, []);
 
+  const enterRoom = useCallback(async (
+    setup: RaceSetupChoice, pets: ArenaPetInfo[], joinCode: string | null,
+  ) => {
+    const me = pets.find((p) => p.id === setup.playerOnePetId);
+    if (!me) return;
+    setLoadError(null);
+    const entrant = {
+      pet_id: me.id, pet_label: me.label,
+      handicap_name: setup.playerOneHandicap,
+    };
+    try {
+      if (joinCode) {
+        const j = await joinArenaRoom(joinCode.trim(), entrant);
+        setPhase({ kind: "room", code: joinCode.trim(),
+                   token: j.player_token, isHost: false, room: j.room });
+      } else {
+        const c = await createArenaRoom({
+          event_key: setup.eventKey, challenge_key: setup.challengeKey,
+          difficulty: setup.difficulty, ...entrant,
+        });
+        setPhase({ kind: "room", code: c.code, token: c.host_token,
+                   isHost: true, room: c.room });
+      }
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : "The room did not answer");
+    }
+  }, []);
+
   const onRunDone = useCallback((run: 0 | 1, humanLaneIndex: number,
                                  log: Impulse[], accuracy: RunAccuracy) => {
     humanLogsRef.current[humanLaneIndex] = log;
@@ -129,8 +165,18 @@ export default function ArenaGame() {
     return (
       <>
         {loadError && <div className="card mb-3 p-3" style={{ color: "#f87171" }}>{loadError}</div>}
-        <SetupScreen onStart={beginRace} />
+        <SetupScreen onStart={beginRace}
+          onCreateRoom={(setup, pets) => enterRoom(setup, pets, null)}
+          onJoinRoom={(code, setup, pets) => enterRoom(setup, pets, code)} />
       </>
+    );
+  }
+
+  if (phase.kind === "room") {
+    return (
+      <RoomLobby code={phase.code} token={phase.token} isHost={phase.isHost}
+        initialRoom={phase.room}
+        onLeave={() => setPhase({ kind: "setup" })} />
     );
   }
 
