@@ -1,11 +1,16 @@
 # SPEC_PET_ARENA_ROOMS — a room five children can race in, and anyone can watch
 
-**Status: Rev.3 (2026-08-02) — OWNER APPROVED; R0 EXECUTED.** The owner green-lit R0 + live
-multi-device racing and supplied the canonical story (below). R0 (§11) is built and deployed to
-staging: `webui/arena_rooms.py` (constants + the stream probe), both nginx conf's stream/impulse
-location blocks, `test_arena_stream.py` (heartbeat-under-60s pin + `--workers 1` pin on both unit
-files), and `verify_deployment.sh` §7 (holds the stream open past 90 s on the real URL). R1
-(create/join/lobby) is next.
+**Status: Rev.4 (2026-08-03) — R0–R3 BUILT, DEPLOYED TO STAGING, VERIFIED E2E.** R0: transport
+proven (stream survives both proxies 95 s; verify_deployment §7 is the permanent gate). R1:
+create/join/lobby — lobbies fill live across devices. R2: the race — batched impulses up, 10 Hz
+authoritative ticks down, the server referee (`simulate_entrant`, fixture-pinned) publishes
+standings; §7's two clamps and the §4.3 room-scoped asset routes (membership is the capability;
+sheet+manifest only). R3: the spectator URL — `/arena/{code}` serves the watch shell via nginx
+(quoted-brace regex; see deploy §E 2026-08-03), anonymous viewers stream the race live, and the
+standings ride every snapshot for the RESULT_TTL window so late arrivals see who won. E2E: a
+browser player raced a scripted rival and lost fairly (referee-scored); two scripted racers were
+spectated anonymously on staging start to standings. Remaining: R4 (team events in rooms), §14
+owner calls (14.4 spectator questions — currently NOT shown), and the prod deploy on request.
 
 > ### Rev.3 — the owner's go, and the story the product is for
 >
