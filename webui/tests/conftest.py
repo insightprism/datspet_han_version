@@ -91,6 +91,25 @@ def anon_cookies(owner_id=ANON_OWNER):
     return {"datspet_anon": owner_id}
 
 
+def launch_cookie(user_id):
+    """The launch cookie /launch would set for a signed-in DatsMe user — a REAL
+    signed token via the SDK testkit, because resolve_launch_identity verifies
+    it. Shared by the scoping tests and every signed-in-only surface (lounges)."""
+    from datsme_partner_sdk.testkit import make_test_launch_token
+    token = make_test_launch_token(
+        hmac_secret=TEST_SECRET, user_id=user_id,
+        activity_id="design_a_pet", partner_slug="datspet",
+        capabilities=["pets.write"], ttl_seconds=3600)
+    return json.dumps({"token": token, "user_id": user_id,
+                       "activity_id": "design_a_pet", "jti": "t",
+                       "capabilities": ["pets.write"]})
+
+
+def launch_cookies(user_id):
+    """Cookie jar for a signed-in DatsMe user."""
+    return {"datsme_launch": launch_cookie(user_id)}
+
+
 def make_bundle_zip(breed_id="test_breed", animations=None, **extra_manifest):
     """A REAL pet bundle .zip, shaped like the pipeline's output.
 

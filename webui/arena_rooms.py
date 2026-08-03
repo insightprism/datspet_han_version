@@ -136,6 +136,10 @@ class Room:
     question_seed: int         # ONE seed per room — the fairness rule (§8.3)
     max_players: int
     event: dict = field(default_factory=dict)   # the loaded declaration
+    # Which lounge minted this room, if any (SPEC_PET_ARENA_LOUNGE §5) — a
+    # TAG for the lounge's racing board, never a behavior fork: a lounge
+    # room races exactly like a code-shared one.
+    lounge_id: Optional[str] = None
     players: dict[str, RoomPlayer] = field(default_factory=dict)
     state: str = "lobby"       # lobby | countdown | racing | finished
     created_at: float = 0.0
@@ -286,14 +290,16 @@ def sweep_rooms(now: Optional[float] = None) -> int:
 
 def mint_room(*, event: dict, event_key: str, challenge_key: str,
               difficulty: str, max_players: int, host: Optional[RoomPlayer],
-              host_owner: Optional[str]) -> Room:
-    """The service seam the routes (and one day the lounge, §4.2 there) mint
-    rooms through. `host` may be None for a hostless utility room — the
-    deploy gate's probe room enters through here too."""
+              host_owner: Optional[str],
+              lounge_id: Optional[str] = None) -> Room:
+    """The service seam the routes (and the lounge, §4.2 there) mint rooms
+    through. `host` may be None for a hostless utility room — the deploy
+    gate's probe room enters through here too."""
     room = Room(
         code=secrets.token_urlsafe(ROOM_CODE_BYTES),
         host_token=secrets.token_urlsafe(16),
         host_owner=host_owner,
+        lounge_id=lounge_id,
         event_key=event_key, event=event,
         challenge_key=challenge_key, difficulty=difficulty,
         question_seed=secrets.randbits(31),
@@ -311,10 +317,20 @@ def mint_room(*, event: dict, event_key: str, challenge_key: str,
 
 
 def room_is_alive(code: str) -> bool:
-    """The accessor a future lounge board reads instead of reaching into
-    ROOMS under ROOMS_LOCK (lounge spec §2.3)."""
+    """The accessor the lounge sweep reads instead of reaching into ROOMS
+    under ROOMS_LOCK (lounge spec §2.3)."""
     with ROOMS_LOCK:
         return code in ROOMS
+
+
+def room_snapshot_if_alive(code: str) -> Optional[dict]:
+    """The lounge board's read (lounge spec §5): the same public snapshot the
+    stream serves — tokens never leave, players are their pets — or None once
+    the room is reaped. Kept beside room_is_alive so the lounge never touches
+    ROOMS or ROOMS_LOCK directly."""
+    with ROOMS_LOCK:
+        room = ROOMS.get(code)
+        return None if room is None else _snapshot(room)
 
 
 @router.post("/rooms")

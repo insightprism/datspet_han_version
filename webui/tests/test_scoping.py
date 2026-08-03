@@ -9,7 +9,6 @@ for the writeback burn, not for identity/scoping). The cookie is the JSON blob
 /launch sets: {token, user_id, ...}.
 """
 import importlib
-import json
 import os
 import sys
 
@@ -21,8 +20,8 @@ for p in (WEBUI, REPO):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from conftest import (ANON_OWNER, ANON_OWNER_2, TEST_SECRET,  # noqa: E402
-                      anon_cookies, make_pet)
+from conftest import (ANON_OWNER, ANON_OWNER_2,  # noqa: E402
+                      anon_cookies, launch_cookie, make_pet)
 
 
 @pytest.fixture()
@@ -39,16 +38,9 @@ def app_client(dpp_env, monkeypatch):
     return TestClient(app_mod.app)
 
 
-def _cookie_for(user_id):
-    """The launch cookie /launch would set for a user (real signed token)."""
-    from datsme_partner_sdk.testkit import make_test_launch_token
-    token = make_test_launch_token(
-        hmac_secret=TEST_SECRET, user_id=user_id,
-        activity_id="design_a_pet", partner_slug="datspet",
-        capabilities=["pets.write"], ttl_seconds=3600)
-    return json.dumps({"token": token, "user_id": user_id,
-                       "activity_id": "design_a_pet", "jti": "t",
-                       "capabilities": ["pets.write"]})
+# The launch cookie now lives in conftest (lounges need it too); the local
+# name survives so every call site below reads unchanged.
+_cookie_for = launch_cookie
 
 
 def test_two_users_see_only_their_own_saved_pets(app_client, dpp_env):

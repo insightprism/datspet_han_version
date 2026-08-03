@@ -223,6 +223,12 @@ app.include_router(pet_facing_admin.router)
 import arena_rooms  # noqa: E402
 app.include_router(arena_rooms.router)
 
+# Arena lounges (SPEC_PET_ARENA_LOUNGE L0-L2): the permanent front door —
+# presence, canned challenges, the racing board. Signed-in DatsMe users only;
+# accepting a challenge mints an ordinary ephemeral room through mint_room.
+import arena_lounges  # noqa: E402
+app.include_router(arena_lounges.router)
+
 # Donations (SPEC_PET_STORE §10) — the donate door and the donor's own record.
 # Not admin-gated: this is a user surface, scoped by owner like the house.
 import donations  # noqa: E402
@@ -1963,6 +1969,14 @@ def _maintenance_loop() -> None:
                 print(f"[webui] arena sweep reaped {n} room(s)", flush=True)
         except Exception as e:
             print(f"[webui] arena sweep failed: {e}", flush=True)
+        # Lounge reaping (SPEC_PET_ARENA_LOUNGE §2.3) — presence TTLs are
+        # seconds, so it rides the same every-tick cadence as the rooms.
+        try:
+            n = arena_lounges.sweep_lounges()
+            if n:
+                print(f"[webui] lounge sweep tidied {n} lounge(s)", flush=True)
+        except Exception as e:
+            print(f"[webui] lounge sweep failed: {e}", flush=True)
         time.sleep(MAINTENANCE_TICK_S)
 
 
