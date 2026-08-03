@@ -22,12 +22,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { postArenaImpulses, type ArenaRoomSnapshot } from "@/lib/api";
 import { removePet } from "@/pet";
 import ArenaTrack, { type TrackLane } from "../ArenaTrack";
+import { judgeAnswer } from "../challenges/answerRules";
+import ChallengePanel from "../ChallengePanel";
 import {
   CHALLENGES, questionAt, harderRung, type ChallengeQuestion,
 } from "../challenges/registry";
 import {
-  HURDLE_JUMP_ACCENT, HURDLE_JUMP_ACCENT_BG, IMPULSE_BATCH_MS,
-  WRONG_ANSWER_LOCKOUT_MS, WRONG_CHOICE_LOCKOUT_MS,
+  CRASH_FX_MS, HURDLE_CRASHES_TO_DQ, IMPULSE_BATCH_MS,
 } from "../constants";
 import { loadEvent } from "../declarations";
 import type { LoadedRacer } from "../gameTypes";
@@ -85,6 +86,13 @@ export default function RoomRaceScreen({
   // say so instead of letting the child watch a win the referee scores as a
   // loss.
   const [refereeGap, setRefereeGap] = useState(0);
+  // Rev.11 — same rules online as on the sofa: wrong at a gate is a crash,
+  // the third disqualifies THIS lane (input locks; the referee still ranks
+  // the distance covered — a DQ is a screen outcome, §7.4).
+  const crashCountRef = useRef(0);
+  const [crashCount, setCrashCount] = useState(0);
+  const [disqualified, setDisqualified] = useState(false);
+  const crashFxRefs = useRef<Map<number, { current: number }>>(new Map());
 
   // Load every lane's pet — mine through the owner routes, the others
   // through the room-scoped routes (§4.3).
@@ -165,10 +173,14 @@ export default function RoomRaceScreen({
 
   const submit = useCallback((answer: string) => {
     const now = performance.now();
-    if (now < lockedUntil || homeMs !== null) return;
-    const ok = challenge.inputKind === "tap"
-      || answer.trim().toLowerCase() === question.answer.trim().toLowerCase();
-    if (ok) {
+    if (now < lockedUntil || homeMs !== null || disqualified) return;
+    // The shared rules (F5's de-fork): the challenge's own check, the §8.5
+    // choice burn, the §7.2 lockout, Rev.11 crashes — one definition for
+    // solo and room alike. This screen's only difference is where a correct
+    // answer goes: the local log AND the upload queue.
+    const outcome = judgeAnswer(challenge, question, answer,
+      { atGate, hurdledEvent: !!event?.hurdles_every_m });
+    if (outcome.correct) {
       const impulse: Impulse = { at: raceClock(), quality: 1 };
       myLogRef.current.push(impulse);
       pendingRef.current.push(impulse);
@@ -177,25 +189,48 @@ export default function RoomRaceScreen({
       setTyped("");
     } else {
       setAnswered((a) => ({ ...a, wrong: a.wrong + 1 }));
-      setLockedUntil(now + (challenge.inputKind === "choice"
-        ? WRONG_CHOICE_LOCKOUT_MS : WRONG_ANSWER_LOCKOUT_MS));
+      if (outcome.crash) {
+        crashCountRef.current += 1;
+        setCrashCount(crashCountRef.current);
+        const fx = crashFxRefs.current.get(myLane);
+        if (fx) fx.current = performance.now() + CRASH_FX_MS;
+        if (crashCountRef.current >= HURDLE_CRASHES_TO_DQ) {
+          setDisqualified(true);
+          setTyped("");
+          return;
+        }
+      }
+      if (outcome.burnQuestion) setQIndex((i) => i + 1);
+      setLockedUntil(now + outcome.lockoutMs);
       setTyped("");
     }
-  }, [challenge, question, lockedUntil, homeMs, raceClock]);
+  }, [challenge, question, lockedUntil, homeMs, disqualified, atGate, event,
+      myLane, raceClock]);
 
   const trackLanes: TrackLane[] = useMemo(() => {
     if (!racers) return [];
-    return racers.flatMap((racer, i) => racer === null ? [] : [{
-      storeId: racer.storeId,
-      label: racer.label,
-      handicapName: racer.handicapName,
-      racingPose: racer.racingPose,
-      hopPose: ["jump", "play"].find((p) => racer.stats.poses.includes(p)),
-      integrator: i === myLane
-        ? myIntegratorRef.current!
-        : (remoteLanes.get(i) ?? new RemoteLane()),
-      log: i === myLane ? myLogRef.current : [],
-    }]);
+    return racers.flatMap((racer, i) => {
+      if (racer === null) return [];
+      let fx = crashFxRefs.current.get(i);
+      if (!fx) {
+        fx = { current: 0 };
+        crashFxRefs.current.set(i, fx);
+      }
+      return [{
+        storeId: racer.storeId,
+        label: racer.label,
+        handicapName: racer.handicapName,
+        racingPose: racer.racingPose,
+        hopPose: ["jump", "play"].find((p) => racer.stats.poses.includes(p)),
+        fallenPose: ["sleep", "sit", "idle"].find(
+          (p) => racer.stats.poses.includes(p)),
+        crashFxRef: fx,
+        integrator: i === myLane
+          ? myIntegratorRef.current!
+          : (remoteLanes.get(i) ?? new RemoteLane()),
+        log: i === myLane ? myLogRef.current : [],
+      }];
+    });
   }, [racers, myLane, remoteLanes]);
 
   if (!event) return <div className="card p-4">Unknown event.</div>;
@@ -209,9 +244,13 @@ export default function RoomRaceScreen({
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="text-xl font-semibold">{event.emoji} {event.label} — live!</h2>
+        {/* The limit is visible so the automatic ending never surprises
+            anyone (§2.3) — a race that just stops reads as a bug. */}
         <span className="mono text-sm" style={{ color: "var(--muted)" }}>
-          {(raceClock() / 1000).toFixed(1)} s · {answered.right} answered
+          {(raceClock() / 1000).toFixed(1)} / {event.time_limit_s} s ·{" "}
+          {answered.right} answered
           {total > 0 && ` · ${Math.round((answered.right / total) * 100)}% right`}
+          {event.hurdles_every_m ? ` · 💥 ${crashCount}/${HURDLE_CRASHES_TO_DQ}` : ""}
         </span>
       </div>
 
@@ -230,56 +269,19 @@ export default function RoomRaceScreen({
           🏁 You&apos;re home in {(homeMs / 1000).toFixed(1)} s! Watching the
           rest of the field — the referee calls it when everyone is in.
         </div>
-      ) : (
-        <div className="card flex flex-col gap-3 p-4"
-          style={atGate ? {
-            border: `1px solid ${HURDLE_JUMP_ACCENT}`,
-            background: HURDLE_JUMP_ACCENT_BG,
-          } : undefined}>
-          {atGate && (
-            <div className="text-center text-sm font-semibold"
-              style={{ color: HURDLE_JUMP_ACCENT }}>
-              🚧 JUMP! A harder one clears the hurdle:
-            </div>
-          )}
-          {challenge.inputKind === "tap" ? (
-            <button type="button"
-              className="w-full rounded-xl border py-6 text-3xl font-bold"
-              style={atGate ? { borderColor: HURDLE_JUMP_ACCENT, color: HURDLE_JUMP_ACCENT }
-                : { borderColor: "var(--accent)" }}
-              onPointerDown={() => submit("")}>
-              {atGate ? "TAP to JUMP!" : "TAP!"}
-            </button>
-          ) : (
-            <>
-              <div className="text-center text-4xl font-bold">{question.prompt}</div>
-              {question.choices ? (
-                <div className="flex justify-center gap-3">
-                  {question.choices.map((c) => (
-                    <button key={c} type="button" disabled={locked}
-                      className="rounded-lg border px-8 py-3 text-2xl"
-                      style={{
-                        borderColor: atGate ? HURDLE_JUMP_ACCENT : "var(--accent)",
-                        opacity: locked ? 0.4 : 1,
-                        color: atGate ? HURDLE_JUMP_ACCENT : undefined,
-                      }}
-                      onClick={() => submit(c)}>
-                      {c}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <form className="flex justify-center gap-2"
-                  onSubmit={(e) => { e.preventDefault(); submit(typed); }}>
-                  <input className="input mono w-40 text-center text-2xl"
-                    value={typed} disabled={locked} autoFocus
-                    onChange={(e) => setTyped(e.target.value)} />
-                  <button type="submit" className="btn" disabled={locked}>Go</button>
-                </form>
-              )}
-            </>
-          )}
+      ) : disqualified ? (
+        <div className="card p-4 text-center" style={{ color: "#f87171" }}>
+          💥 Three crashes — you&apos;re out of this one. Your pet sits at{" "}
+          {myIntegratorRef.current
+            ? myIntegratorRef.current.distanceM.toFixed(0) : 0}{" "}
+          m while the others finish.
         </div>
+      ) : (
+        <ChallengePanel
+          challenge={challenge} question={question} atGate={atGate}
+          lockedOut={locked} given={typed}
+          onGivenChange={setTyped} onSubmit={submit}
+        />
       )}
     </div>
   );

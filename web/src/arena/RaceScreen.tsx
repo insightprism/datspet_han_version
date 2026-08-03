@@ -14,12 +14,13 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { botImpulseLog } from "./bot";
+import { judgeAnswer } from "./challenges/answerRules";
 import {
   harderRung, questionAt, type ArenaChallenge,
 } from "./challenges/registry";
+import ChallengePanel from "./ChallengePanel";
 import {
-  COUNTDOWN_SECONDS, CRASH_FX_MS, HURDLE_CRASHES_TO_DQ, HURDLE_JUMP_ACCENT,
-  HURDLE_JUMP_ACCENT_BG, WRONG_ANSWER_LOCKOUT_MS, WRONG_CHOICE_LOCKOUT_MS,
+  COUNTDOWN_SECONDS, CRASH_FX_MS, HURDLE_CRASHES_TO_DQ,
 } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
 import type { LoadedRacer, RunAccuracy } from "./gameTypes";
@@ -176,20 +177,20 @@ export default function RaceScreen({
     if (phase !== "racing" || lockedOut || dqRef.current || !question) return;
     const t = raceClock();
     if (t === null) return;
-    if (challenge.check(given, question.answer)) {
+    // What the answer MEANS is the shared rules module's call — correctness
+    // via the challenge's own check, the §8.5 choice burn, the §7.2 lockout,
+    // and whether a gate crash happened. This screen owns what happens next.
+    const outcome = judgeAnswer(challenge, question, given,
+      { atGate: atHurdle, hurdledEvent: !!event.hurdles_every_m });
+    if (outcome.correct) {
       humanLogRef.current.push({ at: t, quality: 1 });
       setAnsweredCount((n) => n + 1);
       setQIndex((i) => i + 1);
       setGivenAnswer("");
     } else {
-      // §7.2 — time cost, never distance: no impulse, a lockout. Choices
-      // (Rev.10) pay MORE time and BURN the question — no eliminating your
-      // way to the answer; every guess is a fresh 1-in-3 (§8.5).
-      const isChoice = challenge.inputKind === "choice";
       wrongCountRef.current += 1;
-      // Rev.11 — a wrong answer AT the gate is hitting the hurdle: tumble,
-      // count it, and the third crash disqualifies on the spot.
-      if (atHurdle && event.hurdles_every_m) {
+      // Rev.11 — a crash tumbles the pet, and the third disqualifies.
+      if (outcome.crash) {
         crashCountRef.current += 1;
         setCrashCount(crashCountRef.current);
         const fx = crashFxRefs.current[humanLaneIndex];
@@ -203,13 +204,13 @@ export default function RaceScreen({
           return;
         }
       }
-      if (isChoice) setQIndex((i) => i + 1);
+      if (outcome.burnQuestion) setQIndex((i) => i + 1);
       setGivenAnswer("");
       setLockedOut(true);
       setTimeout(() => {
         setLockedOut(false);
         inputRef.current?.focus();
-      }, isChoice ? WRONG_CHOICE_LOCKOUT_MS : WRONG_ANSWER_LOCKOUT_MS);
+      }, outcome.lockoutMs);
     }
   }
 
@@ -249,83 +250,12 @@ export default function RaceScreen({
       )}
 
       {phase === "racing" && question && (
-        <div className="card p-4 text-center"
-          style={atHurdle
-            ? { borderColor: HURDLE_JUMP_ACCENT, background: HURDLE_JUMP_ACCENT_BG }
-            : undefined}>
-          {/* Rev.9 — the jump moment announces itself: color + banner. */}
-          {atHurdle && (
-            <div className="mb-2 text-sm font-bold"
-              style={{ color: HURDLE_JUMP_ACCENT }}>
-              🚧 JUMP! {challenge.ladder.length > 1 ? "A harder one clears the hurdle:" : "Clear the hurdle!"}
-            </div>
-          )}
-          {challenge.inputKind === "tap" ? (
-            <button
-              type="button"
-              className="btn w-full py-8 text-3xl"
-              style={atHurdle
-                ? { background: HURDLE_JUMP_ACCENT_BG, color: HURDLE_JUMP_ACCENT,
-                    borderColor: HURDLE_JUMP_ACCENT }
-                : undefined}
-              onPointerDown={() => submitAnswer("")}
-            >
-              {atHurdle ? "TAP to JUMP!" : question.prompt}
-            </button>
-          ) : challenge.inputKind === "choice" && question.choices ? (
-            <div className="flex flex-col items-center gap-3">
-              <div className="text-4xl font-bold">{question.prompt} = ?</div>
-              <div className="flex flex-wrap justify-center gap-3">
-                {question.choices.map((choice) => (
-                  <button key={choice} type="button"
-                    className="btn min-w-24 px-8 py-4 text-2xl"
-                    disabled={lockedOut}
-                    style={atHurdle
-                      ? { background: HURDLE_JUMP_ACCENT_BG, color: HURDLE_JUMP_ACCENT,
-                          borderColor: HURDLE_JUMP_ACCENT }
-                      : undefined}
-                    onClick={() => submitAnswer(choice)}>
-                    {choice}
-                  </button>
-                ))}
-              </div>
-              {lockedOut && (
-                <div className="text-sm" style={{ color: "#f87171" }}>
-                  Not quite — here's a fresh one…
-                </div>
-              )}
-            </div>
-          ) : (
-            <form
-              onSubmit={(e) => { e.preventDefault(); submitAnswer(givenAnswer); }}
-              className="flex flex-col items-center gap-3"
-            >
-              <div className="text-4xl font-bold">
-                {challenge.inputKind === "numeric"
-                  ? `${question.prompt} = ?`
-                  : question.prompt}
-              </div>
-              <div className="flex gap-2">
-                <input
-                  ref={inputRef}
-                  autoFocus
-                  inputMode={challenge.inputKind === "numeric" ? "numeric" : "text"}
-                  value={givenAnswer}
-                  disabled={lockedOut}
-                  onChange={(e) => setGivenAnswer(e.target.value)}
-                  className={`${challenge.inputKind === "numeric" ? "w-32" : "w-64"} rounded-lg border bg-transparent px-3 py-2 text-center text-2xl`}
-                  style={lockedOut ? { borderColor: "#f87171" } : undefined}
-                />
-                <button type="submit" className="btn" disabled={lockedOut}>Go</button>
-              </div>
-              {lockedOut && (
-                <div className="text-sm" style={{ color: "#f87171" }}>
-                  Not quite — take a breath…
-                </div>
-              )}
-            </form>
-          )}
-        </div>
+        <ChallengePanel
+          challenge={challenge} question={question} atGate={atHurdle}
+          lockedOut={lockedOut} given={givenAnswer}
+          onGivenChange={setGivenAnswer} onSubmit={submitAnswer}
+          inputRef={inputRef}
+        />
       )}
 
       {phase === "watching" && (
