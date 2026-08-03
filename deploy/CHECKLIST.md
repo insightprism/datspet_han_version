@@ -214,6 +214,12 @@ old numbers is actively dangerous**, which is the whole reason for the change.
       docker run --rm -v /var/www/datspet/nginx-default.conf:/etc/nginx/conf.d/default.conf:ro \
         nginx:alpine nginx -t
       ```
+      ⚠️ **Check nginx -t's EXIT CODE, never its piped output** — `nginx -t | tail` exits with
+      tail's 0, and an `&&` chain sails past a failed validation straight into writing the bad
+      conf live (2026-08-03: staging vhost restart-looped ~2 min). Gate the write on the command
+      itself: `if docker run … nginx -t; then cat new > live && docker restart …; fi`.
+      ⚠️ **Quote any location regex containing `{n,m}` braces** — unquoted, nginx parses the brace
+      as a config block opener and the conf is invalid (`location ~ "^/arena/[A-Za-z0-9_-]{8,24}$"`).
 
 - [ ] **B8. Restart.** Backend + vhost. A conf-only change needs **only** the vhost —
       but **a rebuild ALWAYS needs the vhost too.** `next build` deletes and recreates
@@ -349,6 +355,7 @@ Format: date · what broke · what the check said · what now catches it.
 | 2026-07-28 | prod down ~2 min: `sed -i` on the live conf left the container on the **old inode** | host `grep` showed the new port; nginx served the old one | A5's in-place-edit rule |
 | 2026-07-28 | production's port `29954` **announced itself as staging** (`2` = staging) | nothing — it worked, it just read as the wrong environment | the renumber; ports are now 19954/29954 |
 | 2026-07-27 | C1's `--expect-max-poses 5` example vs the real cap of 8 | would have failed a good deploy | C1's ⚠️ note |
+| 2026-08-03 | staging vhost down ~2 min: invalid conf (unquoted `{8,24}` regex braces) written live | `nginx -t` FAILED — but piped through `tail`, the pipeline exited 0 and the `&&` chain kept going | B7's exit-code + regex-quoting notes |
 
 ### Known gaps — not yet automated
 
