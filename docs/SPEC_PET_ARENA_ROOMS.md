@@ -535,7 +535,10 @@ Prove the stream survives 90 seconds on a real deployed URL before writing the g
 - **Anyone asks for persistent results, leaderboards or records** → that is the *other* half of
   SPEC_PET_ARENA §11's tripwire, and it needs a table, a retention decision, and a fresh look at §6
   now that children's performance would be stored.
-- **The first request for chat or public room listings** (§6).
+- **The first request for chat or public room listings** (§6). *Fired 2026-08-02 — the owner asked
+  for permanent listed rooms with presence and invitations. Answered as the tripwire demands: a
+  separate product with its own duty-of-care review, [`SPEC_PET_ARENA_LOUNGE`](SPEC_PET_ARENA_LOUNGE.md)
+  (Rev.1, owner review pending). Race rooms here stay ephemeral and unlisted; the lounge mints them.*
 - **An event needs bidirectional real-time** (§3.1).
 
 ---
