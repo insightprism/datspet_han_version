@@ -110,15 +110,61 @@ def _rewrite_manifest(manifest_json: str, view: dict,
     return json.dumps(manifest, indent=2)
 
 
-def _rewrite_bundle(bundle_zip: bytes, manifest_json: str) -> bytes:
-    """The same manifest, inside the zip — members copied byte-for-byte so
-    the sprite sheet and package.json are untouched."""
+def flip_sheet_frames(sheet_png: bytes, manifest_json: str, pose: str,
+                      frame_indices: list[int]) -> bytes:
+    """Horizontally mirror specific frames of one pose IN THE SHEET PIXELS.
+
+    The deeper defect class behind the facing door: each pose is its own I2V
+    loop, and the video model can TURN THE SUBJECT AROUND mid-loop (measured
+    2026-08-02: 3 of 16 run frames on a humanoid build face the other way).
+    No metadata can describe a loop that changes direction inside itself —
+    the animation flickers backward in motion — so the repair is pixel
+    surgery: mirror the turned frames so the whole loop faces one way, and
+    let the pose's single view block be the truth again.
+
+    `frame_indices` are pose-relative (0-based within the pose's frame list),
+    matching how a human reads a review strip. PIL is imported lazily: webui
+    runs GPU-less and must not pay an image stack at import time — the same
+    posture as the factory boundary."""
+    from PIL import Image
+
+    manifest = json.loads(manifest_json)
+    anim = manifest.get("animations", {}).get(pose)
+    if anim is None:
+        raise ValueError(f"no such pose {pose!r}")
+    frames = anim["frames"]
+    bad = [i for i in frame_indices if not (0 <= i < len(frames))]
+    if bad:
+        raise ValueError(f"pose {pose!r} has {len(frames)} frames; "
+                         f"out of range: {bad}")
+    columns = manifest.get("columns", 8)
+    fw = manifest.get("frame_width", 256)
+    fh = manifest.get("frame_height", fw)
+
+    sheet = Image.open(io.BytesIO(sheet_png)).convert("RGBA")
+    from PIL import ImageOps
+    for i in frame_indices:
+        fi = frames[i]
+        x, y = (fi % columns) * fw, (fi // columns) * fh
+        cell = sheet.crop((x, y, x + fw, y + fh))
+        sheet.paste(ImageOps.mirror(cell), (x, y))
+    out = io.BytesIO()
+    sheet.save(out, "PNG")
+    return out.getvalue()
+
+
+def _rewrite_bundle(bundle_zip: bytes, manifest_json: str,
+                    sheet_png: bytes | None = None) -> bytes:
+    """The same manifest — and, for a pixel repair, the same repaired sheet —
+    inside the zip; every other member copied byte-for-byte."""
     out = io.BytesIO()
     with zipfile.ZipFile(io.BytesIO(bundle_zip)) as src, \
          zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as dst:
         for member in src.namelist():
             if member == "manifest.json":
                 dst.writestr(member, manifest_json)
+            elif sheet_png is not None and member.endswith("_sprite.png"):
+                dst.writestr(member, sheet_png)
             else:
                 dst.writestr(member, src.read(member))
     return out.getvalue()

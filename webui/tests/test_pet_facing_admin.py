@@ -173,3 +173,60 @@ def test_override_for_unknown_pose_is_rejected(admin_client, dpp_env):
         json={**REPAIRED, "animations": {"moonwalk": REPAIRED}})
     assert r.status_code == 422
     assert "no such pose" in r.json()["detail"]
+
+
+def test_flip_sheet_frames_mirrors_only_the_named_frames():
+    """The pixel repair for a loop that TURNS mid-animation: the named
+    pose-relative frames are mirrored in place, every other cell of the
+    sheet is untouched, and out-of-range indices refuse loudly."""
+    from PIL import Image
+    import io as _io
+    import pet_facing_admin as pfa
+
+    fw = 8
+    manifest = {"columns": 2, "frame_width": fw, "frame_height": fw,
+                "animations": {"run": {"frames": [0, 1, 2], "fps": 8,
+                                       "loop": True}}}
+    # Frame cells with a single marker pixel at x=1 so a mirror moves it
+    # to x=fw-2. Grid is 2 columns: frames 0,1 on row 0; frame 2 on row 1.
+    sheet = Image.new("RGBA", (fw * 2, fw * 2), (0, 0, 0, 0))
+    for fi in (0, 1, 2):
+        x, y = (fi % 2) * fw, (fi // 2) * fw
+        sheet.putpixel((x + 1, y + 3), (255, 0, 0, 255))
+    buf = _io.BytesIO()
+    sheet.save(buf, "PNG")
+
+    out = pfa.flip_sheet_frames(buf.getvalue(), json.dumps(manifest),
+                                "run", [1, 2])
+    got = Image.open(_io.BytesIO(out)).convert("RGBA")
+    # Frame 0 untouched: marker still at x=1. Frames 1,2 mirrored: x=fw-2.
+    assert got.getpixel((1, 3))[3] == 255
+    assert got.getpixel((fw + fw - 2, 3))[3] == 255
+    assert got.getpixel((fw + 1, 3))[3] == 0
+    assert got.getpixel((fw - 2, fw + 3))[3] == 255
+
+    with pytest.raises(ValueError, match="out of range"):
+        pfa.flip_sheet_frames(buf.getvalue(), json.dumps(manifest), "run", [3])
+    with pytest.raises(ValueError, match="no such pose"):
+        pfa.flip_sheet_frames(buf.getvalue(), json.dumps(manifest), "fly", [0])
+
+
+def test_repair_pet_bundle_carries_the_sheet(dpp_env):
+    """A pixel repair must land in BOTH sheet copies: the column the runtimes
+    fetch and the sprite member inside the bundle zip."""
+    import pet_facing_admin as pfa
+    db = dpp_env["db"]
+    make_misfaced_pet(db, pet_id="pixelfix0001")
+    row = db.get_pet("pixelfix0001")
+
+    new_sheet = b"\x89PNG\r\n\x1a\nREPAIRED"
+    new_zip = pfa._rewrite_bundle(row["bundle_zip"], row["manifest_json"],
+                                  sheet_png=new_sheet)
+    db.repair_pet_bundle("pixelfix0001", manifest_json=row["manifest_json"],
+                         bundle_zip=new_zip, sheet_png=new_sheet)
+
+    fresh = db.get_pet("pixelfix0001")
+    assert fresh["sheet_png"] == new_sheet
+    with zipfile.ZipFile(io.BytesIO(fresh["bundle_zip"])) as z:
+        assert z.read("chinese_girl_sprite.png") == new_sheet
+    assert fresh["bundle_sha256"] == hashlib.sha256(fresh["bundle_zip"]).hexdigest()

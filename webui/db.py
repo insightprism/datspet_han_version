@@ -398,22 +398,28 @@ def insert_pet(*, pet_id: str, breed_id: str, display_name: str,
 
 
 def repair_pet_bundle(pet_id: str, *, manifest_json: str,
-                      bundle_zip: bytes) -> bool:
+                      bundle_zip: bytes,
+                      sheet_png: Optional[bytes] = None) -> bool:
     """Admin data repair (pet_facing_admin): replace a stored pet's manifest —
     both copies travel together, the column and the zip the caller rebuilt
     from it — and rederive bundle_sha256/size_bytes, which are a pure function
     of the zip (insert_pet's rule; the DPP transfer pointer publishes them).
-    This is the deliberate exception to "nothing restamps a stored row"
-    (SPEC_PET_OWNER_FIELD §2.4): a repair of metadata the build stamped wrong,
-    through an admin door, never an ordinary flow."""
+    A PIXEL repair (flip_sheet_frames) also passes the repaired sheet, which
+    must land in the column the runtimes fetch AND ride inside the zip the
+    caller rebuilt. This is the deliberate exception to "nothing restamps a
+    stored row" (SPEC_PET_OWNER_FIELD §2.4): a repair of what the build
+    stamped or drew wrong, through an admin door, never an ordinary flow."""
     with _lock:
         conn = _connect()
+        sheet_set, sheet_params = ("", ()) if sheet_png is None \
+            else (", sheet_png=?", (sheet_png,))
         cur = conn.execute(
-            """UPDATE pets SET manifest_json=?, bundle_zip=?,
-                              bundle_sha256=?, size_bytes=?
-               WHERE id=?""",
+            f"""UPDATE pets SET manifest_json=?, bundle_zip=?,
+                               bundle_sha256=?, size_bytes=?{sheet_set}
+                WHERE id=?""",
             (manifest_json, bundle_zip,
-             hashlib.sha256(bundle_zip).hexdigest(), len(bundle_zip), pet_id),
+             hashlib.sha256(bundle_zip).hexdigest(), len(bundle_zip),
+             *sheet_params, pet_id),
         )
         conn.commit()
         return cur.rowcount > 0
