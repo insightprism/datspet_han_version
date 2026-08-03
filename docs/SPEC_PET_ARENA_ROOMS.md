@@ -1,7 +1,26 @@
 # SPEC_PET_ARENA_ROOMS — a room five children can race in, and anyone can watch
 
-**Status: Rev.2 (2026-08-02) — DRAFT FOR OWNER REVIEW; NOTHING BUILT.** No code, no migration, no
-deploy. §0 records the decisions; §14 lists what still needs a call.
+**Status: Rev.3 (2026-08-02) — OWNER APPROVED; R0 EXECUTED.** The owner green-lit R0 + live
+multi-device racing and supplied the canonical story (below). R0 (§11) is built and deployed to
+staging: `webui/arena_rooms.py` (constants + the stream probe), both nginx conf's stream/impulse
+location blocks, `test_arena_stream.py` (heartbeat-under-60s pin + `--workers 1` pin on both unit
+files), and `verify_deployment.sh` §7 (holds the stream open past 90 s on the real URL). R1
+(create/join/lobby) is next.
+
+> ### Rev.3 — the owner's go, and the story the product is for
+>
+> > "A user at his home can call her friend (using DatsMe of course), and say I challenge you to a
+> > race. She signs on to DatsPet, and goes into an agreed-upon room and has the contest. You can
+> > make the room service just as long as the game ends… it is almost like a LiveKit chat: it
+> > produces a room, people go in there to chat — but in this case, people go into the room and
+> > compete against each other."
+>
+> Three things this confirms, all already in the design: rooms are **ephemeral** (§0.7 — the room
+> lives exactly as long as the contest plus a short results window); there is a **caretaker** (§2.4
+> — the reaper on the existing maintenance thread is "the person that takes care of that"); and the
+> LiveKit analogy is the architecture minus the media server — mint a room, meet by code, compete,
+> evaporate. The challenge itself travels over DatsMe (a call), not over anything this spec builds —
+> the room code is just something friends tell each other.
 
 > ### Rev.2 — the pre-build review: three corrections and a lobby field, no design change
 >

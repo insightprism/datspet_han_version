@@ -166,6 +166,35 @@ else
   fi
 fi
 
+hdr "7. Arena stream  (SPEC_PET_ARENA_ROOMS §5.2 — the outer proxy's 60 s cliff)"
+# The one check that can only run here: the outer nginx-proxy does not exist
+# on a dev box, and its 60 s idle default silently cuts any stream whose
+# heartbeat stops. Hold the probe open PAST 90 s and assert both nginx layers
+# let heartbeats through unbuffered. Skips cleanly on a deploy that predates
+# the rooms work (the probe 404s).
+PROBE_CODE=$("${CURL[@]}" -o /dev/null -m 10 -w '%{http_code}' "$BASE/api/arena/stream-probe" -H "Range: bytes=0-0" || true)
+if [ "$PROBE_CODE" = "404" ]; then
+  ok "arena stream probe not deployed yet — skipped"
+else
+  STREAM_FILE=$(mktemp)
+  # --max-time 95 > the outer proxy's 60 s: curl exiting 28 (its OWN timeout)
+  # proves the stream was still open at 95 s; any other exit means a proxy or
+  # the backend closed it early.
+  curl -s -N -b "$CJ" -m 95 "$BASE/api/arena/stream-probe" > "$STREAM_FILE"
+  STREAM_RC=$?
+  BEATS=$(grep -c "heartbeat" "$STREAM_FILE" || true)
+  grep -q "event: probe" "$STREAM_FILE" \
+    && ok "stream opens and first event arrives unbuffered" \
+    || bad "stream probe returned no initial event (proxy_buffering? §5.1)"
+  [ "$BEATS" -ge 4 ] \
+    && ok "heartbeats flow through both nginx layers ($BEATS in 95 s)" \
+    || bad "only $BEATS heartbeats in 95 s (want >=4 — buffering or a cut stream)"
+  [ "$STREAM_RC" = "28" ] \
+    && ok "stream still open past 90 s — outlives the outer proxy's 60 s default" \
+    || bad "stream closed early (curl exit $STREAM_RC) — §5.2's cliff is live"
+  rm -f "$STREAM_FILE"
+fi
+
 echo
 echo "=============================================================="
 printf ' %s: \033[32m%d passed\033[0m, \033[31m%d failed\033[0m\n' "$BASE" "$PASS" "$FAIL"
