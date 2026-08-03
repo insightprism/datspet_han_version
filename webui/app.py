@@ -217,9 +217,9 @@ app.include_router(store_admin.router)
 import pet_facing_admin  # noqa: E402
 app.include_router(pet_facing_admin.router)
 
-# Arena rooms (SPEC_PET_ARENA_ROOMS): live multi-device racing. R0 is the
-# transport proof — the stream probe verify_deployment holds open past the
-# outer proxy's 60 s cliff before any room code exists (§11).
+# Arena rooms (SPEC_PET_ARENA_ROOMS R0-R3): live multi-device racing —
+# lobby, race, spectator stream — plus the deploy gate's probe, which
+# verify_deployment holds open past the outer proxy's 60 s cliff (§5.2).
 import arena_rooms  # noqa: E402
 app.include_router(arena_rooms.router)
 

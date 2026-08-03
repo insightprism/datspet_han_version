@@ -116,8 +116,8 @@ export const TRACK_GROUND_Y_PX = 2;
 
 /** SPEC_PET_ARENA_ROOMS §3.3 — one impulse batch per this window: each
  *  impulse carries its own race-clock timestamp, so batching costs no
- *  fidelity, and five fast players stay ~5 requests/s instead of ~15. Must
- *  agree with the server module's IMPULSE_BATCH_MS. */
+ *  fidelity, and a fast player stays ~5 requests/s. Client-owned: the
+ *  server clamps by time window and never needs the cadence. */
 export const IMPULSE_BATCH_MS = 200;
 
 /** Rev.9 — the JUMP color: what the challenge panel wears while the lane is

@@ -1,6 +1,7 @@
-"""Arena rooms R1 (SPEC_PET_ARENA_ROOMS §2, §3.2, §4.1) — create/join/lobby.
+"""Arena rooms (SPEC_PET_ARENA_ROOMS §2, §3.2, §4, §7) — lobby, race,
+assets, standings.
 
-What each case protects (§10's R1 subset):
+What each case protects:
 - capacity is enforced server-side (the sixth join 409s), unknown codes 404,
   and a room past its lobby refuses joins — the UI is never the gate;
 - only the host token starts the race; a player token 403s;
@@ -438,3 +439,70 @@ def test_late_arrival_sees_standings_in_the_snapshot(rooms):
     assert snap["state"] == "finished"
     assert snap["standings"] is not None
     assert snap["standings"][0]["pet_label"] == "Kenji Girl"
+
+
+def test_room_manifest_is_a_projection(rooms):
+    """F2 — §6: the room manifest carries exactly what the arena loader
+    reads. A private block (the design-provenance stamp is coming) must be
+    dropped by construction, not by remembering; design projects to picks."""
+    client, arena_rooms = rooms
+    from conftest import make_bundle_zip
+    zip_bytes, manifest_json = make_bundle_zip(
+        breed_id="proj", animations={"walk": {"frames": [0], "fps": 8, "loop": True}},
+        movement_class="mammalian_quadruped",
+        athletics={"schema_version": "pet_athletics.v1"},
+        design={"picks": {"coat": "spotted"}, "provenance": {"typed": "PRIVATE"}},
+        design_provenance={"typed_words": "ALSO PRIVATE"})
+    client._db.insert_pet(
+        pet_id="projpet00001", breed_id="proj", display_name="Proj",
+        created_at=1783800000.0, draft=False, sheet_png=b"\x89PNG",
+        manifest_json=manifest_json, package_json=None, bundle_zip=zip_bytes,
+        external_user_id=ANON_OWNER)
+    code = make_room(client, pet_id="projpet00001")["code"]
+    served = client.get(
+        f"/api/arena/rooms/{code}/pets/projpet00001/manifest.json").json()
+    assert "PRIVATE" not in json.dumps(served)
+    assert served["animations"]["walk"]["fps"] == 8
+    assert served["movement_class"] == "mammalian_quadruped"
+    assert served["design"] == {"picks": {"coat": "spotted"}}
+
+
+def test_last_event_id_ahead_of_seq_gets_a_snapshot(rooms):
+    """F11 — an id the room never issued (stale browser, copied URL) must
+    yield a snapshot, never an empty replay that leaves the client blind."""
+    client, arena_rooms = rooms
+    code = make_room(client)["code"]
+    frames = _collect(arena_rooms._room_stream(code, 1_000_000_000), 1)
+    assert "event: snapshot" in frames[0]
+
+
+def test_wedged_subscriber_is_dropped_not_grown(rooms, monkeypatch):
+    """F15 — the ring is bounded; so is the queue behind it. A reader that
+    stops draining is dropped on overflow and its stream ends at the next
+    heartbeat; a reconnect lands in the replay/snapshot path."""
+    client, arena_rooms = rooms
+    monkeypatch.setattr(arena_rooms, "SUBSCRIBER_QUEUE_MAX", 3)
+    monkeypatch.setattr(arena_rooms, "SSE_HEARTBEAT_S", 0.05)
+    code = make_room(client)["code"]
+
+    async def run():
+        gen = arena_rooms._room_stream(code, None)
+        await asyncio.wait_for(gen.__anext__(), timeout=5)   # snapshot; registered
+        with arena_rooms.ROOMS_LOCK:
+            room = arena_rooms.ROOMS[code]
+            assert len(room.subscribers) == 1
+            for i in range(6):   # 2x the queue bound, undrained
+                arena_rooms._broadcast(room, "tick", {"n": i})
+        await asyncio.sleep(0.1)   # let the loop process the pushes
+        with arena_rooms.ROOMS_LOCK:
+            assert arena_rooms.ROOMS[code].subscribers == []
+        # The generator notices at its next heartbeat and ends.
+        tail = []
+        try:
+            while True:
+                tail.append(await asyncio.wait_for(gen.__anext__(), timeout=2))
+        except StopAsyncIteration:
+            pass
+        finally:
+            await gen.aclose()
+    asyncio.run(run())

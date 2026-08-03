@@ -1,4 +1,4 @@
-"""The arena stream transport (SPEC_PET_ARENA_ROOMS §3.2, §5.2) — R0.
+"""The arena stream transport (SPEC_PET_ARENA_ROOMS §3.2, §5.2).
 
 What each case protects:
 - SSE_HEARTBEAT_S stays UNDER the outer proxy's 60 s idle default. This is

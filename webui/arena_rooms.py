@@ -1,23 +1,21 @@
-"""Arena rooms — live multi-device racing (SPEC_PET_ARENA_ROOMS).
-
-R0 ships the TRANSPORT PROOF, not the game: §11 orders infrastructure first
-because two of the spec's three risks are proxy behaviour that cannot be
-observed on a dev box (§5 — the inner nginx buffers SSE to death without
-`proxy_buffering off`, and the outer proxy kills idle streams at its 60 s
-default). The stream probe below is what `scripts/verify_deployment.sh`
-holds open for 90+ seconds against the real deployed URL — past the outer
-proxy's cliff — before any room code is written over the transport.
+"""Arena rooms — live multi-device racing (SPEC_PET_ARENA_ROOMS, R0–R3).
 
 The canonical story (owner, 2026-08-02): a user calls her friend on DatsMe —
 "I challenge you to a race" — the friend signs into DatsPet, they meet in an
 agreed room, and the room lives exactly as long as the contest. Ephemeral by
 design (§0.7): rooms die on finish + idle timeout, reaped by the maintenance
-thread that already exists (§2.4). Like a LiveKit room, minus the media
-server: mint, meet, compete, evaporate.
+thread that already exists (§2.4).
 
-R1 adds create/join/lobby, R2 the race itself (§11). Room state will be the
-`JOBS`-shaped in-memory dict on this single-worker process (§2.1) — which is
-why `--workers 1` stays load-bearing (§0.10.3, pinned by test).
+What lives here: the room store (the `JOBS`-shaped in-memory dict on this
+single-worker process, §2.1 — `--workers 1` is load-bearing, test-pinned);
+create/join/start with owner-scoped entrant seating; the impulse route with
+§7's clamps; the 10 Hz ticker whose referee is the SAME
+`athletics.simulate_entrant` that scores solo play; the SSE stream
+(snapshot-on-connect, bounded Last-Event-ID replay, heartbeats under the
+outer proxy's 60 s cliff, §5.2); the room-scoped asset routes (§4.3 —
+membership is the capability, projected manifest, never the bundle); and the
+deploy gate's probe, which streams a real hostless room so the gate
+exercises the generator the rooms serve.
 """
 from __future__ import annotations
 
@@ -61,6 +59,13 @@ IMPULSE_RATE_WINDOW_MS = 1000
 # than FLAG_FACTOR x the ceiling inside one window marks the player.
 IMPULSE_RATE_FLAG_FACTOR = 2
 
+# §3.2 bounded the replay ring; this bounds the OTHER queue behind it — a
+# subscriber that stops draining (TCP backpressure wedging the generator
+# mid-send) must not accrue frames without limit. On overflow the subscriber
+# is dropped; EventSource reconnects into the replay/snapshot path that
+# already exists.
+SUBSCRIBER_QUEUE_MAX = 600
+
 # §5.2 — MUST stay under the outer proxy's 60 s idle default. This value is
 # set by infrastructure, not taste: the outer nginx-proxy vhost has no
 # proxy_read_timeout, so its 60 s default cuts any stream that goes quiet
@@ -73,7 +78,9 @@ SSE_HEARTBEAT_S = 15
 STREAM_PROBE_MAX_S = 150
 
 # Server-timed countdown (§2.3): five devices starting on their own clocks is
-# five different races. Matches the solo arena's COUNTDOWN_SECONDS.
+# five different races. Three seconds for the same feel as the solo arena;
+# nothing REQUIRES the two to agree — clients count down to the broadcast
+# end time, never to a constant of their own.
 ROOM_COUNTDOWN_S = 3
 
 # A pet label on a lobby card — pet names cap at 24 chars plus a surname.
@@ -81,7 +88,9 @@ ROOM_PET_LABEL_MAX = 48
 
 # §7 — an impulse may arrive slightly ahead of the server's clock (network
 # skew); anything further into the future than this is outside the race
-# window and dropped.
+# window and dropped. (Batching CADENCE is client-owned —
+# web/src/arena/constants.ts IMPULSE_BATCH_MS; the server never needs it,
+# it clamps by window.)
 IMPULSE_FUTURE_SLACK_MS = 2000
 
 # One batch may carry at most this many impulses — a request bound, far above
@@ -191,12 +200,25 @@ def _sse_frame(seq: int, event: str, data: dict) -> str:
 
 def _broadcast(room: Room, event: str, data: dict) -> None:
     """Called under ROOMS_LOCK. Stamps the room's monotonic seq, records the
-    frame in the replay ring, and wakes every live stream."""
+    frame in the replay ring, and wakes every live stream. A subscriber whose
+    queue is FULL is wedged — it is dropped rather than grown (F15), and its
+    EventSource reconnects into the replay path."""
     room.seq += 1
     frame = _sse_frame(room.seq, event, data)
     room.events.append((room.seq, frame))
-    for loop, queue in room.subscribers:
-        loop.call_soon_threadsafe(queue.put_nowait, frame)
+    code = room.code
+    for subscriber in list(room.subscribers):
+        loop, queue = subscriber
+
+        def push(queue=queue, subscriber=subscriber):
+            try:
+                queue.put_nowait(frame)
+            except asyncio.QueueFull:
+                with ROOMS_LOCK:
+                    live = ROOMS.get(code)
+                    if live is not None and subscriber in live.subscribers:
+                        live.subscribers.remove(subscriber)
+        loop.call_soon_threadsafe(push)
 
 
 def _get_room(code: str) -> Room:
@@ -592,10 +614,39 @@ def room_pet_sheet(code: str, pet_id: str):
                                 media_type="image/png")
 
 
+# §6 — a spectator view has no business rendering anything but the pet:
+# the room manifest is a PROJECTION of exactly the keys the arena's loader
+# and stats resolver read (web/src/arena/petLoader.ts + athletics.ts). An
+# opt-out route would leak the next private block (design provenance stamps
+# the designer's typed words into manifest.json) with no code change and no
+# failing test. `design` is projected one level further: the resolver reads
+# only `design.picks`.
+ROOM_MANIFEST_KEYS = (
+    "animations", "rows", "columns", "frame_width", "frame_height",
+    "view_kind", "native_facing", "mirroring_policy", "movement_class",
+    "athletics",
+)
+
+
+def _public_manifest(manifest_json: str) -> str:
+    try:
+        manifest = json.loads(manifest_json)
+    except (TypeError, ValueError):
+        return "{}"
+    if not isinstance(manifest, dict):
+        return "{}"
+    public = {k: manifest[k] for k in ROOM_MANIFEST_KEYS if k in manifest}
+    design = manifest.get("design")
+    if isinstance(design, dict) and "picks" in design:
+        public["design"] = {"picks": design["picks"]}
+    return json.dumps(public)
+
+
 @router.get("/rooms/{code}/pets/{pet_id}/manifest.json")
 def room_pet_manifest(code: str, pet_id: str):
     row = _room_pet_row(code, pet_id)
-    return _room_asset_response(row, content=row["manifest_json"],
+    return _room_asset_response(row,
+                                content=_public_manifest(row["manifest_json"]),
                                 media_type="application/json")
 
 
@@ -606,7 +657,7 @@ def room_pet_manifest(code: str, pet_id: str):
 
 async def _room_stream(code: str, last_event_id: Optional[int]):
     loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=SUBSCRIBER_QUEUE_MAX)
     with ROOMS_LOCK:
         room = ROOMS.get(code)
         if room is None:
@@ -617,8 +668,12 @@ async def _room_stream(code: str, last_event_id: Optional[int]):
         # Reconnect inside the ring → replay the gap. Fresh (or too far
         # behind) → a state snapshot (§3.2 Rev.2).
         replay: list[str] = []
+        # Replay only for an id we have actually issued (F11): an id AHEAD of
+        # room.seq — a stale browser, a copied URL — must get a snapshot, not
+        # an empty replay that never tells it the room state.
         if last_event_id is not None and room.events \
-                and room.events[0][0] <= last_event_id + 1:
+                and room.events[0][0] <= last_event_id + 1 \
+                and last_event_id <= room.seq:
             replay = [f for s, f in room.events if s > last_event_id]
         else:
             replay = [_sse_frame(room.seq, "snapshot", {"room": _snapshot(room)})]
@@ -634,8 +689,9 @@ async def _room_stream(code: str, last_event_id: Optional[int]):
             except asyncio.TimeoutError:
                 yield ": heartbeat\n\n"
                 with ROOMS_LOCK:
-                    if code not in ROOMS:
-                        return
+                    live = ROOMS.get(code)
+                    if live is None or subscriber not in live.subscribers:
+                        return   # room reaped, or we were dropped as wedged
     finally:
         with ROOMS_LOCK:
             live = ROOMS.get(code)
