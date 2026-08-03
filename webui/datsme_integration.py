@@ -937,7 +937,7 @@ async def partner_imported(user_id: str, request: Request):
 
     A pull deletes the push's acknowledgment channel — in a writeback the 200 IS
     how we learn the pet landed, but in a pull we are a passive server and never
-    see the outcome. Without this, `in_datsme` on the house would read false
+    see the outcome. Without this, `sent_to_datsme` on the house would read false
     forever for a pulled pet.
 
     MUST be host-signed: this marks pets as delivered, so an unsigned caller could

@@ -335,9 +335,9 @@ def _imported(client, user_id, body_obj, sign_with=TEST_SECRET):
     return client.post(path, content=body, headers=headers)
 
 
-def test_imported_ack_stamps_in_datsme(client, dpp_env):
+def test_imported_ack_stamps_sent_to_datsme(client, dpp_env):
     """A pull deletes the push's acknowledgment channel — this is how the house
-    learns a pulled pet landed, and without it `in_datsme` reads false forever."""
+    learns a pulled pet landed, and without it `sent_to_datsme` reads false forever."""
     db = dpp_env["db"]
     make_pet(db, pet_id="pullpet00001", external_user_id="user-A", draft=False)
     assert db.get_pet("pullpet00001")["writeback_acked_at"] is None

@@ -510,10 +510,20 @@ def list_saved_pets(external_user_id: Optional[str] = None) -> list[dict]:
                     FROM pets
                 WHERE draft=0 AND {clause}
                 ORDER BY created_at DESC""", params).fetchall()
-    # in_datsme: already in the caller's DatsMe house. A projected column, NOT a
-    # visibility rule — _scope_clause is untouched. Stamped by a push Accept or by
-    # the host's post-import ack (SPEC_DATSPET_HOUSE_ADOPT §3.4). Cast to a real
-    # bool so the JSON carries true/false rather than SQLite's 1/0.
+    # sent_to_datsme: this pet was DELIVERED to the caller's DatsMe house at least
+    # once — a delivery receipt, not a present-tense ownership fact. Stamped by a
+    # push Accept or the host's post-import ack (SPEC_DATSPET_HOUSE_ADOPT §3.4).
+    #
+    # It was called `in_datsme` until 2026-08-03 and that name was a lie
+    # (SPEC_PET_OWNERSHIP §1): the flag is MONOTONIC, so a pet the user has since
+    # deleted, gifted, or evicted for space still reads true forever, and a pet
+    # that arrived by gift can never read true at all. DatsPet has no way to know
+    # the present state — only DatsMe does. "I sent it" is not "they have it."
+    # Answering the real question needs `pets.read_owned` (SPEC_PET_OWNERSHIP §3);
+    # until then the field says exactly what it knows and nothing more.
+    #
+    # A projected column, NOT a visibility rule — _scope_clause is untouched.
+    # Cast to a real bool so the JSON carries true/false rather than SQLite's 1/0.
     #
     # claimable: this caller's own pet, still held under their ANONYMOUS owner id
     # rather than a DatsMe user id. Such a pet is visible here but invisible to
@@ -537,7 +547,7 @@ def list_saved_pets(external_user_id: Optional[str] = None) -> list[dict]:
     out = []
     for r in rows:
         d = dict(r)
-        d["in_datsme"] = d.pop("writeback_acked_at") is not None
+        d["sent_to_datsme"] = d.pop("writeback_acked_at") is not None
         owner = d.pop("external_user_id")
         d["claimable"] = owner_scope.is_anon_owner(owner)
         category, _n, _a = pet_ownership.read_pet_ownership(d.pop("manifest_json"))

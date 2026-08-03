@@ -36,17 +36,20 @@ import { canBeThanked as canBeThankedFor, canOfferDonate } from "./donateVisibil
 // mount a desktop-sized page on a phone."
 const MOBILE_PAGE_CEILING = 6;
 
-// The house's ownership split: a pet is either already in the caller's DatsMe
-// house (`in_datsme`, stamped by the host's post-import ack) or not yet adopted.
+// The house's DELIVERY split: a pet has either been sent to the caller's DatsMe
+// house at least once (`sent_to_datsme`, stamped by the host's post-import ack)
+// or never adopted. It is deliberately NOT "is it in the house right now" — that
+// is a question only DatsMe can answer, and the flag is monotonic, so a pet since
+// deleted or gifted away still reads true (SPEC_PET_OWNERSHIP §1).
 // "All" stays first and default so the wandering stage keeps showing everything;
 // the tabs are a FILTER over the one list, not separate fetches. The row only
 // renders once at least one pet is adopted — a house with nothing adopted has
 // nothing to differentiate, and a standalone user should not see DatsMe tabs.
-type HouseTab = "all" | "inDatsme" | "notInDatsme";
+type HouseTab = "all" | "sentToDatsme" | "notSentToDatsme";
 const HOUSE_TABS: { key: HouseTab; label: string }[] = [
   { key: "all", label: "All" },
-  { key: "inDatsme", label: "✓ In DatsMe" },
-  { key: "notInDatsme", label: "Not adopted yet" },
+  { key: "sentToDatsme", label: "✓ Sent to DatsMe" },
+  { key: "notSentToDatsme", label: "Not adopted yet" },
 ];
 
 /**
@@ -148,7 +151,7 @@ export default function HousePage() {
   // here via history.back(), which the browser serves from the back/forward cache:
   // this page is NOT reloaded, it is UNFROZEN with its JS state exactly as it was
   // when we left. So it wakes with `adopting` still true — the Adopt button stuck
-  // on "Handing over…", disabled forever — and with pre-departure "✓ In DatsMe"
+  // on "Handing over…", disabled forever — and with pre-departure "✓ Sent to DatsMe"
   // chips that predate an import the user just completed. Reset the in-flight flag
   // and re-fetch so the woken page tells the truth about the present. The fix is
   // to handle being woken, NOT to defeat bfcache — instant Back is the feature.
@@ -194,11 +197,11 @@ export default function HousePage() {
   // Capacity ("N / max pets") always counts the WHOLE house — the tab filter
   // must never make the house look emptier than the cap sees it.
   const total = pets?.length ?? 0;
-  const inDatsmeCount = useMemo(
-    () => (pets ?? []).filter((p) => p.in_datsme).length,
+  const sentToDatsmeCount = useMemo(
+    () => (pets ?? []).filter((p) => p.sent_to_datsme).length,
     [pets],
   );
-  const showTabs = inDatsmeCount > 0;
+  const showTabs = sentToDatsmeCount > 0;
   // If a reload empties the adopted set while a filter tab is active, fall back
   // to "all" by derivation — never leave the user staring at a filter for a
   // distinction that no longer exists.
@@ -206,7 +209,7 @@ export default function HousePage() {
   const tabPets = useMemo(() => {
     const all = pets ?? [];
     if (activeTab === "all") return all;
-    return all.filter((p) => (activeTab === "inDatsme" ? p.in_datsme : !p.in_datsme));
+    return all.filter((p) => (activeTab === "sentToDatsme" ? p.sent_to_datsme : !p.sent_to_datsme));
   }, [pets, activeTab]);
 
   const pageCount = Math.max(1, Math.ceil(tabPets.length / pageSize));
@@ -420,9 +423,9 @@ export default function HousePage() {
                 const count =
                   t.key === "all"
                     ? total
-                    : t.key === "inDatsme"
-                      ? inDatsmeCount
-                      : total - inDatsmeCount;
+                    : t.key === "sentToDatsme"
+                      ? sentToDatsmeCount
+                      : total - sentToDatsmeCount;
                 const active = activeTab === t.key;
                 return (
                   <button
@@ -503,16 +506,16 @@ export default function HousePage() {
                 <div className="mono mt-0.5 truncate text-[11px]" style={{ color: "var(--faint)" }}>
                   {p.breed_id}
                 </div>
-                {/* in_datsme is informational, never a gate: re-importing is free
-                    and updates the pet in place — so the badge marks the state
+                {/* sent_to_datsme is informational, never a gate: re-importing is
+                    free and updates the pet in place — so the badge marks delivery
                     without hiding the Select box. Shown even outside a DatsMe
-                    launch: adoption survives the session that did it. */}
-                {p.in_datsme && (
+                    launch: the receipt survives the session that earned it. */}
+                {p.sent_to_datsme && (
                   <div
                     className="mono mt-1 inline-block rounded-md border px-2 py-0.5 text-[10px] font-semibold"
                     style={{ background: "rgba(52,211,153,0.12)", color: "var(--green)", borderColor: "rgba(52,211,153,0.4)" }}
                   >
-                    ✓ In DatsMe
+                    ✓ Sent to DatsMe
                   </div>
                 )}
                 {/* NO "🎨 Redesign" button. It linked to /design?base=<id> and had never

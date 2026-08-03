@@ -65,7 +65,7 @@ export interface PetSummary {
   // Already in the caller's DatsMe house — stamped by the host's post-import ack.
   // Information, not a gate: re-importing is free and updates in place
   // (SPEC_DPP_DATA_TRANSFER_CHANNEL §3.3).
-  in_datsme: boolean;
+  sent_to_datsme: boolean;
   // This caller's own pet, still held under their browser's ANONYMOUS owner id
   // rather than a DatsMe user id — i.e. designed before signing in. The house
   // shows these; /partner/export/{user_id} is exact-match and does not, so they

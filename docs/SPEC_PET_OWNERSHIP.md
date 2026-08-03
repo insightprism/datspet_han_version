@@ -98,11 +98,15 @@ session. **No sync job, no webhook, no reconciliation, no repair script.**
 
 ## §1 The defect, precisely
 
-`webui/db.py:540`:
+**As it stood until O0 shipped** (`webui/db.py`, 2026-08-03):
 
 ```python
 d["in_datsme"] = d.pop("writeback_acked_at") is not None
 ```
+
+> **O0 renamed it** to `sent_to_datsme`, and the badge to "✓ Sent to DatsMe". **The name is now
+> honest; the gap below is unchanged.** DatsPet still cannot know what is in the house — it knows
+> only what it delivered. Everything from here describes the gap, not the label.
 
 `writeback_acked_at` records *"the host acknowledged my delivery at time T."* That is a true,
 immutable, historical fact and it is DatsPet's own to keep. `in_datsme` renames it into a
@@ -402,14 +406,21 @@ in isolation.
 
 | Phase | Ships | Depends on |
 |---|---|---|
-| **O0** | **Relabel "✓ In DatsMe" → "✓ Sent to DatsMe"** | nothing — the field already means this, and the count stops being false the moment it is renamed |
+| **O0** | ✅ **SHIPPED 2026-08-03** — "✓ In DatsMe" → **"✓ Sent to DatsMe"**, and the API field `in_datsme` → `sent_to_datsme` with it. §10's grep-guard ("the rename is the whole fix") is satisfied: the old name survives only in `db.py`'s note recording why it changed. | nothing — the field already meant this |
 | **O1** | Host `pets.read_owned` + the ownership roster | joint spec + host review |
 | **O2** | Session resolver + the three tabs live from the roster | O1 |
 | **O3** | Sheet-digest index + roster-scoped asset route → gifted pets raceable | O2 |
 | **O4** | **Arena entrant validation against the roster** — the gate | O2 (O3 for gifted entrants) |
 
-**O0 first, and alone.** It costs nothing, needs no host, and stops a surface asserting something
+**O0 first, and alone.** It cost nothing, needed no host, and stopped a surface asserting something
 false to every user today — including the owner's screenshot.
+
+**Shipped 2026-08-03.** Scope was the label *and* the field: leaving `p.in_datsme` in code behind a
+badge reading "Sent to DatsMe" would have preserved the same lie one layer down, and §10 names the
+rename as the fix. `webui/db.py:513-526` now carries the reason the old name was wrong, so the next
+reader finds the explanation at the source rather than in a spec. Gates: 520 backend tests, 114
+vitest, `tsc --noEmit` clean. **The underlying gap is untouched** — DatsPet still cannot know what
+is in the house, and O1/O2 are still what answers it.
 
 **O4 is the gate on `SPEC_PET_ARENA*`.** "Only pets you own may compete" is not implementable before
 O2; until then the arena seats DatsPet-scoped pets and cannot honor the rule.

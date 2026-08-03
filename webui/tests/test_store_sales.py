@@ -83,7 +83,7 @@ def test_the_ack_records_all_four_facts(client, dpp_env):
     assert row["credits_paid"] == 50               # HOW MUCH
     assert row["sold_at"] > 0                      # WHEN
     # And the pet is stamped as before — the ledger is additive, not a
-    # replacement for the ack that drives `in_datsme`.
+    # replacement for the ack that drives `sent_to_datsme`.
     assert db.get_pet("soldpet00001")["writeback_acked_at"] is not None
 
 
