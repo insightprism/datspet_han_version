@@ -4,6 +4,7 @@
  * raceEngine.ts.
  */
 
+import type { PetAssetUrls } from "@/lib/api";
 import type { AthleticsManifest, AthleticsStats } from "./athletics";
 
 /** A pet as the setup screen knows it: manifest fetched, stats resolved with
@@ -36,8 +37,10 @@ export interface RacerConfig {
   handicapName: string;
   /** bot lanes only: the rung from bots.json. */
   botRung?: string;
-  /** room lanes only: assets fetch through the room-scoped routes (§4.3). */
-  roomCode?: string;
+  /** WHERE this lane's sheet + manifest come from — minted by the caller in
+   *  api.ts (owner routes for your own pets, room routes for a rival's), so
+   *  the loader never branches on a lane's provenance. */
+  assets: PetAssetUrls;
 }
 
 /** One lane ready to race: sheet fetched (roll derived from its bytes — §5.2),

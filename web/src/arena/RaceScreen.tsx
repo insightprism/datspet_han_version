@@ -20,7 +20,7 @@ import {
 } from "./challenges/registry";
 import ChallengePanel from "./ChallengePanel";
 import {
-  COUNTDOWN_SECONDS, CRASH_FX_MS, HURDLE_CRASHES_TO_DQ,
+  COUNTDOWN_SECONDS, CRASH_FX_MS, GATE_POLL_MS, HURDLE_CRASHES_TO_DQ,
 } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
 import type { LoadedRacer, RunAccuracy } from "./gameTypes";
@@ -142,7 +142,7 @@ export default function RaceScreen({
           { right: humanLogRef.current.length, wrong: wrongCountRef.current,
             crashes: crashCountRef.current, disqualified: dqRef.current });
       }
-    }, 100);
+    }, GATE_POLL_MS);
     return () => clearInterval(interval);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase, raceClock, event.time_limit_s, onDone]);

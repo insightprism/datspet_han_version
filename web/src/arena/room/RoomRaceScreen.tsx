@@ -19,7 +19,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { postArenaImpulses, type ArenaRoomSnapshot } from "@/lib/api";
+import {
+  petAssetUrls, postArenaImpulses, roomPetAssetUrls,
+  type ArenaRoomSnapshot,
+} from "@/lib/api";
 import { removePet } from "@/pet";
 import ArenaTrack, { type TrackLane } from "../ArenaTrack";
 import { judgeAnswer } from "../challenges/answerRules";
@@ -28,29 +31,13 @@ import {
   CHALLENGES, questionAt, harderRung, type ChallengeQuestion,
 } from "../challenges/registry";
 import {
-  CRASH_FX_MS, HURDLE_CRASHES_TO_DQ, IMPULSE_BATCH_MS,
+  CRASH_FX_MS, GATE_POLL_MS, HURDLE_CRASHES_TO_DQ, IMPULSE_BATCH_MS,
 } from "../constants";
 import { loadEvent } from "../declarations";
 import type { LoadedRacer } from "../gameTypes";
 import { loadRacer } from "../petLoader";
-import {
-  LaneIntegrator, type Impulse, type LaneProgress,
-} from "../raceEngine";
-
-/** Other players' pets, rendered purely from the stream (§3.4): the adapter
- *  satisfies the track's LaneProgress and is stepped by server ticks. */
-export class RemoteLane implements LaneProgress {
-  distanceM = 0;
-  finished = false;
-  finishMs: number | null = null;
-  readonly atHurdle = false;
-  consume(): void { /* fed by applyTick, never by impulses */ }
-  applyTick(distanceM: number, finished: boolean, finishMs: number | null): void {
-    this.distanceM = distanceM;
-    this.finished = finished;
-    this.finishMs = finishMs;
-  }
-}
+import { LaneIntegrator, type Impulse } from "../raceEngine";
+import { RemoteLane } from "./useRoomStream";
 
 interface Props {
   code: string;
@@ -111,7 +98,9 @@ export default function RoomRaceScreen({
           label: i === myLane ? `You — ${p.pet_label}` : p.pet_label,
           kind: i === myLane ? "human" : "ghost",
           handicapName: p.handicap_name,
-          roomCode: i === myLane ? undefined : code,
+          assets: i === myLane
+            ? petAssetUrls(p.pet_id)
+            : roomPetAssetUrls(code, p.pet_id),
         }, event).catch(() => null)));
         if (cancelled) return;
         const mine = loaded[myLane];
@@ -161,7 +150,7 @@ export default function RoomRaceScreen({
       it.consume(myLogRef.current, raceClock());
       setAtGate(it.atHurdle);
       if (it.finished && homeMs === null) setHomeMs(it.finishMs);
-    }, 100);
+    }, GATE_POLL_MS);
     return () => clearInterval(iv);
   }, [raceClock, homeMs]);
 
@@ -227,7 +216,14 @@ export default function RoomRaceScreen({
         crashFxRef: fx,
         integrator: i === myLane
           ? myIntegratorRef.current!
-          : (remoteLanes.get(i) ?? new RemoteLane()),
+          // The hook pre-registers adapters per roster (F6); the belt
+          // registers any miss INTO the map so it still receives ticks —
+          // an orphan adapter would freeze this rival at 0 m all race.
+          : (remoteLanes.get(i) ?? (() => {
+            const lane = new RemoteLane();
+            remoteLanes.set(i, lane);
+            return lane;
+          })()),
         log: i === myLane ? myLogRef.current : [],
       }];
     });

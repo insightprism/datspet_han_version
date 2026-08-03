@@ -1418,15 +1418,26 @@ export function arenaRoomStreamUrl(code: string): string {
   return `${API_URL}/api/arena/rooms/${encodeURIComponent(code)}/stream`;
 }
 
+/** The pair every racer loader consumes (F16): the loader never decides
+ *  WHERE assets come from — the caller mints the pair here, so a new asset
+ *  source (a lounge, a replay) is a new minting helper, never a loader
+ *  branch. */
+export interface PetAssetUrls {
+  manifestUrl: string;
+  sheetUrl: string;
+}
+
+/** The owner-scoped pair — my own pets. */
+export function petAssetUrls(petId: string): PetAssetUrls {
+  return { manifestUrl: petManifestUrl(petId), sheetUrl: petSheetUrl(petId) };
+}
+
 /** Room-scoped pet assets (§4.3): membership in a live room is the
  *  capability — these serve any pet ENTERED in the room to anyone holding
  *  the code, and die with the room. Sheet + manifest only, never the zip. */
-export function roomPetSheetUrl(code: string, petId: string): string {
-  return `${API_URL}/api/arena/rooms/${encodeURIComponent(code)}/pets/${encodeURIComponent(petId)}/sheet.png`;
-}
-
-export function roomPetManifestUrl(code: string, petId: string): string {
-  return `${API_URL}/api/arena/rooms/${encodeURIComponent(code)}/pets/${encodeURIComponent(petId)}/manifest.json`;
+export function roomPetAssetUrls(code: string, petId: string): PetAssetUrls {
+  const base = `${API_URL}/api/arena/rooms/${encodeURIComponent(code)}/pets/${encodeURIComponent(petId)}`;
+  return { manifestUrl: `${base}/manifest.json`, sheetUrl: `${base}/sheet.png` };
 }
 
 export interface ArenaTickPosition {

@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ArenaChallenge } from "./challenges/registry";
-import { RECAP_PLAYBACK_SPEED } from "./constants";
+import { MEDALS, RECAP_PLAYBACK_SPEED } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
 import AccuracyLine from "./AccuracyLine";
 import type { LoadedRacer, RunAccuracy } from "./gameTypes";
@@ -27,7 +27,6 @@ import {
 import ArenaTrack, { type TrackLane } from "./ArenaTrack";
 import StatBars from "./StatBars";
 
-const MEDALS = ["🥇", "🥈", "🥉"];
 
 interface Props {
   event: ArenaEventDecl;

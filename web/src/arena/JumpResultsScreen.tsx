@@ -10,6 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ArenaChallenge } from "./challenges/registry";
+import { MEDALS } from "./constants";
 import type { ArenaEventDecl } from "./declarations";
 import { scoreJumpEvent } from "./fieldJump";
 import AccuracyLine from "./AccuracyLine";
@@ -20,7 +21,6 @@ import {
 } from "./personalBests";
 import StatBars from "./StatBars";
 
-const MEDALS = ["🥇", "🥈", "🥉"];
 
 interface Props {
   event: ArenaEventDecl;

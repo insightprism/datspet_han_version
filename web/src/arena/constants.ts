@@ -125,3 +125,23 @@ export const IMPULSE_BATCH_MS = 200;
  *  from the running green, readable on the dark card. */
 export const HURDLE_JUMP_ACCENT = "#f59e0b";
 export const HURDLE_JUMP_ACCENT_BG = "rgba(245,158,11,0.12)";
+
+/** Podium glyphs, every results surface (§8.8) — places past third show a
+ *  number. */
+export const MEDALS = ["🥇", "🥈", "🥉"];
+
+/** How often the countdown display re-derives from the server's broadcast
+ *  end time (§2.3 — the clock is the server's; this is only render cadence). */
+export const COUNTDOWN_RENDER_TICK_MS = 200;
+
+/** The spectator page re-renders on this cadence while racing — ticks feed
+ *  lane adapters (refs), so nothing else advances its header clock. */
+export const SPECTATOR_RENDER_TICK_MS = 500;
+
+/** The gate poll: how often a race screen reads its integrator for the
+ *  parked-at-hurdle state (Rev.9's amber question). Render cadence only —
+ *  the gate itself lives in the integrator. */
+export const GATE_POLL_MS = 100;
+
+/** How long the 📋 Copy button says ✓ Copied. */
+export const CLIPBOARD_FEEDBACK_MS = 1500;

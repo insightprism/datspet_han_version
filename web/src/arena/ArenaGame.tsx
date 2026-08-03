@@ -14,7 +14,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  createArenaRoom, joinArenaRoom, type ArenaRoomSnapshot,
+  createArenaRoom, getArenaRoom, joinArenaRoom, petAssetUrls,
+  type ArenaRoomSnapshot,
 } from "@/lib/api";
 import { removePet } from "@/pet";
 import { botImpulseLog } from "./bot";
@@ -31,6 +32,9 @@ import { mintRaceSeed } from "./rng";
 import RaceScreen from "./RaceScreen";
 import ResultsScreen from "./ResultsScreen";
 import RoomLobby from "./room/RoomLobby";
+import {
+  clearRoomSeat, loadRoomSeat, saveRoomSeat,
+} from "./room/roomSession";
 import SetupScreen, { type RaceSetupChoice } from "./SetupScreen";
 
 type Phase =
@@ -55,11 +59,13 @@ function buildLaneConfigs(
         petId: choice.playerOnePetId, storeId: `${choice.playerOnePetId}#lane0`,
         label: `You — ${labelOf(choice.playerOnePetId)}`,
         kind: "human", handicapName: choice.playerOneHandicap,
+        assets: petAssetUrls(choice.playerOnePetId),
       },
       {
         petId: botPet, storeId: `${botPet}#lane1`,
         label: `Bot (${choice.botRung}) — ${labelOf(botPet)}`,
         kind: "bot", handicapName: "none", botRung: choice.botRung,
+        assets: petAssetUrls(botPet),
       },
     ];
   }
@@ -69,11 +75,13 @@ function buildLaneConfigs(
       petId: choice.playerOnePetId, storeId: `${choice.playerOnePetId}#lane0`,
       label: `Player 1 — ${labelOf(choice.playerOnePetId)}`,
       kind: "human", handicapName: choice.playerOneHandicap,
+      assets: petAssetUrls(choice.playerOnePetId),
     },
     {
       petId: p2, storeId: `${p2}#lane1`,
       label: `Player 2 — ${labelOf(p2)}`,
       kind: "human", handicapName: choice.playerTwoHandicap,
+      assets: petAssetUrls(p2),
     },
   ];
 }
@@ -85,6 +93,22 @@ export default function ArenaGame() {
   const [racers, setRacers] = useState<LoadedRacer[]>([]);
   const [raceSeed, setRaceSeed] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // F7 / rooms §14.3 — "a mid-race reload will happen constantly on
+  // children's devices": the seat persists in sessionStorage, and mount
+  // rehydrates the room phase if the room is still alive. A dead room (or a
+  // stale seat) clears silently to setup.
+  useEffect(() => {
+    const seat = loadRoomSeat(window.sessionStorage);
+    if (!seat) return;
+    let cancelled = false;
+    getArenaRoom(seat.code)
+      .then((room) => {
+        if (!cancelled) setPhase({ kind: "room", ...seat, room });
+      })
+      .catch(() => clearRoomSeat(window.sessionStorage));
+    return () => { cancelled = true; };
+  }, []);
+
   const humanLogsRef = useRef<(Impulse[] | null)[]>([]);
   const accuraciesRef = useRef<(RunAccuracy | null)[]>([]);
   const racersRef = useRef<LoadedRacer[]>([]);
@@ -138,16 +162,19 @@ export default function ArenaGame() {
     try {
       if (joinCode) {
         const j = await joinArenaRoom(joinCode.trim(), entrant);
-        setPhase({ kind: "room", code: joinCode.trim(),
-                   token: j.player_token, isHost: false,
-                   myLane: j.room.players.length - 1, room: j.room });
+        const seat = { code: joinCode.trim(), token: j.player_token,
+                       isHost: false, myLane: j.room.players.length - 1 };
+        saveRoomSeat(window.sessionStorage, seat);
+        setPhase({ kind: "room", ...seat, room: j.room });
       } else {
         const c = await createArenaRoom({
           event_key: setup.eventKey, challenge_key: setup.challengeKey,
           difficulty: setup.difficulty, ...entrant,
         });
-        setPhase({ kind: "room", code: c.code, token: c.host_token,
-                   isHost: true, myLane: 0, room: c.room });
+        const seat = { code: c.code, token: c.host_token,
+                       isHost: true, myLane: 0 };
+        saveRoomSeat(window.sessionStorage, seat);
+        setPhase({ kind: "room", ...seat, room: c.room });
       }
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "The room did not answer");
@@ -177,7 +204,10 @@ export default function ArenaGame() {
     return (
       <RoomLobby code={phase.code} token={phase.token} isHost={phase.isHost}
         myLane={phase.myLane} initialRoom={phase.room}
-        onLeave={() => setPhase({ kind: "setup" })} />
+        onLeave={() => {
+          clearRoomSeat(window.sessionStorage);
+          setPhase({ kind: "setup" });
+        }} />
     );
   }
 

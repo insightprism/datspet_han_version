@@ -1,26 +1,22 @@
 "use client";
 
 /**
- * RoomLobby — the room SESSION container (SPEC_PET_ARENA_ROOMS R1+R2): owns
- * the one EventSource, the server-corrected clock, and the phase flow
- * lobby → countdown → race → result. The transport client lives here (§4.2):
- * reconnection and Last-Event-ID are the browser's own; URLs come from the
- * api.ts adapter, never minted here.
- *
- * During the race, `tick` events feed RemoteLane adapters (§3.4) that the
- * race screen's track reads; the `result` event is the server referee's
- * word, and whatever the screen drew, that is the finish order shown.
+ * RoomLobby — the player's room SESSION (R1+R2): the phase flow
+ * lobby → countdown → race → result over the one transport client,
+ * useRoomStream (§4.2 — a fix to the stream or the clock lands there,
+ * once). This component owns only what a PLAYER sees: the shareable code
+ * and watch link, the start button, and the hand-off to the race screen.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import {
-  arenaRoomStreamUrl, arenaWatchUrl, startArenaRoom,
-  type ArenaRoomSnapshot, type ArenaTickPosition,
+  arenaWatchUrl, startArenaRoom, type ArenaRoomSnapshot,
 } from "@/lib/api";
-import RoomRaceScreen, { RemoteLane } from "./RoomRaceScreen";
-
-const COUNTDOWN_RENDER_TICK_MS = 200;
-const MEDALS = ["🥇", "🥈", "🥉"];
+import {
+  CLIPBOARD_FEEDBACK_MS, MEDALS,
+} from "../constants";
+import RoomRaceScreen from "./RoomRaceScreen";
+import { useRoomStream } from "./useRoomStream";
 
 interface Props {
   code: string;
@@ -34,97 +30,18 @@ interface Props {
 export default function RoomLobby({
   code, token, isHost, myLane, initialRoom, onLeave,
 }: Props) {
-  const [room, setRoom] = useState<ArenaRoomSnapshot>(initialRoom);
-  const [closed, setClosed] = useState<string | null>(null);
-  const [standings, setStandings] = useState<ArenaTickPosition[] | null>(null);
+  const {
+    room: streamed, standings, closed, raceClock, countdownLeft, remoteLanes,
+  } = useRoomStream(code, { myLane, initialRoom });
+  const room = streamed ?? initialRoom;
   const [startError, setStartError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [countdownLeft, setCountdownLeft] = useState<number | null>(null);
-
-  // Server clock offset (server_now − client now), refreshed per snapshot
-  // and per tick — five devices, one clock (§2.3).
-  const clockOffsetRef = useRef(0);
-  const remoteLanesRef = useRef<Map<number, RemoteLane>>(new Map());
-  const roomRef = useRef(room);
-  roomRef.current = room;
-
-  useEffect(() => {
-    const es = new EventSource(arenaRoomStreamUrl(code));
-    const applyRoom = (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.room) {
-          clockOffsetRef.current = data.room.server_now - Date.now() / 1000;
-          setRoom(data.room);
-          // A late arrival's snapshot carries the finished race's standings.
-          if (data.room.standings) setStandings(data.room.standings);
-        }
-      } catch { /* a malformed frame is dropped; the next event corrects */ }
-    };
-    es.addEventListener("snapshot", applyRoom);
-    es.addEventListener("player_joined", applyRoom);
-    es.addEventListener("countdown", applyRoom);
-    es.addEventListener("tick", (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        const gun = roomRef.current.countdown_ends_at;
-        if (gun !== null) {
-          clockOffsetRef.current =
-            gun + data.elapsed_ms / 1000 - Date.now() / 1000;
-        }
-        for (const pos of data.positions as ArenaTickPosition[]) {
-          if (pos.lane === myLane) continue;
-          let lane = remoteLanesRef.current.get(pos.lane);
-          if (!lane) {
-            lane = new RemoteLane();
-            remoteLanesRef.current.set(pos.lane, lane);
-          }
-          lane.applyTick(pos.distance_m, pos.finished, pos.finish_ms);
-        }
-        if (roomRef.current.state !== "racing") {
-          setRoom((r) => ({ ...r, state: "racing" }));
-        }
-      } catch { /* next tick corrects */ }
-    });
-    es.addEventListener("result", (e: MessageEvent) => {
-      try {
-        setStandings(JSON.parse(e.data).standings);
-        setRoom((r) => ({ ...r, state: "finished" }));
-      } catch { /* the room_closed reap will end the session regardless */ }
-    });
-    es.addEventListener("room_closed", (e: MessageEvent) => {
-      let reason = "closed";
-      try { reason = JSON.parse(e.data).reason ?? reason; } catch { /* default */ }
-      setClosed(reason);
-      es.close();
-    });
-    return () => es.close();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code, myLane]);
-
-  useEffect(() => {
-    if (room.state !== "countdown" || room.countdown_ends_at === null) {
-      setCountdownLeft(null);
-      return;
-    }
-    const iv = setInterval(() => {
-      const serverNow = Date.now() / 1000 + clockOffsetRef.current;
-      setCountdownLeft(Math.max(0, room.countdown_ends_at! - serverNow));
-    }, COUNTDOWN_RENDER_TICK_MS);
-    return () => clearInterval(iv);
-  }, [room.state, room.countdown_ends_at]);
-
-  const raceClock = useMemo(() => () => {
-    const gun = roomRef.current.countdown_ends_at;
-    if (gun === null) return 0;
-    return Math.max(0, (Date.now() / 1000 + clockOffsetRef.current - gun) * 1000);
-  }, []);
 
   const copyCode = async () => {
     try {
       await navigator.clipboard.writeText(code);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setTimeout(() => setCopied(false), CLIPBOARD_FEEDBACK_MS);
     } catch { /* clipboard denied — the code is on screen to copy by hand */ }
   };
 
@@ -190,7 +107,7 @@ export default function RoomLobby({
   if (racing) {
     return (
       <RoomRaceScreen code={code} token={token} room={room} myLane={myLane}
-        raceClock={raceClock} remoteLanes={remoteLanesRef.current} />
+        raceClock={raceClock} remoteLanes={remoteLanes} />
     );
   }
 

@@ -10,9 +10,6 @@ import {
   type PetSheet,
 } from "@/pet";
 import {
-  petManifestUrl, petSheetUrl, roomPetManifestUrl, roomPetSheetUrl,
-} from "@/lib/api";
-import {
   deriveIdentityNudges, resolveAthletics, type AthleticsManifest,
 } from "./athletics";
 import { HANDICAP_LADDER, type ArenaEventDecl } from "./declarations";
@@ -30,20 +27,14 @@ export function resolveRacingPose(
 export async function loadRacer(
   config: RacerConfig, event: ArenaEventDecl,
 ): Promise<LoadedRacer> {
-  // A room lane fetches through the room-scoped routes (SPEC_PET_ARENA_ROOMS
-  // §4.3): membership is the capability — the pets of the OTHER players are
-  // not the caller's to fetch through the owner routes.
-  const manifestUrl = config.roomCode
-    ? roomPetManifestUrl(config.roomCode, config.petId)
-    : petManifestUrl(config.petId);
-  const sheetUrl = config.roomCode
-    ? roomPetSheetUrl(config.roomCode, config.petId)
-    : petSheetUrl(config.petId);
-  const manifestRes = await fetch(manifestUrl);
+  // The loader FETCHES; it never decides where assets come from — the
+  // caller minted config.assets in api.ts (owner routes, room routes,
+  // whatever comes next). A provenance branch here was review finding F16.
+  const manifestRes = await fetch(config.assets.manifestUrl);
   if (!manifestRes.ok) throw new Error(`manifest fetch failed: ${manifestRes.status}`);
   const manifest: AthleticsManifest = await manifestRes.json();
 
-  const sheetRes = await fetch(sheetUrl);
+  const sheetRes = await fetch(config.assets.sheetUrl);
   if (!sheetRes.ok) throw new Error(`sheet fetch failed: ${sheetRes.status}`);
   const bytes = await sheetRes.arrayBuffer();
 
