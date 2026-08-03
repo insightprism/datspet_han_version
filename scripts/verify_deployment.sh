@@ -183,7 +183,10 @@ else
   curl -s -N -b "$CJ" -m 95 "$BASE/api/arena/stream-probe" > "$STREAM_FILE"
   STREAM_RC=$?
   BEATS=$(grep -c "heartbeat" "$STREAM_FILE" || true)
-  grep -q "event: probe" "$STREAM_FILE" \
+  # New deploys serve the REAL room stream (snapshot-first); pre-F8 deploys
+  # served the probe event. Accept both so the gate stays honest across
+  # versions.
+  grep -qE "event: (snapshot|probe)" "$STREAM_FILE" \
     && ok "stream opens and first event arrives unbuffered" \
     || bad "stream probe returned no initial event (proxy_buffering? §5.1)"
   [ "$BEATS" -ge 4 ] \

@@ -67,8 +67,9 @@ IMPULSE_RATE_FLAG_FACTOR = 2
 # longer than this. Pinned by test_arena_stream.py.
 SSE_HEARTBEAT_S = 15
 
-# The probe outlives the deployment gate's 90 s hold (§10) and then closes
-# on its own — it exists to be measured, not to accumulate connections.
+# The deploy gate's probe stream outlives its 90 s hold (§10) and then
+# closes on its own — it exists to be measured, not to accumulate
+# connections.
 STREAM_PROBE_MAX_S = 150
 
 # Server-timed countdown (§2.3): five devices starting on their own clocks is
@@ -660,25 +661,39 @@ def room_stream(request: Request, code: str, last_event_id: Optional[str] = None
     )
 
 
-async def _probe_stream():
-    """An SSE body shaped exactly like the future room stream (§3.2): one
-    immediate event, then heartbeat comment lines. The immediate event lets
-    a unit test read the stream without waiting out a heartbeat interval."""
+async def _probe_room_stream():
+    """The deploy gate's stream — THE REAL ROOM GENERATOR, not a lookalike
+    (review F8: a separate probe generator meant §7 of the gate proved a
+    body the rooms never serve, the false-green shape this project keeps
+    paying for). A hostless probe room is minted for the duration:
+    max_players=0 makes it unjoinable, its host token never leaves the
+    server, and it is reaped the moment the stream closes (the idle TTL is
+    the belt if a connection dies unclosed). Anonymous by design — the gate
+    runs with no account, and F1's entrant scoping only guards SEATING."""
+    event = next(e for e in athletics.list_events()
+                 if e.get("procedure") == "race")
+    room = mint_room(event=event, event_key=str(event["key"]),
+                     challenge_key="probe", difficulty="probe",
+                     max_players=0, host=None, host_owner=None)
     started = time.monotonic()
-    yield f"event: probe\ndata: {{\"heartbeat_s\": {SSE_HEARTBEAT_S}}}\n\n"
-    while time.monotonic() - started < STREAM_PROBE_MAX_S:
-        await asyncio.sleep(SSE_HEARTBEAT_S)
-        yield ": heartbeat\n\n"
+    try:
+        async for frame in _room_stream(room.code, None):
+            yield frame
+            if time.monotonic() - started >= STREAM_PROBE_MAX_S:
+                return
+    finally:
+        with ROOMS_LOCK:
+            ROOMS.pop(room.code, None)
 
 
 @router.get("/stream-probe")
 def arena_stream_probe():
-    """R0's whole surface: hold this open through both nginx layers. The
-    deployment check asserts a heartbeat arrives AND the stream is still
-    open past 90 s — the outer proxy's 60 s cliff is invisible anywhere
-    but the real deployed URL."""
+    """Hold this open through both nginx layers: the deployment check (§10)
+    asserts the first event arrives unbuffered, heartbeats flow, AND the
+    stream is still open past 90 s — the outer proxy's 60 s cliff is
+    invisible anywhere but the real deployed URL."""
     return StreamingResponse(
-        _probe_stream(),
+        _probe_room_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-store",

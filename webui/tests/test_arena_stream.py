@@ -46,19 +46,42 @@ def test_heartbeat_stays_under_the_outer_proxy_cliff():
         "in production only")
 
 
-def test_probe_is_an_event_stream_with_an_immediate_event(stream_client, monkeypatch):
+def test_probe_serves_the_real_room_stream(stream_client, monkeypatch):
+    """F8 — the deploy gate must exercise the generator the rooms actually
+    serve, not a lookalike: the probe streams a real (hostless, unjoinable,
+    auto-reaped) room, so §7 of the gate covers the room stream's own
+    heartbeat branch. Lifecycle is asserted on the generator directly — the
+    TestClient buffers a short stream to completion before we could look."""
+    import asyncio
     client, arena_rooms = stream_client
-    # Shrink the probe: closing a TestClient stream drains the generator, and
-    # the real one runs STREAM_PROBE_MAX_S of wall clock.
+
+    async def run():
+        gen = arena_rooms._probe_room_stream()
+        first = await asyncio.wait_for(gen.__anext__(), timeout=5)
+        # The REAL stream's first frame: a room snapshot.
+        assert "event: snapshot" in first
+        # The probe room exists while the stream lives — and admits nobody.
+        with arena_rooms.ROOMS_LOCK:
+            probe_codes = [c for c, room in arena_rooms.ROOMS.items()
+                           if room.max_players == 0]
+        assert len(probe_codes) == 1
+        join = client.post(f"/api/arena/rooms/{probe_codes[0]}/join",
+                           json={"pet_id": "nope"})
+        assert join.status_code in (404, 409)   # unjoinable either way
+        await gen.aclose()
+        # Stream closed → the probe room is gone, not leaked.
+        with arena_rooms.ROOMS_LOCK:
+            assert all(room.max_players != 0
+                       for room in arena_rooms.ROOMS.values())
+    asyncio.run(run())
+
+    # And the HTTP surface still wears the stream headers.
     monkeypatch.setattr(arena_rooms, "SSE_HEARTBEAT_S", 0.05)
     monkeypatch.setattr(arena_rooms, "STREAM_PROBE_MAX_S", 0.15)
     with client.stream("GET", "/api/arena/stream-probe") as r:
         assert r.status_code == 200
         assert r.headers["content-type"].startswith("text/event-stream")
         assert r.headers["x-accel-buffering"] == "no"
-        first = next(r.iter_text())
-        assert "event: probe" in first
-        assert str(arena_rooms.SSE_HEARTBEAT_S) in first
 
 
 def test_heartbeats_arrive_on_schedule(stream_client, monkeypatch):
@@ -69,6 +92,8 @@ def test_heartbeats_arrive_on_schedule(stream_client, monkeypatch):
     with client.stream("GET", "/api/arena/stream-probe") as r:
         body = "".join(r.iter_text())
     elapsed = time.monotonic() - started
+    # Heartbeats now come from the ROOM generator's idle branch — the one
+    # §10 calls the most valuable test here.
     assert body.count(": heartbeat") >= 3
     assert elapsed < 5
 
