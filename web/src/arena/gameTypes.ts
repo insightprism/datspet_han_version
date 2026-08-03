@@ -36,6 +36,8 @@ export interface RacerConfig {
   handicapName: string;
   /** bot lanes only: the rung from bots.json. */
   botRung?: string;
+  /** room lanes only: assets fetch through the room-scoped routes (§4.3). */
+  roomCode?: string;
 }
 
 /** One lane ready to race: sheet fetched (roll derived from its bytes — §5.2),

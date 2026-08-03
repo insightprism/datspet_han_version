@@ -1416,3 +1416,32 @@ export async function startArenaRoom(
 export function arenaRoomStreamUrl(code: string): string {
   return `${API_URL}/api/arena/rooms/${encodeURIComponent(code)}/stream`;
 }
+
+/** Room-scoped pet assets (§4.3): membership in a live room is the
+ *  capability — these serve any pet ENTERED in the room to anyone holding
+ *  the code, and die with the room. Sheet + manifest only, never the zip. */
+export function roomPetSheetUrl(code: string, petId: string): string {
+  return `${API_URL}/api/arena/rooms/${encodeURIComponent(code)}/pets/${encodeURIComponent(petId)}/sheet.png`;
+}
+
+export function roomPetManifestUrl(code: string, petId: string): string {
+  return `${API_URL}/api/arena/rooms/${encodeURIComponent(code)}/pets/${encodeURIComponent(petId)}/manifest.json`;
+}
+
+export interface ArenaTickPosition {
+  lane: number;
+  pet_id: string;
+  pet_label: string;
+  handicap_name: string;
+  distance_m: number;
+  finished: boolean;
+  finish_ms: number | null;
+  rate_flagged: boolean;
+}
+
+export async function postArenaImpulses(
+  code: string, token: string, impulses: { at: number; quality: number }[],
+): Promise<{ accepted: number; total: number }> {
+  return arenaRoomPost(`/${encodeURIComponent(code)}/impulses`,
+                       { token, impulses });
+}

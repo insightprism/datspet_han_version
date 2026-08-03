@@ -166,13 +166,25 @@ export function simulateRace(
   return results;
 }
 
+/** What the track driver needs from a lane's progress source — satisfied by
+ *  the local LaneIntegrator AND by a room race's remote-lane adapter, which
+ *  is fed authoritative server ticks instead of impulses
+ *  (SPEC_PET_ARENA_ROOMS §3.4: other players' pets render from the stream). */
+export interface LaneProgress {
+  distanceM: number;
+  finished: boolean;
+  finishMs: number | null;
+  readonly atHurdle: boolean;
+  consume(log: Impulse[], uptoMs: number): void;
+}
+
 /**
  * Incremental integrator for the live driver: consumes impulses in arrival
  * order (the live log only ever appends in time order) and lands on exactly
  * the numbers the batch referee produces for the same log — same `advance`,
  * same impulse indices.
  */
-export class LaneIntegrator {
+export class LaneIntegrator implements LaneProgress {
   distanceM = 0;
   finished = false;
   finishMs: number | null = null;

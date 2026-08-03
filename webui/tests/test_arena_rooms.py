@@ -172,3 +172,124 @@ def test_idle_rooms_are_reaped_and_streams_told(rooms):
     # subscriber connected at reap time receives room_closed and ends.
     frames = _collect(arena_rooms._room_stream(code, None), 1)
     assert "room_closed" in frames[0]
+
+
+# ---------------------------------------------------------------------------
+# R2 — racing (§3.3, §3.4, §7) and the room-scoped assets (§4.3)
+# ---------------------------------------------------------------------------
+
+def _start_racing(client, arena_rooms, code, host_token):
+    r = client.post(f"/api/arena/rooms/{code}/start", json={"token": host_token})
+    assert r.status_code == 200
+    with arena_rooms.ROOMS_LOCK:
+        arena_rooms.ROOMS[code].countdown_ends_at = time.time() - 0.001
+    snap = client.get(f"/api/arena/rooms/{code}").json()["room"]
+    assert snap["state"] == "racing"
+
+
+def test_impulses_gate_clamps_and_referee_ticks(rooms):
+    client, arena_rooms = rooms
+    made = make_room(client, event_key="sprint_100")
+    code, host_token = made["code"], made["host_token"]
+
+    # Not racing yet — impulses 409.
+    r = client.post(f"/api/arena/rooms/{code}/impulses",
+                    json={"token": host_token, "impulses": [{"at": 100}]})
+    assert r.status_code == 409
+    _start_racing(client, arena_rooms, code, host_token)
+
+    # A stranger token 403s.
+    assert client.post(f"/api/arena/rooms/{code}/impulses",
+                       json={"token": "nope", "impulses": []}).status_code == 403
+
+    # §7: impulses spaced under 1/MAX_IMPULSE_RATE_HZ are discarded and the
+    # player flagged; out-of-window timestamps never count.
+    gap = 1000.0 / arena_rooms.MAX_IMPULSE_RATE_HZ
+    batch = [{"at": 0.0}, {"at": gap / 4}, {"at": gap + 1},
+             {"at": -50.0}, {"at": 10_000_000.0}]
+    r = client.post(f"/api/arena/rooms/{code}/impulses",
+                    json={"token": host_token, "impulses": batch})
+    body = r.json()
+    assert body["accepted"] == 2          # 0.0 and gap+1
+    assert body["rate_flagged"] is True
+
+    # The tick broadcasts referee positions computed by the AUTHORITATIVE
+    # integrator — bit-identical to calling it directly.
+    assert arena_rooms.tick_racing_rooms() == 1
+    with arena_rooms.ROOMS_LOCK:
+        room = arena_rooms.ROOMS[code]
+        frame = [f for _, f in room.events if "event: tick" in f][-1]
+        payload = json.loads(frame.split("data: ", 1)[1])
+        from pet_factory import athletics
+        expected = athletics.simulate_entrant(
+            room.event, room.players[host_token].stats,
+            room.players[host_token].handicap,
+            room.players[host_token].impulses, room.question_seed, 0)
+    pos = payload["positions"][0]
+    assert pos["distance_m"] == round(expected["distance_m"], 2)
+    assert pos["rate_flagged"] is True
+
+
+def test_time_limit_ends_the_race_with_authoritative_standings(rooms):
+    client, arena_rooms = rooms
+    made = make_room(client, event_key="sprint_100")
+    code, host_token = made["code"], made["host_token"]
+    j = client.post(f"/api/arena/rooms/{code}/join",
+                    json={"pet_id": "p2", "pet_label": "Rival"}).json()
+    _start_racing(client, arena_rooms, code, host_token)
+
+    # Host covers ground; the rival never answers.
+    client.post(f"/api/arena/rooms/{code}/impulses",
+                json={"token": host_token,
+                      "impulses": [{"at": i * 500.0} for i in range(10)]})
+    with arena_rooms.ROOMS_LOCK:
+        arena_rooms.ROOMS[code].countdown_ends_at = \
+            time.time() - arena_rooms.ROOMS[code].event["time_limit_s"] - 1
+    arena_rooms.tick_racing_rooms()
+
+    snap = client.get(f"/api/arena/rooms/{code}").json()["room"]
+    assert snap["state"] == "finished"
+    with arena_rooms.ROOMS_LOCK:
+        room = arena_rooms.ROOMS[code]
+        frame = [f for _, f in room.events if "event: result" in f][-1]
+    standings = json.loads(frame.split("data: ", 1)[1])["standings"]
+    assert [p["pet_label"] for p in standings][0] == "Kenji Girl"
+    assert standings[0]["distance_m"] > standings[1]["distance_m"]
+    # A finished room reaps after ROOM_RESULT_TTL_S.
+    with arena_rooms.ROOMS_LOCK:
+        arena_rooms.ROOMS[code].finished_at = \
+            time.time() - arena_rooms.ROOM_RESULT_TTL_S - 1
+    assert arena_rooms.sweep_rooms() == 1
+
+
+def test_rooms_host_racing_events_only(rooms):
+    client, _ = rooms
+    r = client.post("/api/arena/rooms", json={
+        "event_key": "long_jump", "challenge_key": "arithmetic",
+        "difficulty": "sums_10", "pet_id": "p1"})
+    assert r.status_code == 422
+    assert "racing events only" in r.json()["detail"]
+
+
+def test_room_assets_capability_is_membership_not_ownership(rooms, dpp_env):
+    client, arena_rooms = rooms
+    arena_rooms.db = dpp_env["db"]
+    from conftest import make_pet
+    make_pet(dpp_env["db"], pet_id="roompetsheet", external_user_id="someone-else")
+
+    made = make_room(client, pet_id="roompetsheet")
+    code = made["code"]
+    # Entered pet serves — the caller's ownership is never consulted.
+    r = client.get(f"/api/arena/rooms/{code}/pets/roompetsheet/sheet.png")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert "no-cache" in r.headers["cache-control"]
+    r = client.get(f"/api/arena/rooms/{code}/pets/roompetsheet/manifest.json")
+    assert r.status_code == 200
+    # A pet NOT entered 404s — even one that exists.
+    make_pet(dpp_env["db"], pet_id="notinroom001")
+    assert client.get(
+        f"/api/arena/rooms/{code}/pets/notinroom001/sheet.png").status_code == 404
+    # And there is NO zip route — watching a race is not taking the pet.
+    assert client.get(
+        f"/api/arena/rooms/{code}/pets/roompetsheet/zip").status_code == 404

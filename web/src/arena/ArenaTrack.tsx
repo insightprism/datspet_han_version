@@ -32,7 +32,7 @@ import {
   SPRITE_RATE_MIN, TRACK_EDGE_PADDING_PX, TRACK_GROUND_Y_PX,
   TRACK_SCROLL_MARK_STEP_M, VIEWPORT_TRACK_METERS,
 } from "./constants";
-import type { LaneIntegrator, Impulse } from "./raceEngine";
+import type { LaneProgress, Impulse } from "./raceEngine";
 
 export interface TrackLane {
   storeId: string;
@@ -49,8 +49,9 @@ export interface TrackLane {
    *  the driver shows the tumble + 💥 while now < value. Mutable ref so no
    *  re-render is needed mid-race. */
   crashFxRef?: { current: number };
-  /** The lane's integrator, owned by the parent and rebuilt per run. */
-  integrator: LaneIntegrator;
+  /** The lane's progress source, owned by the parent and rebuilt per run —
+   *  a local integrator, or a room race's server-fed remote adapter. */
+  integrator: LaneProgress;
   /** The live (or recorded) impulse log. Parent appends; track only reads. */
   log: Impulse[];
 }

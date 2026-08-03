@@ -42,7 +42,7 @@ type Phase =
   // SPEC_PET_ARENA_ROOMS R1 — the online lobby. The room replaces the local
   // flow entirely; leaving returns to setup.
   | { kind: "room"; code: string; token: string; isHost: boolean;
-      room: ArenaRoomSnapshot };
+      myLane: number; room: ArenaRoomSnapshot };
 
 function buildLaneConfigs(
   choice: RaceSetupChoice, pets: ArenaPetInfo[],
@@ -139,14 +139,15 @@ export default function ArenaGame() {
       if (joinCode) {
         const j = await joinArenaRoom(joinCode.trim(), entrant);
         setPhase({ kind: "room", code: joinCode.trim(),
-                   token: j.player_token, isHost: false, room: j.room });
+                   token: j.player_token, isHost: false,
+                   myLane: j.room.players.length - 1, room: j.room });
       } else {
         const c = await createArenaRoom({
           event_key: setup.eventKey, challenge_key: setup.challengeKey,
           difficulty: setup.difficulty, ...entrant,
         });
         setPhase({ kind: "room", code: c.code, token: c.host_token,
-                   isHost: true, room: c.room });
+                   isHost: true, myLane: 0, room: c.room });
       }
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "The room did not answer");
@@ -175,7 +176,7 @@ export default function ArenaGame() {
   if (phase.kind === "room") {
     return (
       <RoomLobby code={phase.code} token={phase.token} isHost={phase.isHost}
-        initialRoom={phase.room}
+        myLane={phase.myLane} initialRoom={phase.room}
         onLeave={() => setPhase({ kind: "setup" })} />
     );
   }

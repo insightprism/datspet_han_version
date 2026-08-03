@@ -114,6 +114,12 @@ export const HURDLE_JUMP_ARC_PX = 36;
 export const SPRITE_BASELINE_OFFSET_PX = -12;
 export const TRACK_GROUND_Y_PX = 2;
 
+/** SPEC_PET_ARENA_ROOMS §3.3 — one impulse batch per this window: each
+ *  impulse carries its own race-clock timestamp, so batching costs no
+ *  fidelity, and five fast players stay ~5 requests/s instead of ~15. Must
+ *  agree with the server module's IMPULSE_BATCH_MS. */
+export const IMPULSE_BATCH_MS = 200;
+
 /** Rev.9 — the JUMP color: what the challenge panel wears while the lane is
  *  parked at a hurdle and the question is one rung harder. Amber, distinct
  *  from the running green, readable on the dark card. */

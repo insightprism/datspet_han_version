@@ -9,7 +9,9 @@ import {
   animsFromManifest, deriveRows, ensurePet,
   type PetSheet,
 } from "@/pet";
-import { petManifestUrl, petSheetUrl } from "@/lib/api";
+import {
+  petManifestUrl, petSheetUrl, roomPetManifestUrl, roomPetSheetUrl,
+} from "@/lib/api";
 import {
   deriveIdentityNudges, resolveAthletics, type AthleticsManifest,
 } from "./athletics";
@@ -28,11 +30,20 @@ export function resolveRacingPose(
 export async function loadRacer(
   config: RacerConfig, event: ArenaEventDecl,
 ): Promise<LoadedRacer> {
-  const manifestRes = await fetch(petManifestUrl(config.petId));
+  // A room lane fetches through the room-scoped routes (SPEC_PET_ARENA_ROOMS
+  // §4.3): membership is the capability — the pets of the OTHER players are
+  // not the caller's to fetch through the owner routes.
+  const manifestUrl = config.roomCode
+    ? roomPetManifestUrl(config.roomCode, config.petId)
+    : petManifestUrl(config.petId);
+  const sheetUrl = config.roomCode
+    ? roomPetSheetUrl(config.roomCode, config.petId)
+    : petSheetUrl(config.petId);
+  const manifestRes = await fetch(manifestUrl);
   if (!manifestRes.ok) throw new Error(`manifest fetch failed: ${manifestRes.status}`);
   const manifest: AthleticsManifest = await manifestRes.json();
 
-  const sheetRes = await fetch(petSheetUrl(config.petId));
+  const sheetRes = await fetch(sheetUrl);
   if (!sheetRes.ok) throw new Error(`sheet fetch failed: ${sheetRes.status}`);
   const bytes = await sheetRes.arrayBuffer();
 

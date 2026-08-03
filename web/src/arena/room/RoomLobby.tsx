@@ -1,42 +1,52 @@
 "use client";
 
 /**
- * RoomLobby — SPEC_PET_ARENA_ROOMS R1: five devices in a lobby, seeing each
- * other appear the moment they join. The transport client lives here (§4.2):
- * one EventSource on the room's stream, reconnection and Last-Event-ID are
- * the browser's own (EventSource resends the header itself); URLs come from
- * the api.ts adapter, never minted here.
+ * RoomLobby — the room SESSION container (SPEC_PET_ARENA_ROOMS R1+R2): owns
+ * the one EventSource, the server-corrected clock, and the phase flow
+ * lobby → countdown → race → result. The transport client lives here (§4.2):
+ * reconnection and Last-Event-ID are the browser's own; URLs come from the
+ * api.ts adapter, never minted here.
  *
- * Other players render as pet label + paw glyph, not a thumbnail: sheets are
- * owner-scoped until R3's room-scoped asset route, and the lobby must not
- * pretend otherwise. R2 replaces the "racing" placeholder with the race.
+ * During the race, `tick` events feed RemoteLane adapters (§3.4) that the
+ * race screen's track reads; the `result` event is the server referee's
+ * word, and whatever the screen drew, that is the finish order shown.
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  arenaRoomStreamUrl, startArenaRoom, type ArenaRoomSnapshot,
+  arenaRoomStreamUrl, startArenaRoom,
+  type ArenaRoomSnapshot, type ArenaTickPosition,
 } from "@/lib/api";
+import RoomRaceScreen, { RemoteLane } from "./RoomRaceScreen";
 
-/** Poll-free countdown display: derive remaining seconds from the server's
- *  broadcast end time, corrected by the snapshot's server clock offset. */
 const COUNTDOWN_RENDER_TICK_MS = 200;
+const MEDALS = ["🥇", "🥈", "🥉"];
 
 interface Props {
   code: string;
   token: string;
   isHost: boolean;
+  myLane: number;
   initialRoom: ArenaRoomSnapshot;
   onLeave: () => void;
 }
 
-export default function RoomLobby({ code, token, isHost, initialRoom, onLeave }: Props) {
+export default function RoomLobby({
+  code, token, isHost, myLane, initialRoom, onLeave,
+}: Props) {
   const [room, setRoom] = useState<ArenaRoomSnapshot>(initialRoom);
   const [closed, setClosed] = useState<string | null>(null);
+  const [standings, setStandings] = useState<ArenaTickPosition[] | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  // Server clock offset (server_now − client now), refreshed per snapshot.
-  const clockOffsetRef = useRef(0);
   const [countdownLeft, setCountdownLeft] = useState<number | null>(null);
+
+  // Server clock offset (server_now − client now), refreshed per snapshot
+  // and per tick — five devices, one clock (§2.3).
+  const clockOffsetRef = useRef(0);
+  const remoteLanesRef = useRef<Map<number, RemoteLane>>(new Map());
+  const roomRef = useRef(room);
+  roomRef.current = room;
 
   useEffect(() => {
     const es = new EventSource(arenaRoomStreamUrl(code));
@@ -47,19 +57,48 @@ export default function RoomLobby({ code, token, isHost, initialRoom, onLeave }:
           clockOffsetRef.current = data.room.server_now - Date.now() / 1000;
           setRoom(data.room);
         }
-      } catch { /* a malformed frame is dropped; the next tick corrects */ }
+      } catch { /* a malformed frame is dropped; the next event corrects */ }
     };
     es.addEventListener("snapshot", applyRoom);
     es.addEventListener("player_joined", applyRoom);
     es.addEventListener("countdown", applyRoom);
+    es.addEventListener("tick", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        const gun = roomRef.current.countdown_ends_at;
+        if (gun !== null) {
+          clockOffsetRef.current =
+            gun + data.elapsed_ms / 1000 - Date.now() / 1000;
+        }
+        for (const pos of data.positions as ArenaTickPosition[]) {
+          if (pos.lane === myLane) continue;
+          let lane = remoteLanesRef.current.get(pos.lane);
+          if (!lane) {
+            lane = new RemoteLane();
+            remoteLanesRef.current.set(pos.lane, lane);
+          }
+          lane.applyTick(pos.distance_m, pos.finished, pos.finish_ms);
+        }
+        if (roomRef.current.state !== "racing") {
+          setRoom((r) => ({ ...r, state: "racing" }));
+        }
+      } catch { /* next tick corrects */ }
+    });
+    es.addEventListener("result", (e: MessageEvent) => {
+      try {
+        setStandings(JSON.parse(e.data).standings);
+        setRoom((r) => ({ ...r, state: "finished" }));
+      } catch { /* the room_closed reap will end the session regardless */ }
+    });
     es.addEventListener("room_closed", (e: MessageEvent) => {
       let reason = "closed";
-      try { reason = JSON.parse(e.data).reason ?? reason; } catch { /* keep default */ }
+      try { reason = JSON.parse(e.data).reason ?? reason; } catch { /* default */ }
       setClosed(reason);
       es.close();
     });
     return () => es.close();
-  }, [code]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, myLane]);
 
   useEffect(() => {
     if (room.state !== "countdown" || room.countdown_ends_at === null) {
@@ -72,6 +111,12 @@ export default function RoomLobby({ code, token, isHost, initialRoom, onLeave }:
     }, COUNTDOWN_RENDER_TICK_MS);
     return () => clearInterval(iv);
   }, [room.state, room.countdown_ends_at]);
+
+  const raceClock = useMemo(() => () => {
+    const gun = roomRef.current.countdown_ends_at;
+    if (gun === null) return 0;
+    return Math.max(0, (Date.now() / 1000 + clockOffsetRef.current - gun) * 1000);
+  }, []);
 
   const copyCode = async () => {
     try {
@@ -94,6 +139,56 @@ export default function RoomLobby({ code, token, isHost, initialRoom, onLeave }:
           ← Back to the arena
         </button>
       </div>
+    );
+  }
+
+  // The referee has spoken (§3.4: the result is the server's, always).
+  if (standings !== null) {
+    return (
+      <div className="flex flex-col gap-4">
+        <h2 className="text-xl font-semibold">🏁 Race results</h2>
+        <div className="card flex flex-col gap-2 p-4">
+          {standings.map((p, i) => (
+            <div key={p.lane}
+              className="flex items-baseline justify-between border-b border-white/5 pb-2 last:border-b-0">
+              <div className="flex items-baseline gap-2">
+                <span className="text-2xl">{MEDALS[i] ?? `#${i + 1}`}</span>
+                <span className="font-semibold">
+                  {p.pet_label}{p.lane === myLane ? " (you)" : ""}
+                </span>
+                {p.handicap_name !== "none" && (
+                  <span className="text-xs" style={{ color: "var(--green)" }}>
+                    🚀 {p.handicap_name.replace(/_/g, " ")}
+                  </span>
+                )}
+              </div>
+              <span className="mono">
+                {p.finished && p.finish_ms !== null
+                  ? `${(p.finish_ms / 1000).toFixed(1)} s`
+                  : `${p.distance_m.toFixed(0)} m`}
+              </span>
+            </div>
+          ))}
+          <div className="pt-1 text-xs" style={{ color: "var(--muted)" }}>
+            Scored by the referee from every player&apos;s answer log — same
+            questions in every lane.
+          </div>
+        </div>
+        <button type="button" className="btn self-start" onClick={onLeave}>
+          ← Back to the arena
+        </button>
+      </div>
+    );
+  }
+
+  // The gun has fired (locally past the broadcast end, or the first tick
+  // arrived) — the race screen takes over.
+  const racing = room.state === "racing"
+    || (room.state === "countdown" && countdownLeft !== null && countdownLeft <= 0);
+  if (racing) {
+    return (
+      <RoomRaceScreen code={code} token={token} room={room} myLane={myLane}
+        raceClock={raceClock} remoteLanes={remoteLanesRef.current} />
     );
   }
 
@@ -128,12 +223,14 @@ export default function RoomLobby({ code, token, isHost, initialRoom, onLeave }:
       </div>
 
       <div className="card flex flex-col gap-2 p-4">
-        {room.players.map((p) => (
-          <div key={`${p.pet_id}-${p.pet_label}`}
+        {room.players.map((p, i) => (
+          <div key={`${p.pet_id}-${i}`}
             className="flex items-center justify-between border-b border-white/5 pb-2 last:border-b-0">
             <div className="flex items-center gap-2">
               <span className="text-2xl">🐾</span>
-              <span className="font-semibold">{p.pet_label}</span>
+              <span className="font-semibold">
+                {p.pet_label}{i === myLane ? " (you)" : ""}
+              </span>
               {p.is_host && (
                 <span className="rounded px-1.5 py-0.5 text-[10px] font-semibold"
                   style={{ background: "rgba(99,102,241,0.2)" }}>
@@ -178,17 +275,6 @@ export default function RoomLobby({ code, token, isHost, initialRoom, onLeave }:
       {room.state === "countdown" && countdownLeft !== null && (
         <div className="card p-6 text-center text-5xl font-bold">
           {Math.ceil(countdownLeft) > 0 ? Math.ceil(countdownLeft) : "GO!"}
-        </div>
-      )}
-
-      {(room.state === "racing" || room.state === "finished") && (
-        <div className="card flex flex-col gap-2 p-4">
-          <h3 className="font-semibold">🏁 The gun has fired!</h3>
-          <p className="text-sm" style={{ color: "var(--muted)" }}>
-            Live online racing is the next update — the lobby, the countdown
-            and this room all just worked across devices. The race itself
-            arrives with R2.
-          </p>
         </div>
       )}
     </div>
