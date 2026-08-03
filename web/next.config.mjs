@@ -43,6 +43,10 @@ const nextConfig = isStaticExport
           { source: "/api/:path*", destination: `${api}/api/:path*` },
           { source: "/launch", destination: `${api}/launch` },
           { source: "/partner/:path*", destination: `${api}/partner/:path*` },
+          // The spectator URL (SPEC_PET_ARENA_ROOMS R3): /arena/{code} serves
+          // the watch shell. Prod's nginx does the same against the export.
+          { source: "/arena/:code((?!watch$)[A-Za-z0-9_-]{8,24})",
+            destination: "/arena/watch" },
         ];
       },
     };

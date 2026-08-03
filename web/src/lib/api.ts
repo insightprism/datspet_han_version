@@ -1370,6 +1370,7 @@ export interface ArenaRoomSnapshot {
   question_seed: number;
   max_players: number;
   countdown_ends_at: number | null;
+  standings: ArenaTickPosition[] | null;
   server_now: number;
   players: ArenaRoomPlayer[];
 }
@@ -1444,4 +1445,20 @@ export async function postArenaImpulses(
 ): Promise<{ accepted: number; total: number }> {
   return arenaRoomPost(`/${encodeURIComponent(code)}/impulses`,
                        { token, impulses });
+}
+
+export async function getArenaRoom(code: string): Promise<ArenaRoomSnapshot> {
+  const r = await apiFetch(
+    `${API_URL}/api/arena/rooms/${encodeURIComponent(code)}`);
+  if (!r.ok) throw new Error("no such room");
+  return (await r.json()).room;
+}
+
+/** The shareable spectator URL (R3) — /arena/{code}, served by nginx in prod
+ *  and a dev rewrite under `next dev`. Minted here like every URL. */
+export function arenaWatchUrl(code: string): string {
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}/arena/${encodeURIComponent(code)}`;
+  }
+  return `/arena/${encodeURIComponent(code)}`;
 }

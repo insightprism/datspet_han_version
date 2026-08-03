@@ -14,7 +14,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  arenaRoomStreamUrl, startArenaRoom,
+  arenaRoomStreamUrl, arenaWatchUrl, startArenaRoom,
   type ArenaRoomSnapshot, type ArenaTickPosition,
 } from "@/lib/api";
 import RoomRaceScreen, { RemoteLane } from "./RoomRaceScreen";
@@ -56,6 +56,8 @@ export default function RoomLobby({
         if (data.room) {
           clockOffsetRef.current = data.room.server_now - Date.now() / 1000;
           setRoom(data.room);
+          // A late arrival's snapshot carries the finished race's standings.
+          if (data.room.standings) setStandings(data.room.standings);
         }
       } catch { /* a malformed frame is dropped; the next event corrects */ }
     };
@@ -219,6 +221,16 @@ export default function RoomLobby({
         <div className="text-xs" style={{ color: "var(--muted)" }}>
           {room.event_key.replace(/_/g, " ")} · {room.challenge_key} ·{" "}
           {room.difficulty.replace(/_/g, " ")} · every lane sees the same questions
+        </div>
+        {/* R3 — the watchable part: one link, no account needed, dies with
+            the room. */}
+        <div className="flex flex-wrap items-center gap-2 text-xs"
+          style={{ color: "var(--muted)" }}>
+          <span>📺 Anyone can watch:</span>
+          <a className="mono underline" href={arenaWatchUrl(code)}
+            target="_blank" rel="noreferrer">
+            {arenaWatchUrl(code)}
+          </a>
         </div>
       </div>
 

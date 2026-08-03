@@ -293,3 +293,22 @@ def test_room_assets_capability_is_membership_not_ownership(rooms, dpp_env):
     # And there is NO zip route — watching a race is not taking the pet.
     assert client.get(
         f"/api/arena/rooms/{code}/pets/roompetsheet/zip").status_code == 404
+
+
+def test_late_arrival_sees_standings_in_the_snapshot(rooms):
+    """The result must not be a one-shot event: a viewer arriving after the
+    finish (or a client that reconnected fresh) reads the standings off any
+    snapshot for the RESULT_TTL window."""
+    client, arena_rooms = rooms
+    made = make_room(client, event_key="sprint_100")
+    code, host_token = made["code"], made["host_token"]
+    assert made["room"]["standings"] is None
+    _start_racing(client, arena_rooms, code, host_token)
+    with arena_rooms.ROOMS_LOCK:
+        arena_rooms.ROOMS[code].countdown_ends_at = \
+            time.time() - arena_rooms.ROOMS[code].event["time_limit_s"] - 1
+    arena_rooms.tick_racing_rooms()
+    snap = client.get(f"/api/arena/rooms/{code}").json()["room"]
+    assert snap["state"] == "finished"
+    assert snap["standings"] is not None
+    assert snap["standings"][0]["pet_label"] == "Kenji Girl"

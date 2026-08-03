@@ -114,6 +114,10 @@ class Room:
     created_at: float = 0.0
     countdown_ends_at: Optional[float] = None
     finished_at: Optional[float] = None
+    # The referee's final word, kept for the RESULT_TTL window so a viewer
+    # who arrives after the finish still sees who won — it rides every
+    # snapshot, not only the one-shot result event.
+    standings: Optional[list] = None
     last_activity_at: float = 0.0
     seq: int = 0
     # Ring buffer of (seq, sse_frame) for Last-Event-ID replay (§3.2, Rev.2).
@@ -153,6 +157,7 @@ def _snapshot(room: Room) -> dict:
         "question_seed": room.question_seed,
         "max_players": room.max_players,
         "countdown_ends_at": room.countdown_ends_at,
+        "standings": room.standings,
         "server_now": _now(),
         "players": [
             {"pet_id": p.pet_id, "pet_label": p.pet_label,
@@ -432,11 +437,12 @@ def tick_racing_rooms(now: Optional[float] = None) -> int:
             if all(p["finished"] for p in positions) or elapsed_ms >= limit_ms:
                 room.state = "finished"
                 room.finished_at = now
-                standings = sorted(positions, key=lambda p: (
+                room.standings = sorted(positions, key=lambda p: (
                     not p["finished"],
                     p["finish_ms"] if p["finished"] else -p["distance_m"]))
                 _broadcast(room, "result",
-                           {"standings": standings, "elapsed_ms": elapsed_ms})
+                           {"standings": room.standings,
+                            "elapsed_ms": elapsed_ms})
             else:
                 _broadcast(room, "tick",
                            {"elapsed_ms": elapsed_ms, "positions": positions})
