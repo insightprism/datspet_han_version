@@ -83,7 +83,7 @@ go where and why the split is not duplication.
 
 **The packer does not write either of them.** `pack_datsme_bundle` cannot see the design inputs
 (§1.3: three of thirteen facts, and not the prompt), and does not need to: the web tier already
-patches `manifest.json` twice after the bundle comes back (`webui/app.py:618-623`). That existing
+patches `manifest.json` twice after the bundle comes back (`webui/app.py:623-628`). That existing
 seam is the whole mechanism (§3.4).
 
 **Repos touched:** `datsme-pet-factory_wu` only, for Phases 1–3. `datsme_me` is untouched — §6
@@ -370,8 +370,8 @@ The ledger row is already durable, so it is the carrier. No `Job` field is added
 
 #### Move 3 — stamp the manifest from the ledger, after the bundle comes back
 
-`_finalize_pet_from_zip` (`webui/app.py:600`) is where a finished bundle becomes a stored pet, and
-**it already patches `manifest.json` twice**, at `webui/app.py:618-623`:
+`_finalize_pet_from_zip` (`webui/app.py:605`) is where a finished bundle becomes a stored pet, and
+**it already patches `manifest.json` twice**, at `webui/app.py:623-628`:
 
 ```python
 zip_bytes, _ = pet_ownership.stamp_bundle_fingerprint(zip_bytes)
@@ -808,7 +808,7 @@ without trace (§1.4). Two rules make them survivable:
 
 This is the single most consequential decision in the spec, and it is worth stating why the
 obvious-looking alternative is wrong: adding `ON DELETE CASCADE` for tidiness — as `bundle_tokens`
-correctly does (`webui/db.py:114`) — would delete exactly the rows the corpus exists to collect. A
+correctly does (`webui/db.py:132`) — would delete exactly the rows the corpus exists to collect. A
 token for a deleted pet is garbage. A provenance row for a deleted pet is the answer.
 
 ### 8.3 The join, sketched
@@ -893,8 +893,8 @@ is a code change rather than a lost cohort.
 
 1. Extract `patch_bundle_manifest` into `webui/bundle_manifest.py`; `pet_ownership.py` calls it
    (§6.1). Take the list-of-patches form (§3.4) so the mint rewrites the zip once, not three times.
-2. `design_provenance.stamp_design_block`, called in `_finalize_pet_from_zip` (`webui/app.py:600`)
-   **beside the two existing stamps at `:618-623` and upstream of `insert_pet`** — the same derived-
+2. `design_provenance.stamp_design_block`, called in `_finalize_pet_from_zip` (`webui/app.py:605`)
+   **beside the two existing stamps at `:623-628` and upstream of `insert_pet`** — the same derived-
    digest ordering rule `insert_pet` documents at `webui/db.py:248`. It reads the block from
    `db.design_block(job.id)`, so all three finalize entry paths (fresh local, fresh pool, reattach at
    `webui/app.py:655`) behave identically.
