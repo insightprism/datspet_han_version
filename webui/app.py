@@ -220,14 +220,12 @@ app.include_router(pet_facing_admin.router)
 # Arena rooms (SPEC_PET_ARENA_ROOMS R0-R3): live multi-device racing —
 # lobby, race, spectator stream — plus the deploy gate's probe, which
 # verify_deployment holds open past the outer proxy's 60 s cliff (§5.2).
-import arena_rooms  # noqa: E402
-app.include_router(arena_rooms.router)
+
 
 # Arena lounges (SPEC_PET_ARENA_LOUNGE L0-L2): the permanent front door —
 # presence, canned challenges, the racing board. Signed-in DatsMe users only;
 # accepting a challenge mints an ordinary ephemeral room through mint_room.
-import arena_lounges  # noqa: E402
-app.include_router(arena_lounges.router)
+
 
 # Donations (SPEC_PET_STORE §10) — the donate door and the donor's own record.
 # Not admin-gated: this is a user surface, scoped by owner like the house.
@@ -1961,22 +1959,6 @@ def _maintenance_loop() -> None:
                     print(f"[webui] transient sweep removed {n} item(s)", flush=True)
             except Exception as e:
                 print(f"[webui] transient sweep failed: {e}", flush=True)
-        # Arena room reaping (SPEC_PET_ARENA_ROOMS §2.4) rides every tick —
-        # the TTLs are minutes, so the hourly transient cadence is too slow.
-        try:
-            n = arena_rooms.sweep_rooms()
-            if n:
-                print(f"[webui] arena sweep reaped {n} room(s)", flush=True)
-        except Exception as e:
-            print(f"[webui] arena sweep failed: {e}", flush=True)
-        # Lounge reaping (SPEC_PET_ARENA_LOUNGE §2.3) — presence TTLs are
-        # seconds, so it rides the same every-tick cadence as the rooms.
-        try:
-            n = arena_lounges.sweep_lounges()
-            if n:
-                print(f"[webui] lounge sweep tidied {n} lounge(s)", flush=True)
-        except Exception as e:
-            print(f"[webui] lounge sweep failed: {e}", flush=True)
         time.sleep(MAINTENANCE_TICK_S)
 
 

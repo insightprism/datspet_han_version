@@ -7,7 +7,7 @@ bytes, and NOT in the packer (§4.2): the packer runs on pool GPU nodes, cannot
 see the design inputs, and game balance must not require a fleet roll to change.
 
 The identity nudges are decoded from the PET ID with §3.4's algorithm (Rev.7 —
-the owner's design: the id key IS the athlete) — the same derivation the arena
+the owner's design: the id key IS the athlete) — the same derivation the game
 performs at read time for an unstamped pet, so stamping is a PRECOMPUTATION of
 the derivation, not a fork of it: a stamped and an unstamped copy of the same
 pet are the same athlete. (The stamp still matters: it freezes the numbers

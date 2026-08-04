@@ -4,7 +4,7 @@
  * PetThumbnail — a still portrait of a generated pet (first idle frame,
  * falling back to the first walk frame), drawn from the real sprite
  * sheet. Used on the maker result card, the pet-house roster and the
- * arena athlete cards so "the image of the pet" appears without mounting
+ * the pet game's athlete cards so "the image of the pet" appears without mounting
  * a full engine instance.
  *
  * LOADING IS GATED AND RETRIED, deliberately. A roster mounts dozens of

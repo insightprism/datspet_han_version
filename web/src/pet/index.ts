@@ -4,8 +4,11 @@
 // (components/PetStage.tsx, replacing datsme's PetOverlay) differ.
 export { PetCanvas } from "./PetCanvas";
 export { ensurePet, removePet, getPet, setAnim, petStore } from "./petStore";
-// Frame primitives for the arena's race driver (SPEC_PET_ARENA §7.6/§9.2):
-// the arena is a second DRIVER over the same primitives — it mounts these
+// Frame primitives for the pet game's race driver. The GAME itself moved to
+// DatsMe (datsme_me/petgame_sidecar) — this runtime stays because the
+// designer drives it too, and the two copies now diverge deliberately.
+// (SPEC_PET_ARENA §7.6/§9.2):
+// the game is a second DRIVER over the same primitives — it mounts these
 // instead of useAutoStateMachine and paces pets from the impulse stream.
 // This index is one of the two files the runtime designates as legitimately
 // host-specific, so widening it is the sanctioned seam rather than a fork.

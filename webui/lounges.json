@@ -1,8 +1,0 @@
-{
-  "_doc": "SPEC_PET_ARENA_LOUNGE §2.1 — lounges are CONTENT: a fixed shipped table, never user-created. Adding a lounge is a row here; the runtime iterates whatever exists and never branches on an id. Labels are the owner's own words (§14.1); ids are stable once minted.",
-  "lounges": [
-    { "id": "lounge_1", "label": "Room 1", "emoji": "🥇" },
-    { "id": "lounge_2", "label": "Room 2", "emoji": "🥈" },
-    { "id": "lounge_3", "label": "Room 3", "emoji": "🥉" }
-  ]
-}

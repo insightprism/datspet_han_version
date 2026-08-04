@@ -48,11 +48,6 @@ export default function RootLayout({
               <Link href="/house" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
                 {HOUSE_NAME}
               </Link>
-              {/* The Pet Games (SPEC_PET_ARENA §12 Phase 2) — same precedent
-                  as the store's entry above: a real surface earns its link. */}
-              <Link href="/arena" className="hover:opacity-80" style={{ color: "var(--muted)" }}>
-                Games
-              </Link>
             </nav>
             <NavAuth />
           </div>
