@@ -1,7 +1,9 @@
 # SPEC_ARENA_MIGRATION — the game moves to DatsMe, the factory keeps the pets
 
-**Status: Rev.5 (2026-08-03) — IMPLEMENTATION-READY, NO EXTERNAL DEPENDENCIES. Both repos are
-owned and operated by the same person; §12's items are decisions and work, not requests to anyone.**
+**Status: Rev.6 (2026-08-03) — IMPLEMENTATION-READY. No external dependencies, no new hardware.**
+Both repos are owned and operated by the same person; §12's items are decisions and work, not
+requests to anyone. **The arena is a sidecar** on the pattern DatsMe has already shipped twice
+(§3.2).
 §12 lists the calls that
 are the owner's; §5 lists the seams that must be decided **before** any code moves. A0 is a
 one-day infrastructure probe that needs no game code, depends on no open question, and blocks
@@ -30,6 +32,39 @@ sequence at all.** All eleven steps are git/npm/systemctl; nginx is never mentio
 `deploy/nginx.staging.conf` in that repo is a reference copy and the live config is changed by hand
 on the box. That is the same trap already recorded for DatsPet (`nginx-default.conf` is
 *production's*) in a second repo. §6.1.1.
+
+> ### Rev.6 — the arena is a sidecar, and DatsMe already had the pattern
+>
+> Rev.1–Rev.5 said the arena needs **"its own box."** That came from a resource-usage concern
+> (owner: *"the arena will be a little resource intensive, so should probably have its own
+> server"*), which was fair — and which this spec turned into a **precondition**. It is not one, and
+> `datsme_me/CLAUDE.md` says so directly:
+>
+> - *"**Every DatsMe-owned service belongs in this block — sidecars included** … the next service
+>   goes to `x9989` and downward"* (:114) — the arena is the next service, and 19989/29989 was the
+>   right number for a reason better than "next free."
+> - *"Production and staging are **co-located on one host** and both bind `127.0.0.1`"* (:110) —
+>   there is no own-box concept in this architecture.
+>
+> **DatsMe has shipped two services of exactly this shape** — the TTS sidecar and Gotenberg. §3.2 is
+> rewritten around `tts_sidecar/`'s actual layout and systemd units instead of inventing a machine.
+> Three things fall out:
+>
+> 1. **One deviation from the copied unit, and it would have been silent.** The TTS unit carries
+>    `RuntimeMaxSec=21600` — a forced restart every six hours. Harmless for a stateless synthesiser;
+>    for the arena it **drops every live race, lobby and lounge presence on a timer**, with no error.
+>    Whoever copies that unit inherits the line. §3.2.2.
+> 2. **`ARENA_SIDECAR_URL` gets no default**, per a rule with two scars pointing in opposite
+>    directions (:119). §3.2.3.
+> 3. **`uvicorn app:app` with no `--workers` is already single-process** — `SPEC_PET_ARENA_ROOMS`
+>    §2.1's precondition is satisfied by the pattern rather than enforced against it.
+>
+> The measured workload argument survives as a **relocation trigger**, not a prerequisite (§3.2.4):
+> own process, own port, room-sharded, no disk state — moving it to its own host later is a systemd
+> unit and an nginx upstream.
+>
+> **This removes the last thing that looked like a blocker.** Nothing in the plan needs hardware
+> that does not exist.
 
 > ### Rev.5 — there was never a second party
 >
@@ -167,7 +202,8 @@ and, on the shape:
 > its own frontend and backend api"
 
 **The one-line summary:** the arena is a DatsMe product that happens to live in DatsPet's repo. It
-moves to its own service on its own box, mounted **same-origin** under `datsme.me/arena`, sharded
+moves to its own **sidecar service** on the platform's existing host (§3.2), mounted **same-origin**
+under `datsme.me/arena`, sharded
 **by room**, reading identity and relationships from DatsMe's shared PostgreSQL. DatsPet keeps the
 factory — including minting each pet's athletics — and stays a partner for a **hardware** reason.
 
@@ -177,9 +213,9 @@ factory — including minting each pet's athletics — and stays a partner for a
 
 | # | Decision | Choice |
 |---|---|---|
-| 0.1 | Where the arena runs | **Its own FastAPI service on its own box** (§3.2). Not inside DatsMe's web tier, not inside DatsPet. |
+| 0.1 | Where the arena runs | **Its own FastAPI sidecar**, co-located on the platform host, bound to `127.0.0.1:19989`/`29989`, on the pattern `tts_sidecar/` already uses (§3.2). Not inside DatsMe's web tier, not inside DatsPet, and not new hardware. |
 | 0.2 | How it is reached | **Same-origin path routing** — `datsme.me/arena/*` and `/api/arena/*` (§3.1). **Not** a subdomain (§3.1.1 — the cookie finding). |
-| 0.3 | Frontend | **Its own**, served by its own box under Next's `basePath` (§3.3). DatsMe's web tier is never rebuilt for a race feature. |
+| 0.3 | Frontend | **Its own**, served by the sidecar under Next's `basePath` (§3.3). DatsMe's web tier is never rebuilt for a race feature. |
 | 0.4 | Scaling | **Shard by room code, never by user** (§3.4). This is the rule that must not be violated later. |
 | 0.5 | Identity | **DatsMe session cookie**, resolved by **introspection against DatsMe's backend** rather than local JWT decode (§4.1). No launch token, no capability, no consent screen — and no signing key on the arena box (§4.1.1). |
 | 0.6 | Friends | **PostgreSQL `relationships`** directly — the shared layer that is already source of truth (§4.2). |
@@ -407,7 +443,7 @@ Rev.1 quantified what *moves* and never what gets *built*. Both, plainly:
 
 **Built new — this is the actual project:**
 
-a repo · a box · a deploy pipeline · nginx changes on the host's **prod *and* staging** · a Next
+a repo (or a sidecar directory) · **two systemd units, no new hardware** (§3.2.1) · nginx changes on the host's **prod *and* staging** · a Next
 shell · an auth adapter and a DatsMe introspection endpoint (§4.1.1) · a CSRF middleware port (§4.8)
 · a dual-published athletics package with cross-engine CI (§2.4) · an ownership read path (§4.3) ·
 the room-scoped asset proxy (§4.4.1) · **the lounge's entry-time manifest fetch (§4.4.2)** · **the
@@ -458,13 +494,88 @@ receive it. The "fix" is to widen it to `.datsme.me` — which would ship DatsMe
 and a separate process inherits none of DatsMe's middleware. See §4.8.) This is also the same nginx-location shape the arena already runs on today, so §5's proxy
 lessons transfer directly.
 
-### 3.2 Boxes and ports
+### 3.2 The arena is a SIDECAR — the pattern already exists (rewritten, Rev.6)
 
-Its own box, for a reason that is measured rather than assumed: the arena holds long-lived SSE
-connections, ticks at a fixed 10 Hz regardless of load, and runs a CPU-bound referee under a global
-lock — **~4.3 ms per room per tick, ceiling ~20 concurrently racing rooms**
-(`SPEC_PET_ARENA_ROOMS` §13). Co-tenanting that with login and messaging means each starves the
-other and an arena overload takes down authentication. Separate box = separate failure domain.
+**Rev.1–Rev.5 said "its own box." That was wrong, and DatsMe's own instructions say so.**
+`../datsme_me/CLAUDE.md:114`:
+
+> "**Every DatsMe-owned service belongs in this block — sidecars included.** The platform owns
+> `x999N`; a new service takes the next free slot and is added to this table in the same change.
+> Slots `x9995`–`x9990` are taken; **the next service goes to `x9989` and downward.**"
+
+and `:110`:
+
+> "Production and staging are **co-located on one host** and both bind `127.0.0.1`."
+
+There is no "own box" concept here. DatsMe has shipped **two** services of exactly this shape — the
+TTS sidecar and Gotenberg — and the arena is a third. It is co-located, bound to loopback, reached
+through nginx, and numbered from the platform's block. §3.1's path routing was always the
+front-door design; §3.2 just stopped inventing a machine to put behind it.
+
+#### 3.2.1 The shape, copied from `tts_sidecar/`
+
+```
+datsme_me/arena_sidecar/          # or its own repo — §12.5
+├── app.py                        # FastAPI; uvicorn app:app
+├── requirements.txt
+├── venv/
+├── README.md
+└── systemd/
+    ├── datsme-arena.service          # prod  → 127.0.0.1:19989
+    └── datsme-staging-arena.service  # staging → 127.0.0.1:29989
+```
+
+The unit is `tts_sidecar/systemd/datsme-staging-tts.service` with three values changed and **one
+line deleted**:
+
+```ini
+[Service]
+Type=simple
+WorkingDirectory=/var/www/datsme-staging/arena_sidecar
+# Bind 127.0.0.1 ONLY — never a public interface. A publicly reachable Gotenberg
+# is what was exploited on 2026-05-27 (../datsme_me/CLAUDE.md:135).
+ExecStart=/var/www/datsme-staging/arena_sidecar/venv/bin/uvicorn app:app           --host 127.0.0.1 --port 29989
+Restart=always
+RestartSec=3
+# NO RuntimeMaxSec — see §3.2.2. The TTS unit carries RuntimeMaxSec=21600.
+```
+
+`uvicorn app:app` with no `--workers` is already single-process, which is what
+`SPEC_PET_ARENA_ROOMS` §2.1 requires. The precondition is satisfied by the pattern rather than
+enforced against it.
+
+#### 3.2.2 The one deviation, and it would be silent
+
+**The TTS unit sets `RuntimeMaxSec=21600` — a forced restart every six hours.** That is harmless for
+a stateless synthesiser. **For the arena it drops every live race, lobby and lounge presence**, on a
+timer, with no error anywhere — `SPEC_PET_ARENA_ROOMS` §2.4 accepts that a restart ends live rooms,
+but accepts it as an *operational* event, not as a scheduled one.
+
+Copy the unit and this line comes with it. **The arena's units must not carry `RuntimeMaxSec`**, and
+the reason belongs in a comment in the unit itself, because the next person to copy it from TTS will
+otherwise reintroduce it.
+
+#### 3.2.3 `ARENA_SIDECAR_URL` gets no default — this is a rule with two scars
+
+`../datsme_me/CLAUDE.md:119`: *"Sidecar URLs get no default value. Read the env var; fail with a
+message naming the variable if it is unset."* Both existing sidecars learned it, in **opposite**
+directions — TTS defaulted to production's port and a staging backend dialed production; Gotenberg
+defaulted to staging's and a production backend would have rendered through staging. The arena reads
+its URL the same way and fails loudly on an unset variable.
+
+#### 3.2.4 What "its own box" was actually about, and when it becomes true
+
+The measured workload argument stands and is not discarded: long-lived SSE, a fixed 10 Hz tick, and
+a CPU-bound referee under a global lock — **~4.3 ms per room per tick, ceiling ~20 concurrently
+racing rooms** (`SPEC_PET_ARENA_ROOMS` §13). That profile genuinely differs from request/response
+traffic.
+
+**But it is a reason to be able to move, not a reason to start separated.** With zero users the
+ceiling is not in sight, and the architecture already makes the move cheap: own process, own port,
+**sharded by room** (§3.4), holding no disk state (§4.6). Relocating the arena to its own host later
+is a systemd unit and an nginx upstream — a config change, not a rewrite.
+
+**The tripwire is measured contention on 5.161.70.13**, not a number in this spec.
 
 Ports, taken from the **occupied** host band (`../datsme_me/CLAUDE.md:101`) rather than guessed:
 
@@ -984,7 +1095,7 @@ Each phase is independently verifiable. **A0 is a gate: if it fails, nothing aft
 |---|---|---|
 | **Census** | **§5.1.2's unstamped-pet count on staging and prod** (§6.1.2). One query per environment. | Decides whether §12.9 is needed at all, so it precedes the decision. **Zero dependencies — one query per environment.** |
 | **A0** | nginx `/arena` + `/api/arena` blocks on DatsMe **staging**, `proxy_buffering off`, pointed at a stub. **Two assertions: (1)** an SSE stream is still open after **90 s**; **(2)** an authenticated request through `/api/arena` **resolves the right user** — i.e. the session cookie actually arrives at the arena box. | §5 cost this project a day once, and R0 is first because proxy behaviour cannot be observed locally. **The cookie half is equally unobservable locally and is the other half of §3.1.1's entire argument** — if the cookie does not arrive, path routing bought nothing and the design is wrong, not late. |
-| **A1** | Arena service skeleton on its own box: FastAPI, `--workers 1`, **identity via introspection** (§4.1.1), **the CSRF double-submit port** (§4.8), health endpoint. **No game.** | Proves identity end to end with nothing else in the way. CSRF is here and not later because a control discovered at A5 is a control that shipped absent. |
+| **A1** | Arena sidecar skeleton (§3.2.1 — directory, venv, two systemd units, **no `RuntimeMaxSec`**): FastAPI, single-process, **identity via introspection** (§4.1.1), **the CSRF double-submit port** (§4.8), health endpoint. **No game.** | Proves identity end to end with nothing else in the way. CSRF is here and not later because a control discovered at A5 is a control that shipped absent. |
 | **A2** | Ownership via `GET /api/pets/me` and assets via the host's `/api/pets/{id}/sheet.png`, behind the room-scoped proxy (§4.3, §4.4.1), exercised by a throwaway route | **Rev.1 called this "the only genuinely new plumbing" when it was the largest item in the plan and lived in another repo.** Against existing host routes it is now the smallest phase — which is the whole point of B1's correction. |
 | **A3** | Move `arena_rooms.py` + `arena_lounges.py`; repoint the **four** call sites (§1.2), **including the lounge's entry-time manifest fetch** (§4.4.2); **dual-published** athletics package with the `race_vectors.json` cross-engine test green in both repos (§2.4). **Precondition: §12.9 answered** (or withdrawn per §5.1.2). | The code moves nearly unchanged; the package does not. The fixture is the gate — a table skew is caught by `TABLE_VERSION`, an engine skew only by that file. The lounge is called out because §1.2's Rev.2 table hid it inside a room row and it is a genuinely different fix. |
 | **A4** | The arena frontend as its own Next app under `basePath: "/arena"`, including the five external imports of §2.1 | §2.1's dispositions are per-import; `ModalOverlay` is a rebuild, not a move |
