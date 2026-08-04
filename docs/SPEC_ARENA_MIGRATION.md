@@ -1,37 +1,74 @@
 # SPEC_ARENA_MIGRATION — the game moves to DatsMe, the factory keeps the pets
 
-**Status: Rev.6 (2026-08-03) — IMPLEMENTATION-READY. No external dependencies, no new hardware.**
-Both repos are owned and operated by the same person; §12's items are decisions and work, not
-requests to anyone. **The arena is a sidecar** on the pattern DatsMe has already shipped twice
-(§3.2).
-§12 lists the calls that
-are the owner's; §5 lists the seams that must be decided **before** any code moves. A0 is a
-one-day infrastructure probe that needs no game code, depends on no open question, and blocks
-everything after it.
+**Status: Rev.7 (2026-08-03) — SHIPPED to development and staging. Production deliberately
+deferred.** The pet game runs as a DatsMe sidecar at `staging.datsme.me/petgame`, playable, with
+its own API (29989) and frontend (29988). DatsPet no longer carries it.
 
-**Readiness, per phase, because "is it ready" has no single answer:**
+**Production is not a pending phase — it is a decision.** Owner, 2026-08-03: *"we are not going to
+deploy to production as we have a lot of work to do before this is production worthy. the
+deployment to staging shows that it will work, and will do the bulk of our work on development and
+staging."* The production systemd units exist (`petgame_sidecar/systemd/datsme-petgame*.service`,
+ports 19989/19988) and the ports are reserved, so promoting later is installing two units and
+adding four UFW rules. Nothing about the design is waiting on it.
 
-| Phase | State | Needs |
-|---|---|---|
-| **Census** (§5.1.2) | **Runnable now.** One query per environment (§6.1.2). | nothing |
-| **A0** | **Runnable now.** Fully specified in §6.1. | a port for a ~20-line stub, and a manual nginx edit on DatsMe staging (§6.1.1) |
-| **A1** | **Runnable now**, once 12.6 is decided — a decision, not a request. | the introspection endpoint in `datsme_me`, the CSRF port |
-| **A2** | After A1. §4.3/§4.4 stand on host routes verified to exist. | nothing new |
-| **A3** | After the census resolves 12.9 either way. | possibly one serializer field in `datsme_me` |
-| **A4–A6** | After the above. | nothing new |
+| Phase | State |
+|---|---|
+| **A0** transport probe | ✅ passed on staging — both assertions, against the real two-layer proxy |
+| **A1** sidecar + identity + CSRF | ✅ |
+| **A2** ownership + assets | ✅ |
+| **A3** backend moved | ✅ 46 tests green |
+| **A4** frontend | ✅ deployed, playable |
+| **A5** removed from DatsPet | ✅ 8,763 lines |
+| **A6** room sharding | not built — measured ceiling is ~20 concurrent races |
+| **prod** | **deferred by decision, not blocked** |
 
-**There is no external dependency anywhere in this plan.** Rev.3 said A0 was "ready now"; Rev.4
-"corrected" that to "blocked on host access" and was **wrong** — `datsme_me` is the same owner's
-repo, sitting beside this one, with a documented deploy path (`datsme_me/CLAUDE.md` §Staging Deploy
-Sequence, `ssh root@5.161.70.13`). What §12.6/12.7/12.9 actually are: **decisions to make and code to
-write in the other repo.** Nobody is being asked for anything.
-
-**What is still true, and is the only real constraint:** A0 lands on *different infrastructure* —
-another repo, another box, another deploy pipeline — and **nginx is not part of DatsMe's deploy
-sequence at all.** All eleven steps are git/npm/systemctl; nginx is never mentioned, so the
-`deploy/nginx.staging.conf` in that repo is a reference copy and the live config is changed by hand
-on the box. That is the same trap already recorded for DatsPet (`nginx-default.conf` is
-*production's*) in a second repo. §6.1.1.
+> ### Rev.7 — what shipping taught that planning did not
+>
+> The plan survived contact. Every correction below came from doing it, and each is the kind that
+> only appears at the seam it lives on.
+>
+> **Three failures on deploy, none the one §5 predicted:**
+>
+> 1. **The single-file bind-mount trap.** The live nginx config is bind-mounted from
+>    `deploy/nginx.staging.conf`. `git reset --hard` REPLACES the file, so the container kept
+>    reading the old inode (host `1793027`, container `1792538`). **`nginx -s reload` would have
+>    reloaded the stale config and reported success.** The container must be restarted. This has
+>    silently affected every nginx change made to that vhost via git, not just ours.
+> 2. **UFW needs two rules per port**, one per bridge (`br-…`, `docker0`) — the pattern every other
+>    service already had. Without them the container cannot reach a host-bound sidecar, and the
+>    symptom is a bare 502.
+> 3. **The buffering failure was the INVERSE of the predicted one.** §5.2 warned the outer proxy
+>    would CUT the stream at 60 s. It does not: `vhost.d/staging.datsme.me` already sets
+>    `proxy_read_timeout 86400`, and the probe held open the full 95 s — delivering **zero bytes**.
+>    That is §5.1's symptom (a race that looks *frozen*) wearing §5.2's clothes. Cause: **nginx
+>    CONSUMES `X-Accel-Buffering` from an upstream response**, so the inner hop acted on it and
+>    stripped it and the outer never saw it. Fixed by re-emitting it on the client-facing response —
+>    one line, scoped to the game's location, rather than `proxy_buffering off` across the whole
+>    vhost.
+>
+> **Two bugs only clicking found**, which no test in this plan would have caught: the lobby's
+> shareable spectator link still said `/arena/{code}` — the one URL a user is invited to send
+> someone else — and DatsPet's entire nav came across, so the deployed game offered Home / Design /
+> Pet Store links that all 404'd. §8's verification list should gain "open it and use it".
+>
+> **Three places the plan was wrong in a way worth keeping:**
+>
+> - **The tests needed a fake DatsMe, not import changes.** §8 said they "should pass with only
+>   import changes; if they need logic changes, something moved that should not have." They needed
+>   a new *fixture* — the game stopped owning inventory, so the seam they mock moved. Test logic is
+>   unchanged. The prediction was wrong; what it was guarding against did not happen.
+> - **`GET /api/pets/me` collapsed identity and ownership into one call.** §4.1.1 specified a
+>   separate introspection endpoint; on the join and lounge-entry paths it is unnecessary, because
+>   `list_my_pets` depends on `get_current_user_db` and a 200 proves both. **12.6 shrank to the
+>   paths that need identity WITHOUT ownership** — stream attach, impulse POSTs, presence.
+> - **The sidecar binds the docker bridge, not loopback.** CLAUDE.md's "bind sidecars to 127.0.0.1"
+>   was written for sidecars the BACKEND dials. This one serves browser traffic through a
+>   containerised nginx that cannot reach loopback. Same rule, different topology.
+>
+> **What did not change under contact:** the room/lounge code moved with three symbol repoints and
+> no logic edits; `--workers 1` came free from the sidecar pattern; the ownership gate, the
+> anonymous-spectator asset path and the room-is-the-capability rule all behaved exactly as §4
+> described.
 
 > ### Rev.6 — the arena is a sidecar, and DatsMe already had the pattern
 >
@@ -1262,6 +1299,13 @@ layer is how two arenas end up live at once.
 - **A live two-repo round trip before A5 deletes anything:** build a pet in DatsPet, adopt it into
   DatsMe, gift it to a second user, sign in as that user, and race it. Unit gates on either side do
   not prove a cross-system loop — that lesson is standing policy here.
+- **Open it and use it.** Both bugs that reached staging were invisible to every test here: a
+  shareable spectator link pointing at a retired path, and an inherited nav whose every link 404'd.
+  A deploy is not verified by status codes; click the thing a user is asked to click.
+- **After ANY nginx change, restart the container — never just reload.** The config is bind-mounted
+  as a single file and `git reset --hard` replaces the inode, so a reload silently reloads the old
+  config and reports success (Rev.7). Then assert the container actually sees the change:
+  `docker exec <c> grep -c "<new directive>" /etc/nginx/conf.d/default.conf`.
 - **A guard test that the arena imports nothing from `pet_factory` but the shared tables package**
   (§0.14.4).
 - **A test that no host fetch ever uses a credential other than the pet owner's** (§4.4.1, §4.4.2).
@@ -1398,7 +1442,13 @@ deploy flow.
 > "measure before writing it," pending §5.1.2's census. `pets.read_owned` (12.4) is independent of
 > the placement decision and can proceed on its own.
 
-**12.6 Identity: introspection, or change the token format? — DECIDE, then build in `datsme_me`.**
+**12.6 Identity — MOSTLY ANSWERED BY SHIPPING (Rev.7).** `GET /api/pets/me` proves identity and
+ownership in one call, so the join and lounge-entry paths need no introspection endpoint at all.
+What remains is the narrower question of the paths that need identity WITHOUT ownership — stream
+attach, impulse POSTs, lounge presence — which today ride the player token instead. Decide only if
+a route appears that needs neither.
+
+*(Original framing:)* **introspection, or change the token format? — DECIDE, then build in `datsme_me`.**
 §4.1.1 recommends
 **introspection** — the arena forwards a cookie, DatsMe resolves it, no signing key leaves the host.
 The alternative is asymmetric (RS256) signing so the arena can verify with a public key and no round
