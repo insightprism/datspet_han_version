@@ -1,5 +1,5 @@
 {
-  "_doc": "SPEC_PET_ARENA §3.1 — the base six-tuple per declared movement_class. The single biggest determinant of a pet's athletics, and one flat table an admin can tune. Keys are the movement_class strings the motion profiles declare (guard test pins the bijection both ways); `default` is the never-raises fallback row for an unknown class, mirroring motion_profiles registry.default. Attributes and affinities are all 0.0-1.0; affinities MULTIPLY performance and never gate entry (§2.2) — eligibility is the pose requirement (§6.3).",
+  "_doc": "SPEC_PET_ATHLETICS §3.1 — the base six-tuple per declared movement_class. The single biggest determinant of a pet's athletics, and one flat table an admin can tune. Keys are the movement_class strings the motion profiles declare (guard test pins the bijection both ways); `default` is the never-raises fallback row for an unknown class, mirroring motion_profiles registry.default. Attributes and affinities are all 0.0-1.0; affinities MULTIPLY performance and never gate entry (§2.2) — eligibility is the pose requirement (§6.3).",
   "default": "mammalian_quadruped",
   "classes": {
     "mammalian_quadruped": {

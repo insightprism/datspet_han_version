@@ -1,5 +1,5 @@
 """athletics — the Pet Games' stat vocabulary, event declarations and reference
-integrator, as content (SPEC_PET_ARENA §2–§6).
+integrator, as content (SPEC_PET_ATHLETICS §2–§6).
 
 Pure data + stdlib, deliberately: this package sits on the GPU-less tier beside
 `tiers/` and `design_axes/` and is read by four parties — the build (Phase 4's

@@ -14,9 +14,18 @@ Sibling repos this one talks to (peers under `claude_code/`): `../ComfyUI` (the 
 **The pet game's specs live in the DatsMe repo now** (`../datsme_me/docs/`):
 `SPEC_PET_ARENA_ROOMS`, `SPEC_PET_ARENA_LOUNGE`, `SPEC_PET_ARENA_VENUE` and
 `SPEC_ARENA_MIGRATION` moved with the game itself (`datsme_me/petgame_sidecar/`).
-`SPEC_PET_ARENA` stayed here **on purpose**: its §2/§4 are the athletics contract this
-repo implements — DatsPet MINTS a pet's stats at build (`webui/pet_athletics.py`), the
-game only reads them — and both repos' code cites overlapping sections of it.
+`SPEC_PET_ARENA` was then **split** (2026-08-03): the athletics contract stayed here as
+**`docs/SPEC_PET_ATHLETICS.md`** (§2–§5 — what a pet's six numbers are, where they come
+from, the manifest block DatsPet MINTS at build in `webui/pet_athletics.py`, and the
+resolution precedence), and the game half (§6 onward — events, the race loop, challenges,
+monetization) went to `../datsme_me/docs/SPEC_PET_ARENA.md`.
+
+**Neither half was renumbered.** §2–§5 kept their numbers in the athletics spec and §6+
+kept theirs in the game spec, so every `SPEC_PET_ARENA §N` citation written before the
+split stays semantically correct — only the document name changed for §2–§5. Both files
+therefore have gaps in their numbering, deliberately.
+**`webui/tests/test_spec_citations.py` fails the build on a citation that points at a
+section which does not exist**, or at `SPEC_PET_ARENA §2–§5` (the pre-split numbering).
 
 `docs/SPEC_*.md` are the authoritative design specs; code comments cite them by section (e.g. `SPEC_MOTION_PROFILES §3.7`). Read the cited spec section before changing code that references one. Some cited specs have been archived to `docs/archive/` once executed — the citation stays valid, the file moved.
 

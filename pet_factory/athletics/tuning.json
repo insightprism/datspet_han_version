@@ -1,5 +1,5 @@
 {
-  "_doc": "SPEC_PET_ARENA §2.3/§8.4 — the two numbers the whole game reduces to. stride_base_m: metres per correct answer for a dead-average pet (score 0.5); sets how long a race FEELS — at 2.0 a 100 m sprint is ~50 answers for a mid pet. athletic_stride_spread: the ratio of stride between the best and worst pet in an event (stride = base * spread^(score-0.5)); 1.6 means a child answering 1.6x faster exactly cancels the worst possible pet matchup. §8.4: tune the spread DOWN, not up — if a session ever feels like the animal won it, the number is too high. §16.1 asks the owner to confirm 1.6 on the sofa.",
+  "_doc": "SPEC_PET_ATHLETICS §2.3/§8.4 — the two numbers the whole game reduces to. stride_base_m: metres per correct answer for a dead-average pet (score 0.5); sets how long a race FEELS — at 2.0 a 100 m sprint is ~50 answers for a mid pet. athletic_stride_spread: the ratio of stride between the best and worst pet in an event (stride = base * spread^(score-0.5)); 1.6 means a child answering 1.6x faster exactly cancels the worst possible pet matchup. §8.4: tune the spread DOWN, not up — if a session ever feels like the animal won it, the number is too high. §16.1 asks the owner to confirm 1.6 on the sofa.",
   "stride_base_m": 2.0,
   "athletic_stride_spread": 1.6
 }

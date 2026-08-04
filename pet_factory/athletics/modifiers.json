@@ -1,5 +1,5 @@
 {
-  "_doc": "SPEC_PET_ARENA §3.2 — design-axis picks to attribute deltas. {axis: {option: {attribute: delta}}}. This is what the kids actually asked for: the design MEANS something — a chubby corgi is slower and stronger than a lean one. An axis or option with no entry contributes nothing, so adding a design axis never breaks athletics; every {axis, option} named here must resolve against design_axes (guard test). Deltas apply to speed/power/endurance only, never to a medium affinity — the body you drew changes how hard you go, not which element you belong to.",
+  "_doc": "SPEC_PET_ATHLETICS §3.2 — design-axis picks to attribute deltas. {axis: {option: {attribute: delta}}}. This is what the kids actually asked for: the design MEANS something — a chubby corgi is slower and stronger than a lean one. An axis or option with no entry contributes nothing, so adding a design axis never breaks athletics; every {axis, option} named here must resolve against design_axes (guard test). Deltas apply to speed/power/endurance only, never to a medium affinity — the body you drew changes how hard you go, not which element you belong to.",
   "modifiers": {
     "body": {
       "thin": { "speed": 0.15, "power": -0.10 },

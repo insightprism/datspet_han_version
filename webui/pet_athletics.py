@@ -1,4 +1,4 @@
-"""pet_athletics — mint the athletics block at build (SPEC_PET_ARENA §4).
+"""pet_athletics — mint the athletics block at build (SPEC_PET_ATHLETICS §4).
 
 Placement follows the pet_ownership.py precedent: not db.py (record view), not
 app.py (HTTP surface). The block is the FOURTH patch at the `_finalize_pet_from_zip`
