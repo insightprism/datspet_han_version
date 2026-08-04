@@ -1,9 +1,43 @@
 # SPEC_ARENA_MIGRATION — the game moves to DatsMe, the factory keeps the pets
 
-**Status: Rev.2 (2026-08-03) — DRAFT FOR OWNER REVIEW; NOTHING MOVED.** §12 lists the calls that
+**Status: Rev.3 (2026-08-03) — IMPLEMENTATION-READY; A0 MAY START NOW.** §12 lists the calls that
 are the owner's; §5 lists the seams that must be decided **before** any code moves. A0 is a
-one-day infrastructure probe that needs no game code and blocks everything after it.
+one-day infrastructure probe that needs no game code, depends on no open question, and blocks
+everything after it.
 
+**Readiness, per phase, because "is it ready" has no single answer:**
+
+| Phase | State |
+|---|---|
+| **A0** | **Ready now.** Stub only, staging only, no game code, no dependency on any open question. |
+| **A1** | Blocked on **12.6 / 12.7** — the host's two auth answers (`REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ`). |
+| **A2** | Ready once A1 lands. §4.3/§4.4 stand on host routes that were verified to exist. |
+| **A3** | Blocked on **12.9** — the `source_item_id` field, without which §5.1's anchor cannot execute. |
+| **A4–A6** | Ready, contingent on the above. |
+
+> ### Rev.3 — two decisions that the data path could not execute
+>
+> Rev.2 fixed the plumbing and then recorded two conclusions the plumbing cannot carry out. Both are
+> the same failure mode Rev.2 was good at catching, one layer further in.
+>
+> **§5.1 resolved the nudge anchor to a ladder whose middle rung is unreadable.** The ladder is
+> stamped `identity_nudges` → `source_item_id` → host `Pet.id`, and rung 2 does the work: it is what
+> keeps existing pets' stats intact on migration day. But **`source_item_id` is not exposed by any
+> host response** — `pet_service.pet_dict()` (`../datsme_me/api/apps/pets/pet_service.py:326-338`)
+> returns ten fields and that is not one of them, and a sweep of `../datsme_me/api/**.py` finds the
+> column only on the model, its index, and DPP writeback internals. §4.3 made `/api/pets/me` the
+> ownership path precisely so the arena would not read per-user tables (§0.14.3), so the rung is
+> unreachable by construction. **§5.1 is rewritten and the field becomes host ask #4 (§12.9).**
+>
+> **§4.4.1 covers rooms; the lounge is not a room.** `webui/arena_lounges.py:322` reads *another
+> player's* manifest during the **acceptor's** request — the owner's cookie is not present and no
+> room exists yet. §4.4.1's invariant ("each pet is fetched by its own owner's session, at the moment
+> that owner volunteers it") simply does not reach it. **New §4.4.2 applies the same rule one seam
+> earlier, at lounge entry**, and §1.2's table row is corrected.
+>
+> Three smaller corrections: §4.4.1's memory figure was a floor presented as a ceiling; §4.3 needed
+> one call, not two, on the join path; and §0 numbered two different things `0.12`.
+>
 > ### Rev.2 — the data plan was built on a spec, not on code
 > 
 > A verification pass against both repos confirmed §1 (the dependency measurements), §3.1.1 (the
@@ -30,7 +64,8 @@ one-day infrastructure probe that needs no game code and blocks everything after
 > under-counted the frontend move** by five external imports (B5). New §2.6 states what gets *built*,
 > which Rev.1 never did.
 > 
-> **§12 status after the 2026-08-03 clearing pass.** **Answered by the owner:** 12.2 and 12.8 —
+> **§12 status after the 2026-08-03 clearing pass** *(superseded by Rev.3's readiness table above —
+> 12.9 was opened after this was written).* **Answered by the owner:** 12.2 and 12.8 —
 > playing requires a DatsMe account *and* a pet; watching requires nothing, and the public link is
 > deliberate (§5.2, §5.2.1). **Resolved by verification:** 12.1 (ports), 12.3 (nudge anchor), plus
 > §5.0's runtime diff and §5.4's `StatBars` disposition — three of which **corrected** what Rev.1
@@ -74,15 +109,18 @@ factory — including minting each pet's athletics — and stays a partner for a
 | 0.4 | Scaling | **Shard by room code, never by user** (§3.4). This is the rule that must not be violated later. |
 | 0.5 | Identity | **DatsMe session cookie**, resolved by **introspection against DatsMe's backend** rather than local JWT decode (§4.1). No launch token, no capability, no consent screen — and no signing key on the arena box (§4.1.1). |
 | 0.6 | Friends | **PostgreSQL `relationships`** directly — the shared layer that is already source of truth (§4.2). |
-| 0.7 | Pet ownership | **`GET /api/pets/me` on the host**, called server-side with the user's own cookie (§4.3). No projection, no new host route. |
-| 0.8 | Pet bytes | **The host's existing `/api/pets/{id}/sheet.png`**, fetched with the *joiner's own* credential at join and held for the room's life (§4.4). No node protocol, no global cache. |
+| 0.7 | Pet ownership | **`GET /api/pets/me` on the host**, called server-side with the user's own cookie (§4.3). It resolves identity *and* ownership in one call. No projection, no new host route. |
+| 0.8 | Pet bytes and manifests | **The host's existing `/api/pets/{id}/sheet.png` and `/manifest.json`**, always fetched with the **owner's own** credential at the moment they volunteer the pet — at room join (§4.4.1) or at lounge entry (§4.4.2) — and held for the life of that room or presence. No node protocol, no global cache. |
 | 0.9 | Athletics | **Minted by DatsPet at build, unchanged** (§4.5). Both sides read through one shared tables package. |
 | 0.10 | The factory | **Stays a partner** — because it needs a GPU, not because of trust (§2.3). |
 | 0.11 | The arena's own storage | **None at all.** No database, no schema, no cache on disk (§4.6). Room-lifetime assets live in memory with the room, exactly as `SPEC_PET_ARENA_ROOMS` §4.3 already specifies. |
 | 0.12 | CSRF | **Ported, not inherited** (§4.8). Same-origin cookie auth *requires* it; a separate FastAPI process gets none of DatsMe's middleware. |
 | 0.13 | Who may play vs watch | **Play requires a DatsMe account AND a pet; watching requires nothing** (§5.2, §5.2.1 — owner, 2026-08-03). The asymmetry is the funnel, not a compromise. |
 
-### 0.12 The posture that must not change
+### 0.14 The posture that must not change
+
+*(Numbered 0.14, not 0.12: Rev.2 gave this section the same number as the CSRF row in the table
+above, and §8 and §11 both cite it by number.)*
 
 1. **Shard by room, not by user.** A race is the unit that shares memory. `--workers 1` stays
    load-bearing *per process* (`SPEC_PET_ARENA_ROOMS` §2.1); horizontal scale comes from disjoint
@@ -93,7 +131,9 @@ factory — including minting each pet's athletics — and stays a partner for a
 3. **Go through the host's own routes, never its private schema.** Ownership and assets are read via
    `GET /api/pets/me` and `/api/pets/{id}/sheet.png` (§4.3, §4.4); PostgreSQL is touched only for
    `relationships` (§4.2), which is already the shared layer by design. A separate service reading
-   another service's per-user tables is a shared database with extra steps.
+   another service's per-user tables is a shared database with extra steps. **This rule is why
+   §5.1's anchor is a host ask (§12.9) rather than a direct read of `pets.source_item_id` — the
+   shortcut exists, and taking it is how this becomes a shared database.**
 4. **The arena never calls the factory.** Its only factory-derived input is the `athletics` block,
    which travels inside the bundle (§4.5). If the arena ever imports from `pet_factory` beyond the
    shared tables package, this migration has failed.
@@ -116,11 +156,17 @@ makes DatsPet DatsPet is not involved.
 
 ### 1.2 Coupling to DatsPet: three symbols
 
-| Symbol | Used for | Becomes (§4) |
-|---|---|---|
-| `db.get_pet` | entrant + asset bytes | the host's `/api/pets/{id}/sheet.png`, held in the room (§4.4.1) |
-| `db.get_pet_for_owner` | scoped variant | `GET /api/pets/me` for the gate, then the same fetch (§4.3) |
-| `owner_scope.resolve_owner_scope` | who is calling | DatsMe session (`user_sessions`) |
+| Symbol | Call site | Used for | Becomes (§4) |
+|---|---|---|---|
+| `db.get_pet` | `arena_rooms.py:611` | asset bytes for the room-scoped route | the host's `/api/pets/{id}/sheet.png`, fetched at join by the owner, held in the room (§4.4.1) |
+| `db.get_pet` | `arena_lounges.py:322` | **another player's** manifest, read during the *acceptor's* request | fetched at **lounge entry** by that pet's own owner and held on the presence record (§4.4.2) |
+| `db.get_pet_for_owner` | `arena_rooms.py:248`, `arena_lounges.py:221` | scoped variant — the ownership gate | `GET /api/pets/me`, which resolves identity and ownership in one call (§4.3) |
+| `owner_scope.resolve_owner_scope` | `arena_rooms.py:247`, `arena_lounges.py:118` | who is calling | DatsMe session, by introspection (§4.1.1) |
+
+**The two `db.get_pet` rows are not the same problem, and Rev.2 collapsed them into one.** The room
+call site is served by §4.4.1's "fetched by its own owner, when they volunteer it." The lounge call
+site is not: it runs inside a *different* user's request, with no room in existence yet. §4.4.2
+exists because of that row.
 
 Plus `from pet_factory import athletics` — **packaging, not dependency**: that package imports only
 `hashlib, json, threading, pathlib, typing`. 17 JSON files and a stdlib loader that happen to sit
@@ -289,7 +335,11 @@ Rev.1 quantified what *moves* and never what gets *built*. Both, plainly:
 a repo · a box · a deploy pipeline · nginx changes on the host's **prod *and* staging** · a Next
 shell · an auth adapter and a DatsMe introspection endpoint (§4.1.1) · a CSRF middleware port (§4.8)
 · a dual-published athletics package with cross-engine CI (§2.4) · an ownership read path (§4.3) ·
-the room-scoped asset proxy (§4.4.1).
+the room-scoped asset proxy (§4.4.1) · **the lounge's entry-time manifest fetch (§4.4.2)** · **the
+empty-house funnel step (§5.2.2)**.
+
+**Three host-side items, and the list is closed** (§10): the introspection endpoint, the renewal
+answer (§12.7), and one serializer field (§12.9).
 
 **Three deploy targets across three repos** — DatsPet, the arena, and `datsme_me`, the last of which
 deploys by `reset --hard origin/master` and **is the login path for the entire platform**.
@@ -470,6 +520,17 @@ make about itself.
 **No new host route, no projection, no capability, no schema.** When multi-node is actually built,
 this call keeps working: it is the host's own route and the host owns the routing.
 
+**And it is one call, not two.** `list_my_pets` depends on `get_current_user_db`
+(`../datsme_me/api/apps/pets/pet_routes.py:183`), which resolves the session inside DatsMe's process
+before it answers. So on the join and lounge-entry paths the arena does **not** introspect and then
+list — the list *is* the introspection, and a 200 proves both "this cookie is a live session" and
+"these are that user's pets." §4.1.1's introspection endpoint is for the paths that need identity
+without ownership: stream attach, impulse POSTs, lounge presence.
+
+**What it does not carry: `source_item_id`.** `pet_service.pet_dict()` returns ten fields
+(`../datsme_me/api/apps/pets/pet_service.py:326-338`) and that is not one of them. §5.1 needs it,
+which is why §12.9 is a host ask.
+
 ### 4.4 Pet bytes — the host's existing asset route
 
 **Rev.1's node→node fetch is deleted for the same reason as §4.3**: it targeted infrastructure that
@@ -508,8 +569,44 @@ This is `SPEC_PET_ARENA_ROOMS` §4.3 unchanged in intent — *"membership in a l
 capability"* — with the byte source repointed from a local blob to the host's route.
 
 **Memory, not disk:** ≤5 sheets per room at a measured 2.3 MB average (max 6.4 MB) is ~11 MB per
-room, ~220 MB at §3.2's measured ceiling of ~20 concurrent races. That is room state on a dedicated
-box, and it evaporates on reap exactly as every other part of a room does.
+room. That is room state on a dedicated box, and it evaporates on reap exactly as every other part
+of a room does.
+
+**~220 MB is a FLOOR, not a ceiling — Rev.2 had this backwards.** §3.2's ~20 is the CPU ceiling for
+concurrently *racing* rooms; a room also holds its sheets while it sits in the lobby and through
+`ROOM_RESULT_TTL_S` after finishing, and `ROOM_IDLE_TTL_S` is 15 minutes. **Live rooms outnumber
+racing rooms**, so size the box against live-room count and add lounge presences (§4.4.2). The
+tripwire is memory pressure, not the racing ceiling, and they are different numbers — measure the
+live-room high-water mark on staging before sizing prod.
+
+#### 4.4.2 The lounge — the same rule, one seam earlier
+
+**A lounge is not a room, and §4.4.1 does not reach it.** `webui/arena_lounges.py:322`
+(`_seat_from_presence`) reads *another player's* manifest to resolve their stats when a challenge is
+accepted — inside the **acceptor's** request. That pet's owner is not the caller, their cookie is not
+present, and no room exists yet to hold anything. The one invariant §4.4.1 rests on is unavailable
+exactly there.
+
+**The fix is the same rule applied at lounge entry, and the code already has the hook.** A player
+enters a lounge with their own pet and their own cookie (`arena_lounges.py:211`, gated at `:221`):
+
+1. At **entry**, the arena fetches that pet's `manifest.json` from the host **with the entrant's own
+   credential** — the same act, the same moment, the same justification as §4.4.1's join fetch.
+2. The manifest (and its `resolve_athletics` result) is held on the **presence record**, not
+   globally.
+3. `_seat_from_presence` then reads what presence already holds. It performs no fetch, needs no
+   credential, and stops being a cross-user read.
+4. It dies when the presence lapses, exactly as `SPEC_PET_ARENA_LOUNGE` already specifies.
+
+**Sheets are not fetched at lounge entry today, and that is not luck.** `_snapshot`
+(`arena_lounges.py:166-188`) publishes `presence_id`, `pet_id` and `pet_label` only — pet thumbnails
+are explicitly deferred (`web/src/arena/lounge/LoungeView.tsx:15`). Manifests are the whole
+requirement now.
+
+**Forward note, so the next person does not invent a second mechanism:** `SPEC_PET_ARENA_VENUE`
+plans presence with pets *visible*. When that ships, the lounge needs a lounge-scoped asset grant of
+exactly §4.4.1's shape — fetched at entry by the owner, served from presence, dying with it, **sheet
+and manifest only, never `bundle_zip`**. Add it here; do not build a third path.
 
 ### 4.5 Athletics
 
@@ -635,13 +732,24 @@ from the DatsPet id.
 Two facts collide:
 
 - The host carries DatsPet's id as `source_item_id` — but **gifting deliberately strips it**
-  (`pet_gift_service.py:428`).
-- The host's own `Pet.id` **is** carried through a gift (`id=carried["id"]`, PG-3).
+  (`pet_gift_service.py:431`, `source_item_id=None`). *(Rev.2 cited `:428`; corrected.)*
+- The host's own `Pet.id` **is** carried through a gift (`pet_gift_service.py:419`,
+  `id=carried["id"]  # PG-3: id carried`).
 
-**RESOLVED 2026-08-03. The anchor is: the stamped block's `identity_nudges` when present; else
-`source_item_id`; else the host `Pet.id`.**
+**RESOLVED 2026-08-03, and CORRECTED in Rev.3. The anchor is: the stamped block's
+`identity_nudges` when present; else `source_item_id`; else the host `Pet.id` — and rung 2 requires
+one field the host does not currently expose (§12.9).**
 
-The reasoning, from the verified facts rather than preference:
+> **Rev.3 correction — the ladder was right and unreadable.** Rev.2 recorded this as resolved without
+> checking that the arena can *read* rung 2. It cannot. `pet_service.pet_dict()`
+> (`../datsme_me/api/apps/pets/pet_service.py:326-338`) returns `id, name, breed_id, slot_index,
+> is_active, personality_profile, visibility, source, adopted_at, updated_at` — **no
+> `source_item_id`** — and a sweep of `../datsme_me/api/**.py` finds the column only on the model
+> (`pet_models.py:115`), its uniqueness index (`:137`), and DPP writeback/import internals. **No host
+> response carries it.** §4.3 routes ownership through `/api/pets/me` specifically so the arena never
+> reads per-user tables (§0.14.3), so the shortcut is closed by design, not by accident.
+
+The reasoning for the ladder itself, from the verified facts rather than preference:
 
 1. **For a stamped pet the question does not arise.** `resolve_athletics` reuses the block's stored
    `identity_nudges` even when re-deriving a stale block — identity survives a rebalance *and* a
@@ -653,15 +761,43 @@ The reasoning, from the verified facts rather than preference:
 3. **Host `Pet.id` is the fallback because it survives gifting** (`pet_gift_service.py:419`) where
    `source_item_id` does not (`:431`).
 
-**The honest limit, which no anchor choice can remove:** an **unstamped** pet that is **gifted**
-loses its original nudges irrecoverably — the gift destroys `source_item_id`, and there is no stored
-block to fall back on. The information is gone, not mis-addressed.
-
 **That set is bounded and closing, which is the actual mitigation.** Every pet built since
 2026-08-02 11:24 carries its nudges in the manifest (§2.3, verified against real packer output).
-Only pets built *before* that are exposed, and only if gifted before being re-stamped. **A one-time
-census on staging and prod sizes it** — the dev box has 46 such pets; the other environments should
-be counted rather than assumed (CLAUDE.md: verify per-environment state).
+Only pets built *before* that are exposed, and only if gifted before being re-stamped.
+
+#### 5.1.1 Rung 2 is a closing-window rung, and that is what makes the host ask small
+
+`source_item_id` is not a permanent part of the anchor. It exists for exactly one bounded,
+**shrinking** population: pets built before the stamp landed, which derive their nudges live from
+the DatsPet id today. Every pet built after it carries its own nudges and never consults rung 2.
+Rung 2 goes quiet on its own.
+
+That framing is what the host is being asked to approve (§12.9): **one read-only field on a
+serializer, to carry a migration window, harmless thereafter.** Not a route, not a schema change,
+not a capability.
+
+#### 5.1.2 Run the census BEFORE ratifying, not after
+
+Rev.2 listed the census as the mitigation and scheduled it after the decision it should inform.
+**Reverse that.** The census is what tells you which of these you are actually choosing between:
+
+- **Few unstamped pets on staging and prod** → drop rung 2 entirely, anchor stamped → host `Pet.id`,
+  withdraw §12.9, and accept a handful of restatted pets. **No host change at all.**
+- **Many** → §12.9 is worth asking for, because the alternative is silently restatting every one of
+  them on migration day.
+
+The dev box has **46** unstamped pets. Staging and prod must be **counted, not extrapolated**
+(CLAUDE.md: verify per-environment state — and this is precisely the case that rule exists for,
+since dev is the box where pets get built for testing and is the least representative of the three).
+
+**The census is a one-query job with no dependencies, and it ships in A1** (§6) — not A3, where
+Rev.2 implicitly left it by tying it to the anchor decision. It is the input that decides whether
+the host is asked for anything at all, so it must land before the host is asked, not after.
+
+**The honest limit that survives either branch:** an **unstamped** pet that is **gifted** loses its
+original nudges irrecoverably — the gift destroys `source_item_id` (`pet_gift_service.py:431`) and
+there is no stored block to fall back on. The information is gone, not mis-addressed. No anchor
+choice recovers it.
 
 ### 5.2 Anonymous code-room players — RESOLVED: there are none
 
@@ -767,9 +903,9 @@ Each phase is independently verifiable. **A0 is a gate: if it fails, nothing aft
 | Phase | Ships | Why here |
 |---|---|---|
 | **A0** | nginx `/arena` + `/api/arena` blocks on DatsMe **staging**, `proxy_buffering off`, pointed at a stub. **Two assertions: (1)** an SSE stream is still open after **90 s**; **(2)** an authenticated request through `/api/arena` **resolves the right user** — i.e. the session cookie actually arrives at the arena box. | §5 cost this project a day once, and R0 is first because proxy behaviour cannot be observed locally. **The cookie half is equally unobservable locally and is the other half of §3.1.1's entire argument** — if the cookie does not arrive, path routing bought nothing and the design is wrong, not late. |
-| **A1** | Arena service skeleton on its own box: FastAPI, `--workers 1`, **identity via introspection** (§4.1.1), **the CSRF double-submit port** (§4.8), health endpoint. **No game.** | Proves identity end to end with nothing else in the way. CSRF is here and not later because a control discovered at A5 is a control that shipped absent. |
+| **A1** | Arena service skeleton on its own box: FastAPI, `--workers 1`, **identity via introspection** (§4.1.1), **the CSRF double-submit port** (§4.8), health endpoint. **No game.** Plus **the §5.1.2 census on staging and prod** — one query, no dependencies. | Proves identity end to end with nothing else in the way. CSRF is here and not later because a control discovered at A5 is a control that shipped absent. The census is here because it decides whether §12.9 is asked for at all, and A3 is too late to find out. |
 | **A2** | Ownership via `GET /api/pets/me` and assets via the host's `/api/pets/{id}/sheet.png`, behind the room-scoped proxy (§4.3, §4.4.1), exercised by a throwaway route | **Rev.1 called this "the only genuinely new plumbing" when it was the largest item in the plan and lived in another repo.** Against existing host routes it is now the smallest phase — which is the whole point of B1's correction. |
-| **A3** | Move `arena_rooms.py` + `arena_lounges.py`; repoint the three symbols (§1.2); **dual-published** athletics package with the `race_vectors.json` cross-engine test green in both repos (§2.4) | The code moves nearly unchanged; the package does not. The fixture is the gate — a table skew is caught by `TABLE_VERSION`, an engine skew only by that file. |
+| **A3** | Move `arena_rooms.py` + `arena_lounges.py`; repoint the **four** call sites (§1.2), **including the lounge's entry-time manifest fetch** (§4.4.2); **dual-published** athletics package with the `race_vectors.json` cross-engine test green in both repos (§2.4). **Precondition: §12.9 answered** (or withdrawn per §5.1.2). | The code moves nearly unchanged; the package does not. The fixture is the gate — a table skew is caught by `TABLE_VERSION`, an engine skew only by that file. The lounge is called out because §1.2's Rev.2 table hid it inside a room row and it is a genuinely different fix. |
 | **A4** | The arena frontend as its own Next app under `basePath: "/arena"`, including the five external imports of §2.1 | §2.1's dispositions are per-import; `ModalOverlay` is a rebuild, not a move |
 | **A5** | **Delete** the six lines and two pages from DatsPet (§2.2). Retire `connections.read` (§9). | The cleanup is part of the change |
 | **A6** | Room-affinity sharding — **only when one process is not enough** | Measured ceiling is ~20 concurrent races; do not pre-build it |
@@ -814,7 +950,15 @@ layer is how two arenas end up live at once.
   DatsMe, gift it to a second user, sign in as that user, and race it. Unit gates on either side do
   not prove a cross-system loop — that lesson is standing policy here.
 - **A guard test that the arena imports nothing from `pet_factory` but the shared tables package**
-  (§0.12.4).
+  (§0.14.4).
+- **A test that no host fetch ever uses a credential other than the pet owner's** (§4.4.1, §4.4.2).
+  Assert that seating a lounge challenge performs **zero** outbound host calls — every manifest it
+  needs was fetched at entry by its own owner. This is the test that keeps the arena from quietly
+  growing an impersonation path the first time someone finds a pet whose stats it cannot resolve.
+- **A test that the nudge anchor resolves the same value before and after the move** (§5.1). Take a
+  real unstamped pet, resolve its nudges through DatsPet's current path and through the arena's
+  ladder, and assert equality. This is the one defect in the migration that is invisible at runtime:
+  nothing errors, the pet is simply a different animal.
 - **The `race_vectors.json` cross-engine test green in BOTH repos** (§2.4). `TABLE_VERSION` catches a
   table skew; only this fixture catches the TS engine and the Python referee drifting apart, and it
   fails silently when absent.
@@ -853,8 +997,10 @@ layer is how two arenas end up live at once.
 - **No disk state on the arena box** (§4.6) — Rev.1's content-addressed sheet cache is deleted, not
   deferred; the host's route already answers repeat views with a 304 from a digest column.
 - **No signing key on the arena box** (§4.1.1). Identity is introspected, never decoded locally.
-- **No new host routes.** §4.3 and §4.4 use what `pet_routes.py` already ships; the only host-side
-  addition contemplated anywhere is the introspection endpoint (§4.1.1) and §12.7's renewal answer.
+- **No new host routes.** §4.3 and §4.4 use what `pet_routes.py` already ships. The complete list of
+  host-side additions contemplated anywhere in this spec is **three**, and it is closed: the
+  introspection endpoint (§4.1.1 / §12.6), §12.7's renewal answer, and **one read-only field on an
+  existing serializer** (§12.9). Anything a fourth item would buy, re-read §0.14.3 first.
 - **No implementation of multi-node as a prerequisite.** Rev.1 required it without saying so; §4.3
   and §4.4 now work on the single node that exists, and keep working when multi-node arrives.
 
@@ -866,8 +1012,14 @@ layer is how two arenas end up live at once.
   regression across every partner box.
 - **Anyone proposes routing the arena by user or `home_node`** → §3.4. Races fragment silently and
   the failure looks like a networking bug.
-- **The arena reads a per-user table directly instead of a host route** → §0.12.3. That is a shared
-  database, and schema changes become cross-service outages.
+- **The arena reads a per-user table directly instead of a host route** → §0.14.3. That is a shared
+  database, and schema changes become cross-service outages. **`pets.source_item_id` is the live
+  temptation** (§5.1): it is one SELECT away and the host does not expose it. Ask for the field
+  (§12.9); do not reach into the table.
+- **The arena fetches a pet with anyone's credential but its owner's** → §4.4.1, §4.4.2. The moment
+  the arena can fetch a pet on behalf of a user who did not volunteer it, it has an impersonation
+  path and `_enforce_visibility` is no longer the host's to enforce. The symptom that leads here is
+  benign: "seating this challenge needs stats I don't have."
 - **An arena feature needs a DPP capability** → something did not actually move; re-read §1.5.
 - **Someone consolidates the two pet runtimes** → §2.5, and the two deploys re-couple.
 - **Anything is proposed for storage on the arena box** → §4.7.1. Apply the deletion test: if
@@ -901,11 +1053,12 @@ zero occurrences of any of the four across both repos' scripts, configs, service
 account is required to play, exactly as it is to design and buy. No guest identity path is built.
 Owning a pet is the entry condition (§5.2.2).
 
-**12.3 The nudge anchor — RESOLVED 2026-08-03 (§5.1).** Stamped `identity_nudges` → `source_item_id`
-→ host `Pet.id`, in that order. Preserves existing pets' stats on migration day and survives gifting
-thereafter. **Owner ratification wanted on one point only:** an unstamped pet that is gifted before
-being re-stamped loses its original character irrecoverably, and that is accepted rather than
-engineered around.
+**12.3 The nudge anchor — RESOLVED 2026-08-03, with one dependency added in Rev.3 (§5.1).** Stamped
+`identity_nudges` → `source_item_id` → host `Pet.id`, in that order. Preserves existing pets' stats
+on migration day and survives gifting thereafter. **Rung 2 requires §12.9**, and §5.1.2's census
+decides whether it is needed at all. **Owner ratification wanted on one point only:** an unstamped
+pet that is gifted before being re-stamped loses its original character irrecoverably, and that is
+accepted rather than engineered around.
 
 **12.4 The factory's house page keeps `pets.read_owned` — ANSWERED 2026-08-03.** Owner: *"for data
 integrity and consistency, i think it would be good to have the factory house page [read] owned."*
@@ -923,6 +1076,8 @@ deploy flow.
 > **12.6 and 12.7 are packaged for the host** as
 > [`REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ`](../../datsme_me/docs/REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ.md),
 > alongside `pets.read_owned` (12.4) which is decidable independently of the placement question.
+> **12.9 is a fourth item for that document, pending §5.1.2's census** — it is not in it yet, and
+> that document currently says the opposite (that `/api/pets/me` is used as shipped).
 
 **12.6 Identity: introspection, or change the host's token format?** §4.1.1 recommends
 **introspection** — the arena forwards a cookie, DatsMe resolves it, no signing key leaves the host.
@@ -939,3 +1094,27 @@ call? **This one needs the host's answer, not DatsPet's.**
 **12.8 Anonymous spectators — ANSWERED 2026-08-03 (§5.2.1).** Anyone may watch; the public link is
 a deliberate acquisition path. `SPEC_PET_ARENA_ROOMS` §6's rules carry over **verbatim** and now
 protect a `datsme.me` URL.
+
+**12.9 Expose `source_item_id` on `GET /api/pets/me`? — OPEN, host ask, blocks A3.** *(New in
+Rev.3.)*
+
+`pet_service.pet_dict()` (`../datsme_me/api/apps/pets/pet_service.py:326-338`) returns ten fields;
+`source_item_id` is not among them, and no other host response carries it. **§5.1's nudge anchor
+needs it**, and §0.14.3 forbids the alternative of reading `pets.source_item_id` directly.
+
+**What is being asked for: one read-only field added to an existing serializer.** No route, no
+schema change, no capability, no consent surface. The value is the DatsPet pet id the host already
+stores and already treats as authoritative provenance (`../datsme_me/api/apps/dpp/service.py:1983`).
+
+**Why it is worth a host change:** without it, every pet built before the athletics stamp landed
+(2026-08-02 11:24) is **silently restatted on migration day** — same design, different animal, no
+error anywhere. With it, they keep the character they have.
+
+**Why it may be withdrawable:** §5.1.2's census. If staging and prod hold few unstamped pets, drop
+rung 2, anchor stamped → host `Pet.id`, and ask the host for nothing. **Run the census before
+raising this with the host** — it converts a request into either a small justified ask or a
+non-issue, and the host should not be asked to decide something DatsPet has not measured.
+
+**This is a fourth item for `REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ`**, whose current "What we are
+not asking for" section states that `/api/pets/me` is used exactly as shipped. That sentence needs
+amending if the census says the field is wanted.
