@@ -482,12 +482,41 @@ location /           { proxy_pass http://172.18.0.1:19995; }    # DatsMe fronten
 nginx matches the longest prefix, so `/api/arena` must be declared alongside `/api`; both existing
 blocks are untouched.
 
-#### 3.1.1 Why not `arena.datsme.me`
+#### 3.1.1 Why not `petgame.datsme.me` (or any subdomain)
+
+**Server ≠ origin, and only one of them is negotiable.** A sidecar has full runtime independence —
+its own process, port, systemd unit, deploy cadence, and later its own machine (§3.2.4); all of that
+is an nginx upstream line. What it does **not** get is its own browser-facing **origin**, because
+that is where the session cookie lives. nginx decouples the two: one origin fronts many services.
+
+**The vanity URL is still available, as a redirect.** `petgame.datsme.me` → 301 → `datsme.me/arena`
+costs one nginx-proxy vhost and zero auth changes, and since the spectator link (§5.2.1) is the thing
+people actually share, that is where a memorable domain has the most value anyway.
+
+##### The cookie, and why widening it is not an option
 
 The session cookie is set with `{"samesite": "lax", "secure": not is_dev_env()}` and **no `domain`
 attribute** (`../datsme_me/api/auth.py:76`). It is therefore host-scoped: a subdomain would never
-receive it. The "fix" is to widen it to `.datsme.me` — which would ship DatsMe's bearer JWT to
-`pet.datsme.me`, `pet-staging.datsme.me` and `pool.datsme.me`.
+receive it. The "fix" is to widen it to `domain=.datsme.me` — and the subdomain list is what makes that
+unacceptable rather than merely untidy:
+
+| Subdomain | What it is |
+|---|---|
+| `pet.datsme.me`, `pet-staging.datsme.me` | DatsPet — a **partner** |
+| `personality.datsme.me` | another partner |
+| `pool.datsme.me`, `cdn.datsme.me`, `lk.datsme.me` | infrastructure |
+| **`alice.datsme.me`, `mara.datsme.me`** | **users' own personal websites** |
+
+That last row decides it. DatsMe is *"a network of personal websites"* and its own docs describe
+users getting *"their own subdomain (e.g. `alice.datsme.me`)"*. A domain-wide auth cookie would send
+**every user's session token to every other user's website** — any user hosting content on their
+subdomain could harvest visitors' credentials. That is not a regression to weigh against
+convenience; it is a total auth compromise, and it is a documented product direction rather than a
+hypothetical.
+
+The only other way back is a token handoff — mint a token, redirect with it, let the arena set its
+own cookie on its own origin — which is exactly the DPP launch flow this migration exists to
+delete.
 
 **Path routing buys a separate box with zero auth change:** same origin, cookie flows, no CORS.
 (It does **not** give CSRF for free — same-origin cookie auth is what *requires* CSRF protection,
@@ -1273,7 +1302,7 @@ layer is how two arenas end up live at once.
 - **No dual mount.** The arena does not run in both places, even briefly (§6, A5).
 - **No shared pet runtime package** (§2.5). The duplication is the boundary.
 - **No arena inside DatsMe's web tier** — different resource profile, different shard key (§3.2, §3.4).
-- **No subdomain** (§3.1.1).
+- **No subdomain as the app's origin** (§3.1.1) — a vanity redirect is fine and encouraged.
 - **No cookie-domain widening**, under any circumstances.
 - **No move of the athletics mint** (§2.3).
 - **No guest identity for contestants** (§5.2). Playing is account-gated like designing and buying;
@@ -1292,8 +1321,10 @@ layer is how two arenas end up live at once.
 
 ## §11 Tripwires
 
-- **Anyone proposes `arena.datsme.me`** → §3.1.1. The cookie fix that follows is a security
-  regression across every partner box.
+- **Anyone proposes a subdomain** (`arena.datsme.me`, `petgame.datsme.me`, …) → §3.1.1. The cookie
+  fix that follows sends every user's bearer JWT to every user's personal website. **A vanity
+  redirect to `datsme.me/arena` gives the nice URL at zero cost** — offer that instead, because the
+  request behind it is usually branding, not architecture.
 - **Anyone proposes routing the arena by user or `home_node`** → §3.4. Races fragment silently and
   the failure looks like a networking bug.
 - **The arena reads a per-user table directly instead of a host route** → §0.14.3. That is a shared
