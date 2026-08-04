@@ -1,26 +1,67 @@
 # SPEC_ARENA_MIGRATION — the game moves to DatsMe, the factory keeps the pets
 
-**Status: Rev.4 (2026-08-03) — IMPLEMENTATION-READY. A0 is fully specified (§6.1) and blocked only
-on host ACCESS, not on any decision.** §12 lists the calls that
+**Status: Rev.5 (2026-08-03) — IMPLEMENTATION-READY, NO EXTERNAL DEPENDENCIES. Both repos are
+owned and operated by the same person; §12's items are decisions and work, not requests to anyone.**
+§12 lists the calls that
 are the owner's; §5 lists the seams that must be decided **before** any code moves. A0 is a
 one-day infrastructure probe that needs no game code, depends on no open question, and blocks
 everything after it.
 
 **Readiness, per phase, because "is it ready" has no single answer:**
 
-| Phase | State |
-|---|---|
-| **Census** (§5.1.2) | **Runnable today, by DatsPet alone.** One query per environment; §6.1.2 has it. It decides whether §12.9 is asked for at all, so it comes first. |
-| **A0** | **Fully specified (§6.1); needs host ACCESS, not a decision.** The nginx blocks land on *DatsMe's* staging box — that is someone else's infrastructure, and no amount of resolved questions changes it. |
-| **A1** | Blocked on **12.6 / 12.7** — the host's two auth answers (`REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ`). |
-| **A2** | Ready once A1 lands. §4.3/§4.4 stand on host routes that were verified to exist. |
-| **A3** | Blocked on **12.9** — *unless the census withdraws it* (§5.1.2). |
-| **A4–A6** | Ready, contingent on the above. |
+| Phase | State | Needs |
+|---|---|---|
+| **Census** (§5.1.2) | **Runnable now.** One query per environment (§6.1.2). | nothing |
+| **A0** | **Runnable now.** Fully specified in §6.1. | a port for a ~20-line stub, and a manual nginx edit on DatsMe staging (§6.1.1) |
+| **A1** | **Runnable now**, once 12.6 is decided — a decision, not a request. | the introspection endpoint in `datsme_me`, the CSRF port |
+| **A2** | After A1. §4.3/§4.4 stand on host routes verified to exist. | nothing new |
+| **A3** | After the census resolves 12.9 either way. | possibly one serializer field in `datsme_me` |
+| **A4–A6** | After the above. | nothing new |
 
-**Nothing in this plan starts without the host.** Rev.3's table said A0 was "ready now" because it
-depends on no open *question*; that was true and misleading. A0 edits nginx on DatsMe's staging box.
-**The census (§5.1.2) is the only work item DatsPet can execute unilaterally**, which is another
-reason it goes first.
+**There is no external dependency anywhere in this plan.** Rev.3 said A0 was "ready now"; Rev.4
+"corrected" that to "blocked on host access" and was **wrong** — `datsme_me` is the same owner's
+repo, sitting beside this one, with a documented deploy path (`datsme_me/CLAUDE.md` §Staging Deploy
+Sequence, `ssh root@5.161.70.13`). What §12.6/12.7/12.9 actually are: **decisions to make and code to
+write in the other repo.** Nobody is being asked for anything.
+
+**What is still true, and is the only real constraint:** A0 lands on *different infrastructure* —
+another repo, another box, another deploy pipeline — and **nginx is not part of DatsMe's deploy
+sequence at all.** All eleven steps are git/npm/systemctl; nginx is never mentioned, so the
+`deploy/nginx.staging.conf` in that repo is a reference copy and the live config is changed by hand
+on the box. That is the same trap already recorded for DatsPet (`nginx-default.conf` is
+*production's*) in a second repo. §6.1.1.
+
+> ### Rev.5 — there was never a second party
+>
+> Rev.1–Rev.4 were written as though DatsMe belonged to someone else. §12 called its items "host
+> asks"; Rev.4 invented an access blocker on top of that; a review request was addressed to
+> *"whoever owns DatsMe's auth."* **All of it was wrong — both repos have the same owner and sit
+> side by side** (`datsme-pet-factory_wu` and `datsme_me`).
+>
+> What changes:
+>
+> - **Nothing is blocked externally.** 12.6, 12.7 and 12.9 are decisions to make and code to write
+>   in `datsme_me`, not requests awaiting a reply. The readiness table is now an ordering, not a
+>   dependency graph.
+> - **The critical path is pure engineering sequence:** census → 12.6 → A0 → A1 → A2 → A3 → …
+>
+> What does NOT change, and would be the wrong lesson to draw:
+>
+> - **The DPP protocol discipline stands, and is not ceremony.** Capabilities, consent screens and
+>   AM-N amendments exist for the **user** — a person consenting to DatsPet reading their pet list
+>   is a product mechanism, not an inter-team formality. `pets.read_owned` is still built as a real
+>   capability with a real consent screen. What disappears is the approval theatre, not the protocol.
+> - **§2.3's "the factory stays a partner" survives untouched.** It was argued from **hardware** —
+>   GPU, deploy shape, `SPEC_DATSME_MULTI_NODE` §8's fleet role — and never from trust. Common
+>   ownership does not move a GPU.
+> - **§0.14.3 still forbids reading `datsme_me`'s per-user tables.** That rule is about *coupling*,
+>   not permission: a service reading another service's private schema turns a schema change into a
+>   cross-service outage no matter who owns both. Owning both makes the shortcut *easier*, which
+>   makes the rule more load-bearing, not less.
+>
+> The one thing Rev.4 got right and keeps: A0 lands on another repo, another box, and a deploy
+> pipeline that **never touches nginx** — so that config is changed by hand. Same class of trap as
+> DatsPet's production-config-on-staging incident, in a second repo.
 
 > ### Rev.4 — the reviewer's findings verified, and three gaps they left
 >
@@ -34,20 +75,19 @@ reason it goes first.
 > Rev.4 closes what Rev.3 left open:
 >
 > 1. **The census was circular.** Rev.3 moved it from A3 to A1 — but A1 is blocked on the host
->    answering 12.6/12.7, and the census exists to decide whether the host is asked about 12.9 at
->    all. A measurement that gates a question cannot sit behind the phase awaiting that question's
->    answer. **It now runs before A0**, where it belongs: zero dependencies, and the only item
->    DatsPet can execute without the host.
-> 2. **"A0 MAY START NOW" was true about decisions and false about access.** A0 edits nginx on
->    *DatsMe's* staging box. **Nothing in this plan starts without the host** except the census.
+>    12.6/12.7 being decided, and the census exists to decide whether 12.9 is needed at all. A measurement that gates a question cannot sit behind the phase awaiting that question's
+>    answer. **It now runs before A0**, where it belongs: zero dependencies of any kind.
+> 2. ~~**"A0 MAY START NOW" was true about decisions and false about access.**~~ **WRONG — see
+>    Rev.5.** There is no access boundary; `datsme_me` is the same owner's repo. What survives from
+>    this item is only that A0 lands on *different infrastructure* with a deploy pipeline that never
+>    touches nginx (§6.1.1).
 > 3. **A0 and the census were prose, not artifacts.** New **§6.1** gives the nginx blocks, both
 >    assertions as runnable commands, and the census SQL — verified against the dev database, which
 >    immediately corrected the figure: 46 unstamped, but **26** unstamped *and owned*, and only the
 >    latter can be restatted.
 >
-> Still unfixed by anyone, and now tracked: `REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ` in the host
-> repo still tells the host `/api/pets/me` is used exactly as shipped, which §12.9 may contradict.
-> Rev.3 spotted it; §12.9 now carries the amendment as a numbered step.
+> *(The cross-repo inconsistency this note flagged was resolved in Rev.5, which reframed the
+> `datsme_me` documents from review requests into a work list — see §12.)*
 
 > ### Rev.3 — two decisions that the data path could not execute
 >
@@ -61,7 +101,7 @@ reason it goes first.
 > returns ten fields and that is not one of them, and a sweep of `../datsme_me/api/**.py` finds the
 > column only on the model, its index, and DPP writeback internals. §4.3 made `/api/pets/me` the
 > ownership path precisely so the arena would not read per-user tables (§0.14.3), so the rung is
-> unreachable by construction. **§5.1 is rewritten and the field becomes host ask #4 (§12.9).**
+> unreachable by construction. **§5.1 is rewritten and the field becomes work item #4 on the `datsme_me` side (§12.9).**
 >
 > **§4.4.1 covers rooms; the lounge is not a room.** `webui/arena_lounges.py:322` reads *another
 > player's* manifest during the **acceptor's** request — the owner's cookie is not present and no
@@ -166,7 +206,8 @@ above, and §8 and §11 both cite it by number.)*
    `GET /api/pets/me` and `/api/pets/{id}/sheet.png` (§4.3, §4.4); PostgreSQL is touched only for
    `relationships` (§4.2), which is already the shared layer by design. A separate service reading
    another service's per-user tables is a shared database with extra steps. **This rule is why
-   §5.1's anchor is a host ask (§12.9) rather than a direct read of `pets.source_item_id` — the
+   §5.1's anchor is a `datsme_me` serializer change (§12.9) rather than a direct read of
+   `pets.source_item_id` — the
    shortcut exists, and taking it is how this becomes a shared database.**
 4. **The arena never calls the factory.** Its only factory-derived input is the `athletics` block,
    which travels inside the bundle (§4.5). If the arena ever imports from `pet_factory` beyond the
@@ -563,7 +604,7 @@ without ownership: stream attach, impulse POSTs, lounge presence.
 
 **What it does not carry: `source_item_id`.** `pet_service.pet_dict()` returns ten fields
 (`../datsme_me/api/apps/pets/pet_service.py:326-338`) and that is not one of them. §5.1 needs it,
-which is why §12.9 is a host ask.
+which is why §12.9 is a `datsme_me` change.
 
 ### 4.4 Pet bytes — the host's existing asset route
 
@@ -799,16 +840,17 @@ The reasoning for the ladder itself, from the verified facts rather than prefere
 2026-08-02 11:24 carries its nudges in the manifest (§2.3, verified against real packer output).
 Only pets built *before* that are exposed, and only if gifted before being re-stamped.
 
-#### 5.1.1 Rung 2 is a closing-window rung, and that is what makes the host ask small
+#### 5.1.1 Rung 2 is a closing-window rung, and that is what makes the change small
 
 `source_item_id` is not a permanent part of the anchor. It exists for exactly one bounded,
 **shrinking** population: pets built before the stamp landed, which derive their nudges live from
 the DatsPet id today. Every pet built after it carries its own nudges and never consults rung 2.
 Rung 2 goes quiet on its own.
 
-That framing is what the host is being asked to approve (§12.9): **one read-only field on a
-serializer, to carry a migration window, harmless thereafter.** Not a route, not a schema change,
-not a capability.
+That framing is what §12.9 amounts to: **one read-only field on a serializer, to carry a migration
+window, harmless thereafter.** Not a route, not a schema change, not a capability. It is worth
+stating that plainly even with one owner, because a field added "just for the migration" is exactly
+the kind of thing that outlives its reason unnoticed.
 
 #### 5.1.2 Run the census BEFORE ratifying, not after
 
@@ -827,11 +869,10 @@ since dev is the box where pets get built for testing and is the least represent
 **The census is a one-query job with no dependencies, and it runs BEFORE A0** (§6.1.2).
 
 *Rev.3 moved it from A3 to A1 and did not go far enough — that is circular.* A1 is blocked on the
-host's answers to 12.6/12.7, and the census exists to decide whether the host is asked about 12.9 at
-all. A measurement that gates a question cannot sit behind the phase that waits for that question's
-answer. It has **zero** dependencies — no service, no box, no decision, just a query against each
-environment's database — so it belongs ahead of everything, and it is the one thing DatsPet can do
-without the host.
+12.6/12.7 being decided, and the census exists to decide whether 12.9 is needed at all. A
+measurement that gates a decision cannot sit behind the phase that waits for that decision. It has
+**zero** dependencies — no service, no box, no decision, just a query against each environment's
+database — so it belongs ahead of everything.
 
 **The honest limit that survives either branch:** an **unstamped** pet that is **gifted** loses its
 original nudges irrecoverably — the gift destroys `source_item_id` (`pet_gift_service.py:431`) and
@@ -941,7 +982,7 @@ Each phase is independently verifiable. **A0 is a gate: if it fails, nothing aft
 
 | Phase | Ships | Why here |
 |---|---|---|
-| **Census** | **§5.1.2's unstamped-pet count on staging and prod** (§6.1.2). One query per environment. | Decides whether §12.9 is a host ask or a non-issue, so it precedes the request. **The only item here DatsPet can run without the host.** |
+| **Census** | **§5.1.2's unstamped-pet count on staging and prod** (§6.1.2). One query per environment. | Decides whether §12.9 is needed at all, so it precedes the decision. **Zero dependencies — one query per environment.** |
 | **A0** | nginx `/arena` + `/api/arena` blocks on DatsMe **staging**, `proxy_buffering off`, pointed at a stub. **Two assertions: (1)** an SSE stream is still open after **90 s**; **(2)** an authenticated request through `/api/arena` **resolves the right user** — i.e. the session cookie actually arrives at the arena box. | §5 cost this project a day once, and R0 is first because proxy behaviour cannot be observed locally. **The cookie half is equally unobservable locally and is the other half of §3.1.1's entire argument** — if the cookie does not arrive, path routing bought nothing and the design is wrong, not late. |
 | **A1** | Arena service skeleton on its own box: FastAPI, `--workers 1`, **identity via introspection** (§4.1.1), **the CSRF double-submit port** (§4.8), health endpoint. **No game.** | Proves identity end to end with nothing else in the way. CSRF is here and not later because a control discovered at A5 is a control that shipped absent. |
 | **A2** | Ownership via `GET /api/pets/me` and assets via the host's `/api/pets/{id}/sheet.png`, behind the room-scoped proxy (§4.3, §4.4.1), exercised by a throwaway route | **Rev.1 called this "the only genuinely new plumbing" when it was the largest item in the plan and lived in another repo.** Against existing host routes it is now the smallest phase — which is the whole point of B1's correction. |
@@ -1017,7 +1058,7 @@ The stub behind `_probe` is ~20 lines: one `StreamingResponse` emitting a heartb
 `SSE_HEARTBEAT_S`, and one route echoing the resolved user. **No game code, no database.**
 
 **The census (§5.1.2), one query per environment** — this is the unstamped-pet count that decides
-whether §12.9 is asked for at all:
+whether §12.9 is needed at all:
 
 ```sql
 -- Run against staging's and prod's datspet.db. NOT dev: dev is where pets get
@@ -1037,8 +1078,8 @@ never appear in `/api/pets/me` and can never be restatted by this migration.
 
 **Dev reads 46 non-draft, 46 unstamped, but only 26 unstamped-and-owned** — the other 20 are
 anonymous and irrelevant here. Query verified against the dev database 2026-08-03. If staging and
-prod read near zero on the third column, §12.9 is withdrawn and the host is asked for two things
-instead of three.
+prod read near zero on the third column, §12.9 is dropped and the `datsme_me` work list is two
+items instead of three.
 
 ---
 
@@ -1175,7 +1216,11 @@ layer is how two arenas end up live at once.
 
 ---
 
-## §12 Open questions for the owner
+## §12 Open decisions
+
+**All of these are the same person's, on both sides of the wire** (Rev.5). Items that read like
+requests to a host — 12.6, 12.7, 12.9 — are decisions to make and code to write in `datsme_me`.
+Nothing here waits on a reply.
 
 **12.1 Port band — RESOLVED 2026-08-03.** **19989/19988** (prod), **29989/29988** (staging), per
 `../datsme_me/CLAUDE.md:117` ("the next service goes to `x9989` and downward"). Verified unclaimed:
@@ -1205,37 +1250,39 @@ separately? Recommend **its own repo**: the deploy independence in §3.3 is the 
 shape, and a directory inside the host repo re-couples it to the host's `reset --hard origin/master`
 deploy flow.
 
-> **12.6 and 12.7 are packaged for the host** as
-> [`REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ`](../../datsme_me/docs/REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ.md),
-> alongside `pets.read_owned` (12.4) which is decidable independently of the placement question.
-> **12.9 is a fourth item for that document, pending §5.1.2's census** — it is not in it yet, and
-> that document currently says the opposite (that `/api/pets/me` is used as shipped).
+> **The `datsme_me` half is tracked in its own repo** as
+> [`ARENA_WORK_ON_THE_DATSME_SIDE`](../../datsme_me/docs/ARENA_WORK_ON_THE_DATSME_SIDE.md) — three
+> code items and one design call, closed at three. 12.6 and 12.7 live there; 12.9 is listed as
+> "measure before writing it," pending §5.1.2's census. `pets.read_owned` (12.4) is independent of
+> the placement decision and can proceed on its own.
 
-**12.6 Identity: introspection, or change the host's token format?** §4.1.1 recommends
+**12.6 Identity: introspection, or change the token format? — DECIDE, then build in `datsme_me`.**
+§4.1.1 recommends
 **introspection** — the arena forwards a cookie, DatsMe resolves it, no signing key leaves the host.
 The alternative is asymmetric (RS256) signing so the arena can verify with a public key and no round
 trip. That is cleaner in principle and is a platform-wide token migration for every existing client.
 Confirm introspection, or accept the migration.
 
-**12.7 Sliding-session renewal for a long arena session** (§4.1.2). `_maybe_rotate_credential`
+**12.7 Sliding-session renewal for a long arena session — DESIGN CALL, `datsme_me` side** (§4.1.2). `_maybe_rotate_credential`
 re-sets the cookie on the response — which under introspection goes to the arena, not the browser. A
 player who spends an hour in a lounge without loading a DatsMe page would never rotate, and the
 cookie could expire mid-race. Forward the introspection response's `Set-Cookie`, or expose a renew
-call? **This one needs the host's answer, not DatsPet's.**
+call? **This is answered in `datsme_me`'s session model, not in the arena** — same owner, but
+genuinely the other codebase's decision to make.
 
 **12.8 Anonymous spectators — ANSWERED 2026-08-03 (§5.2.1).** Anyone may watch; the public link is
 a deliberate acquisition path. `SPEC_PET_ARENA_ROOMS` §6's rules carry over **verbatim** and now
 protect a `datsme.me` URL.
 
-**12.9 Expose `source_item_id` on `GET /api/pets/me`? — OPEN, host ask, blocks A3.** *(New in
-Rev.3.)*
+**12.9 Expose `source_item_id` on `GET /api/pets/me`? — MEASURE FIRST, then a one-line change in
+`datsme_me`.** *(New in Rev.3; reframed in Rev.5 — it was never an "ask".)*
 
 `pet_service.pet_dict()` (`../datsme_me/api/apps/pets/pet_service.py:326-338`) returns ten fields;
 `source_item_id` is not among them, and no other host response carries it. **§5.1's nudge anchor
 needs it**, and §0.14.3 forbids the alternative of reading `pets.source_item_id` directly.
 
-**What is being asked for: one read-only field added to an existing serializer.** No route, no
-schema change, no capability, no consent surface. The value is the DatsPet pet id the host already
+**What it amounts to: one read-only field added to an existing serializer.** No route, no schema
+change, no capability, no consent surface. The value is the DatsPet pet id the host already
 stores and already treats as authoritative provenance (`../datsme_me/api/apps/dpp/service.py:1983`).
 
 **Why it is worth a host change:** without it, every pet built before the athletics stamp landed
@@ -1245,14 +1292,15 @@ error anywhere. With it, they keep the character they have.
 **Why it may be withdrawable:** §5.1.2's census. If staging and prod hold few unstamped pets, drop
 rung 2, anchor stamped → host `Pet.id`, and ask the host for nothing. **Run the census before
 raising this with the host** — it converts a request into either a small justified ask or a
-non-issue, and the host should not be asked to decide something DatsPet has not measured.
+non-issue, and a field should not be added to a shipped serializer on a hunch.
 
-**Sequence, so this is not asked twice or asked blind:**
+**Sequence, so this is not decided blind:**
 
 1. **Run the census** (§6.1.2) on staging and prod. DatsPet alone, no dependencies.
-2. **Near zero** → withdraw §12.9, anchor stamped → host `Pet.id`, host asks stay at three.
-3. **Material** → raise it as ask #4. `REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ` already carries the
-   conditional note (amended 2026-08-03); it becomes a firm request with the measured number in it.
+2. **Near zero** → drop §12.9, anchor stamped → host `Pet.id`, and the `datsme_me` work list stays
+   at two (introspection + renewal).
+3. **Material** → it becomes item #3 on the `datsme_me` work list, with the measured number as its
+   justification (`ARENA_WORK_ON_THE_DATSME_SIDE` §4).
 
-The host should not be asked to decide something DatsPet has not counted — which is why step 1 is
-not optional and why the census moved ahead of A0 (§5.1.2).
+A field added to a shipped serializer outlives the reason it was added, so the count comes first —
+which is why step 1 is not optional and why the census moved ahead of A0 (§5.1.2).
