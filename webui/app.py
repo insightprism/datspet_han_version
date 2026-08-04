@@ -217,15 +217,6 @@ app.include_router(store_admin.router)
 import pet_facing_admin  # noqa: E402
 app.include_router(pet_facing_admin.router)
 
-# Arena rooms (SPEC_PET_ARENA_ROOMS R0-R3): live multi-device racing —
-# lobby, race, spectator stream — plus the deploy gate's probe, which
-# verify_deployment holds open past the outer proxy's 60 s cliff (§5.2).
-
-
-# Arena lounges (SPEC_PET_ARENA_LOUNGE L0-L2): the permanent front door —
-# presence, canned challenges, the racing board. Signed-in DatsMe users only;
-# accepting a challenge mints an ordinary ephemeral room through mint_room.
-
 
 # Donations (SPEC_PET_STORE §10) — the donate door and the donor's own record.
 # Not admin-gated: this is a user surface, scoped by owner like the house.

@@ -4,7 +4,7 @@
 are the owner's. O0 ships alone and needs nothing from the host; O1 onward is a joint build with
 DatsMe and executes only after its own cross-repo review.
 
-> **⚠ SCOPE PENDING — read [`SPEC_ARENA_MIGRATION`](SPEC_ARENA_MIGRATION.md) first.** If the arena
+> **⚠ SCOPE PENDING — read [`SPEC_ARENA_MIGRATION`](../../datsme_me/docs/SPEC_ARENA_MIGRATION.md) first.** If the arena
 > moves to DatsMe, most of this spec is retired with it: the borrowed roster, the digest matching,
 > the roster-scoped asset route and the never-persist discipline all existed to cross a boundary
 > that migration removes. **What survives is factory-only** — the house page's "✓ In DatsMe (21)"

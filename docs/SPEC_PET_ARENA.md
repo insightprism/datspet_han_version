@@ -12,7 +12,7 @@ three one JSON file each, the §6.4 depth claim made real) and three challenges 
 typing). Rev.8 adds the field procedure (§6.6): long jump + triple jump (Tier 2, the run-up-on-a-
 clock attempt) and hurdles (Tier 1, jump-decorated). **Remaining:** high jump + pole vault
 (elimination-at-heights, deferred), the spelling challenge (mechanic needs a call: audio vs
-unscramble), and rooms (`SPEC_PET_ARENA_ROOMS.md`, unbuilt). §16.1's spread number is live-tunable
+unscramble), and rooms (`../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md`, unbuilt). §16.1's spread number is live-tunable
 on the sofa.
 
 > ### Rev.11 — crashes: three strikes at the hurdles and you're out
@@ -153,7 +153,7 @@ on the sofa.
 > A full review of Rev.5 against the codebase (2026-08-02) confirmed the feasibility claims —
 > `PetStage`'s pet list, the seven profiles, `CANONICAL_POSES`/`MAX_POSES`, the `JOBS` pattern and
 > the nginx gaps are all where this document says. Four changes came out of it, none of which alters
-> a game rule; the companion spec picked up four more (`SPEC_PET_ARENA_ROOMS.md` Rev.2).
+> a game rule; the companion spec picked up four more (`../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md` Rev.2).
 >
 > **1. Losing is designed for, in v1** (§8.8 new, decision 0.15). Per-event medals, personal-best
 > framing and private practice against the bot sat in §16.2 as things that "belong in v1" — inside
@@ -211,7 +211,7 @@ on the sofa.
 > **3. Five players, own devices, a shared room, a spectator URL** — this is the tripwire in §11
 > firing, exactly as written: *"the moment results are shared, the simulation has to move
 > server-side."* It is a different system (transport, sessions, public surfaces, child safety) with a
-> different change cadence, so it gets **its own spec: `SPEC_PET_ARENA_ROOMS.md`**. Decision 0.7 and
+> different change cadence, so it gets **its own spec: `../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md`**. Decision 0.7 and
 > §11 now point at it. The game rules in this document are unchanged by it — a room feeds the same
 > impulse stream (§7.1).
 
@@ -358,7 +358,7 @@ wants is sitting in data that shipped months ago.
 | 0.5a | How many pets is an entrant | **`teamSize`, declared per event** (§6.5). Singles are a team of one, so nothing branches on solo-vs-team. |
 | 0.5b | The pose vocabulary | **Expected to grow.** Events name poses as strings and the guard test reads the live list, so a new pose needs no arena change (§6.3.2). |
 | 0.6 | Module boundary | **A separate module in every layer.** New content package, new backend module, new frontend directory. The pet runtime is *used*, not modified (§9). |
-| 0.7 | Backend surface | **None for solo and hot-seat play.** Multi-device rooms and the spectator URL are a server concern and live in **`SPEC_PET_ARENA_ROOMS.md`** (§11). Records/leaderboards remain deferred (§15). |
+| 0.7 | Backend surface | **None for solo and hot-seat play.** Multi-device rooms and the spectator URL are a server concern and live in **`../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md`** (§11). Records/leaderboards remain deferred (§15). |
 | 0.8 | Legacy pets | **Every pet ever built can compete on day one**, via a read-time derivation from facts already in its manifest (§5). |
 | 0.9 | **How the pet moves** | **The player moves it.** One solved challenge = one step. Pet stats are the exchange rate, player rate is the tempo, velocity is the product (§7). |
 | 0.10 | What counts as a challenge | **A registry, orthogonal to events** — tap, arithmetic, typing, spelling. Any challenge can drive any event (§8). |
@@ -718,7 +718,7 @@ the registry is earned rather than speculative — CLAUDE.md's three-instances b
 
 **Found in the Rev.5 readiness review, and it is the one gap that would have surfaced on day three of
 building rooms.** Rev.1–5 put events in `web/src/arena/events/` as TypeScript objects with a
-`simulate()` method. But `SPEC_PET_ARENA_ROOMS.md` §3.4 makes **the server** authoritative for the
+`simulate()` method. But `../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md` §3.4 makes **the server** authoritative for the
 result — and the server is Python. As written, the room server cannot score a race without a second
 implementation of every event.
 
@@ -740,7 +740,7 @@ declaration. Those are **Tier 1**, and a Tier-1 event is a JSON file and nothing
 Three consequences, all good:
 
 - **Adding a Tier-1 event stays a one-file change** and now works in rooms for free.
-- **Rooms launch Tier 1 only** (`SPEC_PET_ARENA_ROOMS.md` §11 R2), where the server can be
+- **Rooms launch Tier 1 only** (`../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md` §11 R2), where the server can be
   authoritative with one integrator. Jumps stay solo/hot-seat until someone wants them networked.
 - **The two integrators are kept honest by a shared fixture**, the SPEC_PET_OWNER_FIELD §2.3a
   pattern: DatsPet owns `pet_factory/athletics/tests/fixtures/race_vectors.json` — impulse log in,
@@ -1180,7 +1180,7 @@ in `pet_factory/athletics/handicaps.json`. Four rules:
   in one place. At `rocket`, a younger sibling answering at half the rate holds even, which is the
   whole job.
 - **It is chosen per entrant at setup** — by whoever sets the race up locally, or by the host in a
-  room's lobby (`SPEC_PET_ARENA_ROOMS.md` §2.2) — and **shown wherever the entrant is**: the lane,
+  room's lobby (`../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md` §2.2) — and **shown wherever the entrant is**: the lane,
   the results screen, the recap. A hidden handicap is §8.3's "secretly easier questions" failure
   with extra steps.
 - **It is recorded in the race header** beside the seed and the difficulty, so a replayed impulse
@@ -1426,7 +1426,7 @@ away. The original wording:
 Five children on five devices racing in one room is exactly that. The response is **not** to bolt
 authority onto this document: real-time sessions, a public spectator URL, room-scoped asset access
 and child-safety rules are a different system with a different change cadence, and they get their
-own spec — **`SPEC_PET_ARENA_ROOMS.md`**.
+own spec — **`../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md`**.
 
 **What stays true here regardless of where a race is run:**
 
@@ -1448,7 +1448,7 @@ own spec — **`SPEC_PET_ARENA_ROOMS.md`**.
 | **4** | `webui/pet_athletics.py` mints the block at build; `table_version` in place. | SPEC_PET_DESIGN_PROVENANCE Phase 2 *(only for §3.2 modifiers; the block ships without them)* |
 | **5** | Events 2–4 (200 m, long jump, high jump) + `typing`/`spelling` challenges — one file each, in any order. | Phase 3 |
 | **6** | Skiing, pole vault, swimming. *(The bot moved to Phase 2 in Rev.6 — §8.8.)* | Phase 5 |
-| **R** | **Rooms** — five players, own devices, spectator URL. Its own spec (`SPEC_PET_ARENA_ROOMS.md`), its own phases, and it can start any time after Phase 2 because it consumes the same impulse stream. | Phase 2 |
+| **R** | **Rooms** — five players, own devices, spectator URL. Its own spec (`../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md`), its own phases, and it can start any time after Phase 2 because it consumes the same impulse stream. | Phase 2 |
 
 **Phase 2 is the whole idea, playable, and it touches nothing that already exists.** No factory
 change, no pool change, no bundle change, no backend route — §5's derived stats mean the children's
@@ -1665,7 +1665,7 @@ challenge that matches this week's homework is the one that gets permission.
 (§6.5) those separate:
 
 - **entrants per event** — **5**, matching the owner's *"5 people (configurable 1–5)"* and
-  `ROOM_MAX_PLAYERS` in `SPEC_PET_ARENA_ROOMS.md` §8. (Rev.1 recommended 6 before the room spec
+  `ROOM_MAX_PLAYERS` in `../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md` §8. (Rev.1 recommended 6 before the room spec
   existed; the two must not disagree, and the owner's number wins.) With human players the practical
   limit is *devices*, not pets — five entrants means five children, or fewer plus bots.
 - **pets on the stage at once** — recommend **capping at `teamSize`**, by running team events one leg
@@ -1682,7 +1682,7 @@ is accepted, softened (new events lean on old poses where possible — §6.4 alr
 rebuild path.
 
 **16.5 Whose pets may enter?** **Answered by Rev.5** for the multi-device case: up to five players in
-a room, own devices, spectators by URL — specified in `SPEC_PET_ARENA_ROOMS.md`. What remains open
+a room, own devices, spectators by URL — specified in `../../datsme_me/docs/SPEC_PET_ARENA_ROOMS.md`. What remains open
 here is narrower: whether a player may enter a pet they do **not** own (borrowed from a friend's
 house) or only their own. Recommend **own house only** — it needs no sharing model, and the store
 adopt path already exists for anyone who wants a copy of someone else's pet.

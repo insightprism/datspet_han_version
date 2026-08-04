@@ -11,6 +11,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Sibling repos this one talks to (peers under `claude_code/`): `../ComfyUI` (the render engine), `../datsme_me` (the DatsMe host; provides `datsme_partner_sdk` installed editable from `../datsme_me/api/sdk`), `../shared_gpu_cpu` (the compute pool).
 
+**The pet game's specs live in the DatsMe repo now** (`../datsme_me/docs/`):
+`SPEC_PET_ARENA_ROOMS`, `SPEC_PET_ARENA_LOUNGE`, `SPEC_PET_ARENA_VENUE` and
+`SPEC_ARENA_MIGRATION` moved with the game itself (`datsme_me/petgame_sidecar/`).
+`SPEC_PET_ARENA` stayed here **on purpose**: its §2/§4 are the athletics contract this
+repo implements — DatsPet MINTS a pet's stats at build (`webui/pet_athletics.py`), the
+game only reads them — and both repos' code cites overlapping sections of it.
+
 `docs/SPEC_*.md` are the authoritative design specs; code comments cite them by section (e.g. `SPEC_MOTION_PROFILES §3.7`). Read the cited spec section before changing code that references one. Some cited specs have been archived to `docs/archive/` once executed — the citation stays valid, the file moved.
 
 **Before any work on generation SPEED, read `docs/archive/SPEC_GPU_MEMORY_HYGIENE.md` §10.** It records the *measured* dead ends so they are not retried: ComfyUI's `--highvram` **OOMs** (the staging it disables is the only reason a ~34 GB model stack runs on a 24 GB card), lower resolution scales the ~7 s of sampling rather than the ~33 s of model movement, dropping one Wan expert costs fringed edges that wreck the alpha matte, and `_fill_holes_alpha` is inside the noise. A warm 704² Wan loop is ~40 s of which **~82% is model movement, not compute** — so the real levers are smaller models, more VRAM, or a second card. Note also that ComfyUI **caches on graph+seed**, which will hand you a fake speedup if an A/B reuses a seed.
