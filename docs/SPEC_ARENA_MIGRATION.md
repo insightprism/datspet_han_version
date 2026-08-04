@@ -1,6 +1,7 @@
 # SPEC_ARENA_MIGRATION — the game moves to DatsMe, the factory keeps the pets
 
-**Status: Rev.3 (2026-08-03) — IMPLEMENTATION-READY; A0 MAY START NOW.** §12 lists the calls that
+**Status: Rev.4 (2026-08-03) — IMPLEMENTATION-READY. A0 is fully specified (§6.1) and blocked only
+on host ACCESS, not on any decision.** §12 lists the calls that
 are the owner's; §5 lists the seams that must be decided **before** any code moves. A0 is a
 one-day infrastructure probe that needs no game code, depends on no open question, and blocks
 everything after it.
@@ -9,11 +10,44 @@ everything after it.
 
 | Phase | State |
 |---|---|
-| **A0** | **Ready now.** Stub only, staging only, no game code, no dependency on any open question. |
+| **Census** (§5.1.2) | **Runnable today, by DatsPet alone.** One query per environment; §6.1.2 has it. It decides whether §12.9 is asked for at all, so it comes first. |
+| **A0** | **Fully specified (§6.1); needs host ACCESS, not a decision.** The nginx blocks land on *DatsMe's* staging box — that is someone else's infrastructure, and no amount of resolved questions changes it. |
 | **A1** | Blocked on **12.6 / 12.7** — the host's two auth answers (`REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ`). |
 | **A2** | Ready once A1 lands. §4.3/§4.4 stand on host routes that were verified to exist. |
-| **A3** | Blocked on **12.9** — the `source_item_id` field, without which §5.1's anchor cannot execute. |
+| **A3** | Blocked on **12.9** — *unless the census withdraws it* (§5.1.2). |
 | **A4–A6** | Ready, contingent on the above. |
+
+**Nothing in this plan starts without the host.** Rev.3's table said A0 was "ready now" because it
+depends on no open *question*; that was true and misleading. A0 edits nginx on DatsMe's staging box.
+**The census (§5.1.2) is the only work item DatsPet can execute unilaterally**, which is another
+reason it goes first.
+
+> ### Rev.4 — the reviewer's findings verified, and three gaps they left
+>
+> Rev.3 was a review pass by another hand. **Its two substantive findings were re-verified against
+> the host and both hold** — `pet_service.pet_dict()` really does return ten fields with no
+> `source_item_id` (`api/apps/pets/pet_service.py:326`), and `arena_lounges.py:365` really does call
+> `_seat_from_presence(challenger, …)` from inside `accept_challenge`, the *target's* request. Its
+> §4.3 "one call, not two" holds too: `list_my_pets` depends on `get_current_user_db`
+> (`pet_routes.py:183`), which calls `get_current_user`. Rev.3's corrections stand as written.
+>
+> Rev.4 closes what Rev.3 left open:
+>
+> 1. **The census was circular.** Rev.3 moved it from A3 to A1 — but A1 is blocked on the host
+>    answering 12.6/12.7, and the census exists to decide whether the host is asked about 12.9 at
+>    all. A measurement that gates a question cannot sit behind the phase awaiting that question's
+>    answer. **It now runs before A0**, where it belongs: zero dependencies, and the only item
+>    DatsPet can execute without the host.
+> 2. **"A0 MAY START NOW" was true about decisions and false about access.** A0 edits nginx on
+>    *DatsMe's* staging box. **Nothing in this plan starts without the host** except the census.
+> 3. **A0 and the census were prose, not artifacts.** New **§6.1** gives the nginx blocks, both
+>    assertions as runnable commands, and the census SQL — verified against the dev database, which
+>    immediately corrected the figure: 46 unstamped, but **26** unstamped *and owned*, and only the
+>    latter can be restatted.
+>
+> Still unfixed by anyone, and now tracked: `REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ` in the host
+> repo still tells the host `/api/pets/me` is used exactly as shipped, which §12.9 may contradict.
+> Rev.3 spotted it; §12.9 now carries the amendment as a numbered step.
 
 > ### Rev.3 — two decisions that the data path could not execute
 >
@@ -790,9 +824,14 @@ The dev box has **46** unstamped pets. Staging and prod must be **counted, not e
 (CLAUDE.md: verify per-environment state — and this is precisely the case that rule exists for,
 since dev is the box where pets get built for testing and is the least representative of the three).
 
-**The census is a one-query job with no dependencies, and it ships in A1** (§6) — not A3, where
-Rev.2 implicitly left it by tying it to the anchor decision. It is the input that decides whether
-the host is asked for anything at all, so it must land before the host is asked, not after.
+**The census is a one-query job with no dependencies, and it runs BEFORE A0** (§6.1.2).
+
+*Rev.3 moved it from A3 to A1 and did not go far enough — that is circular.* A1 is blocked on the
+host's answers to 12.6/12.7, and the census exists to decide whether the host is asked about 12.9 at
+all. A measurement that gates a question cannot sit behind the phase that waits for that question's
+answer. It has **zero** dependencies — no service, no box, no decision, just a query against each
+environment's database — so it belongs ahead of everything, and it is the one thing DatsPet can do
+without the host.
 
 **The honest limit that survives either branch:** an **unstamped** pet that is **gifted** loses its
 original nudges irrecoverably — the gift destroys `source_item_id` (`pet_gift_service.py:431`) and
@@ -902,13 +941,106 @@ Each phase is independently verifiable. **A0 is a gate: if it fails, nothing aft
 
 | Phase | Ships | Why here |
 |---|---|---|
+| **Census** | **§5.1.2's unstamped-pet count on staging and prod** (§6.1.2). One query per environment. | Decides whether §12.9 is a host ask or a non-issue, so it precedes the request. **The only item here DatsPet can run without the host.** |
 | **A0** | nginx `/arena` + `/api/arena` blocks on DatsMe **staging**, `proxy_buffering off`, pointed at a stub. **Two assertions: (1)** an SSE stream is still open after **90 s**; **(2)** an authenticated request through `/api/arena` **resolves the right user** — i.e. the session cookie actually arrives at the arena box. | §5 cost this project a day once, and R0 is first because proxy behaviour cannot be observed locally. **The cookie half is equally unobservable locally and is the other half of §3.1.1's entire argument** — if the cookie does not arrive, path routing bought nothing and the design is wrong, not late. |
-| **A1** | Arena service skeleton on its own box: FastAPI, `--workers 1`, **identity via introspection** (§4.1.1), **the CSRF double-submit port** (§4.8), health endpoint. **No game.** Plus **the §5.1.2 census on staging and prod** — one query, no dependencies. | Proves identity end to end with nothing else in the way. CSRF is here and not later because a control discovered at A5 is a control that shipped absent. The census is here because it decides whether §12.9 is asked for at all, and A3 is too late to find out. |
+| **A1** | Arena service skeleton on its own box: FastAPI, `--workers 1`, **identity via introspection** (§4.1.1), **the CSRF double-submit port** (§4.8), health endpoint. **No game.** | Proves identity end to end with nothing else in the way. CSRF is here and not later because a control discovered at A5 is a control that shipped absent. |
 | **A2** | Ownership via `GET /api/pets/me` and assets via the host's `/api/pets/{id}/sheet.png`, behind the room-scoped proxy (§4.3, §4.4.1), exercised by a throwaway route | **Rev.1 called this "the only genuinely new plumbing" when it was the largest item in the plan and lived in another repo.** Against existing host routes it is now the smallest phase — which is the whole point of B1's correction. |
 | **A3** | Move `arena_rooms.py` + `arena_lounges.py`; repoint the **four** call sites (§1.2), **including the lounge's entry-time manifest fetch** (§4.4.2); **dual-published** athletics package with the `race_vectors.json` cross-engine test green in both repos (§2.4). **Precondition: §12.9 answered** (or withdrawn per §5.1.2). | The code moves nearly unchanged; the package does not. The fixture is the gate — a table skew is caught by `TABLE_VERSION`, an engine skew only by that file. The lounge is called out because §1.2's Rev.2 table hid it inside a room row and it is a genuinely different fix. |
 | **A4** | The arena frontend as its own Next app under `basePath: "/arena"`, including the five external imports of §2.1 | §2.1's dispositions are per-import; `ModalOverlay` is a rebuild, not a move |
 | **A5** | **Delete** the six lines and two pages from DatsPet (§2.2). Retire `connections.read` (§9). | The cleanup is part of the change |
 | **A6** | Room-affinity sharding — **only when one process is not enough** | Measured ceiling is ~20 concurrent races; do not pre-build it |
+
+### 6.1 A0 and the census, concretely
+
+Rev.3 described both in prose. Whoever picks this up should not have to re-derive them.
+
+#### 6.1.1 The nginx blocks (DatsMe **staging** first — never prod)
+
+Added to the host's `deploy/nginx.staging.conf`, alongside the existing `/api` and `/` blocks, which
+are **not** modified. nginx matches longest-prefix, so `/api/arena` must be declared for it to win
+over `/api`:
+
+```nginx
+# The arena's own frontend (Next, basePath "/arena")
+location /arena {
+    proxy_pass http://<arena-box>:29988;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+
+# The arena API. MUST be declared before/alongside `location /api` — longest
+# prefix wins, and this one has to.
+location /api/arena {
+    proxy_pass http://<arena-box>:29989;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # SSE. Without these the stream buffers and the race appears frozen, then
+    # jumps — it looks like an application bug and it is not
+    # (SPEC_PET_ARENA_ROOMS §5.1).
+    proxy_buffering    off;
+    proxy_cache        off;
+    proxy_read_timeout 3600s;
+    chunked_transfer_encoding off;
+}
+```
+
+**Two traps this project has already paid for.** `SPEC_PET_ARENA_ROOMS` §5.4: DatsPet's own
+`nginx-default.conf` is *production's*, and copying it onto staging silently pointed staging at the
+prod backend — cost a day. And per `datsme-pet-factory_wu` memory, nginx regex braces need quoting
+and any change must gate on `nginx -t`'s **exit code**, not its output text.
+
+#### 6.1.2 A0's two assertions, and the census query
+
+A0 passes only if **both** of these do. Run against the real staging URL, never localhost:
+
+```bash
+# (1) The stream survives past the outer proxy's 60 s idle default.
+#     SPEC_PET_ARENA_ROOMS §5.2 — a 504 at 60.2 s is the documented failure.
+timeout 95 curl -sN https://<staging-host>/api/arena/_probe/stream | ts | tee /tmp/a0.log
+#     PASS: output is still arriving after 90 s.
+
+# (2) The session cookie actually reaches the arena box.
+#     This is the other half of §3.1.1's argument; if it fails, path routing
+#     bought nothing and the design is wrong, not late.
+curl -s -b "token=<a real staging session cookie>"      https://<staging-host>/api/arena/_probe/whoami
+#     PASS: returns the SAME user id that GET /api/pets/me returns for that cookie.
+```
+
+The stub behind `_probe` is ~20 lines: one `StreamingResponse` emitting a heartbeat every
+`SSE_HEARTBEAT_S`, and one route echoing the resolved user. **No game code, no database.**
+
+**The census (§5.1.2), one query per environment** — this is the unstamped-pet count that decides
+whether §12.9 is asked for at all:
+
+```sql
+-- Run against staging's and prod's datspet.db. NOT dev: dev is where pets get
+-- built for testing and is the least representative of the three.
+SELECT
+  COUNT(*)                                                        AS non_draft_pets,
+  SUM(json_extract(manifest_json, '$.athletics') IS NULL)          AS unstamped,
+  SUM(json_extract(manifest_json, '$.athletics') IS NULL
+      AND external_user_id IS NOT NULL)                            AS unstamped_and_owned
+FROM pets
+WHERE draft = 0;
+```
+
+`unstamped_and_owned` is the number that matters, and it is **not** the same as `unstamped`: a pet
+with `external_user_id IS NULL` is a standalone/local pet that belongs to no DatsMe user, so it can
+never appear in `/api/pets/me` and can never be restatted by this migration.
+
+**Dev reads 46 non-draft, 46 unstamped, but only 26 unstamped-and-owned** — the other 20 are
+anonymous and irrelevant here. Query verified against the dev database 2026-08-03. If staging and
+prod read near zero on the third column, §12.9 is withdrawn and the host is asked for two things
+instead of three.
+
+---
 
 **A5 is not optional and not deferrable.** CLAUDE.md: finish the refactor; a dual-mount transition
 layer is how two arenas end up live at once.
@@ -1115,6 +1247,12 @@ rung 2, anchor stamped → host `Pet.id`, and ask the host for nothing. **Run th
 raising this with the host** — it converts a request into either a small justified ask or a
 non-issue, and the host should not be asked to decide something DatsPet has not measured.
 
-**This is a fourth item for `REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ`**, whose current "What we are
-not asking for" section states that `/api/pets/me` is used exactly as shipped. That sentence needs
-amending if the census says the field is wanted.
+**Sequence, so this is not asked twice or asked blind:**
+
+1. **Run the census** (§6.1.2) on staging and prod. DatsPet alone, no dependencies.
+2. **Near zero** → withdraw §12.9, anchor stamped → host `Pet.id`, host asks stay at three.
+3. **Material** → raise it as ask #4. `REVIEW_REQUEST_ARENA_AUTH_AND_PETS_READ` already carries the
+   conditional note (amended 2026-08-03); it becomes a firm request with the measured number in it.
+
+The host should not be asked to decide something DatsPet has not counted — which is why step 1 is
+not optional and why the census moved ahead of A0 (§5.1.2).
